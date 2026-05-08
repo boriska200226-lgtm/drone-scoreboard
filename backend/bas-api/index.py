@@ -1,4 +1,4 @@
-"""API для БАС Арена — сессии, XP, штрафы, лидерборд, достижения"""
+"""API для БАС Арена — сессии, XP, штрафы, лидерборд, достижения (с ролевой защитой)"""
 import json
 import os
 import psycopg2
@@ -20,6 +20,20 @@ ACHIEVEMENTS_CONFIG = [
 
 def get_conn():
     return psycopg2.connect(os.environ["DATABASE_URL"])
+
+def get_session(cur, token: str):
+    """Возвращает (user_id, role, player_id) или None"""
+    if not token:
+        return None
+    cur.execute(f"""
+        SELECT user_id, role, player_id FROM {SCHEMA}.auth_sessions
+        WHERE token = '{token}' AND expires_at > NOW()
+    """)
+    return cur.fetchone()
+
+def is_teacher(cur, token: str) -> bool:
+    sess = get_session(cur, token)
+    return sess is not None and sess[1] == "teacher"
 
 def calc_xp(score: int, accuracy: int, duration: int) -> int:
     base = score // 5
@@ -67,7 +81,7 @@ def handler(event: dict, context) -> dict:
     cors = {
         "Access-Control-Allow-Origin": "*",
         "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type",
+        "Access-Control-Allow-Headers": "Content-Type, X-Token",
     }
     if event.get("httpMethod") == "OPTIONS":
         return {"statusCode": 200, "headers": cors, "body": ""}
@@ -75,6 +89,8 @@ def handler(event: dict, context) -> dict:
     method = event.get("httpMethod", "GET")
     qs = event.get("queryStringParameters") or {}
     action = qs.get("action", "")
+    headers = event.get("headers") or {}
+    token = headers.get("x-token", "") or headers.get("X-Token", "")
     conn = get_conn()
     cur = conn.cursor()
 
@@ -140,10 +156,19 @@ def handler(event: dict, context) -> dict:
             conn.close()
             return {"statusCode": 200, "headers": cors, "body": json.dumps({"penalties": penalties}, ensure_ascii=False)}
 
-        # POST — добавить сессию (action пустой)
+        # POST — добавить сессию (только преподаватель)
         if method == "POST" and action == "":
+            if not is_teacher(cur, token):
+                conn.close()
+                return {"statusCode": 403, "headers": cors,
+                        "body": json.dumps({"error": "Только преподаватель может добавлять сессии"}, ensure_ascii=False)}
+
             body = json.loads(event.get("body") or "{}")
-            player_id = body.get("player_id", "ИГРОК_001")
+            player_id = body.get("player_id", "")
+            if not player_id:
+                conn.close()
+                return {"statusCode": 400, "headers": cors, "body": json.dumps({"error": "player_id required"})}
+
             score = int(body.get("score", 0))
             duration = int(body.get("duration", 0))
             accuracy = int(body.get("accuracy", 0))
@@ -184,10 +209,15 @@ def handler(event: dict, context) -> dict:
                 "total_xp": new_total_xp, "new_achievements": new_achs
             }, ensure_ascii=False)}
 
-        # POST ?action=penalty — отдельный штраф
+        # POST ?action=penalty — отдельный штраф (только преподаватель)
         if method == "POST" and action == "penalty":
+            if not is_teacher(cur, token):
+                conn.close()
+                return {"statusCode": 403, "headers": cors,
+                        "body": json.dumps({"error": "Только преподаватель может выдавать штрафы"}, ensure_ascii=False)}
+
             body = json.loads(event.get("body") or "{}")
-            player_id = body.get("player_id", "ИГРОК_001")
+            player_id = body.get("player_id", "")
             penalty_xp = max(0, int(body.get("penalty_xp", 0)))
             reason = body.get("reason", "Штраф").replace("'", "''")
 
@@ -208,10 +238,14 @@ def handler(event: dict, context) -> dict:
                 "ok": True, "penalty_xp": penalty_xp, "total_xp": new_xp
             }, ensure_ascii=False)}
 
-        # PUT ?action=profile
+        # PUT ?action=profile — только преподаватель (legacy)
         if method == "PUT" and action == "profile":
+            if not is_teacher(cur, token):
+                conn.close()
+                return {"statusCode": 403, "headers": cors,
+                        "body": json.dumps({"error": "Нет доступа"}, ensure_ascii=False)}
             body = json.loads(event.get("body") or "{}")
-            player_id = body.get("player_id", "ИГРОК_001")
+            player_id = body.get("player_id", "")
             avatar_id = body.get("avatar_id", "")
             nickname = body.get("nickname", "")
             sets = []

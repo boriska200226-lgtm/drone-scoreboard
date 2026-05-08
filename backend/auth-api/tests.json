@@ -1,0 +1,22 @@
+{
+  "tests": [
+    {
+      "name": "Login teacher",
+      "method": "POST",
+      "path": "/?action=login",
+      "body": {"login": "teacher", "password": "teacher2024"},
+      "expectedStatus": 200,
+      "expectedBody": {"role": "teacher"},
+      "bodyMatcher": "partial"
+    },
+    {
+      "name": "Login wrong password",
+      "method": "POST",
+      "path": "/?action=login",
+      "body": {"login": "teacher", "password": "wrong"},
+      "expectedStatus": 401,
+      "expectedBody": {"error": "string"},
+      "bodyMatcher": "partial"
+    }
+  ]
+}
