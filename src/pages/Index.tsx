@@ -664,16 +664,62 @@ const TEACHER_NAV = [
 function TeacherStudents({ token, onSelectPlayer }: { token: string; onSelectPlayer: (id: string) => void }) {
   const [students, setStudents] = useState<Student[]>([]);
   const [loading, setLoading] = useState(true);
+  const [confirmLogin, setConfirmLogin] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const load = useCallback(() => {
+    setLoading(true);
     fetch(`${AUTH_API}?action=students`, { headers: { "X-Token": token } })
       .then((r) => r.json()).then((d) => { setStudents(d.students || []); setLoading(false); });
   }, [token]);
 
   useEffect(() => { load(); }, [load]);
 
+  const handleDelete = async (login: string) => {
+    setDeleting(true);
+    await fetch(`${AUTH_API}?action=delete_student`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ login }),
+    });
+    setDeleting(false);
+    setConfirmLogin(null);
+    load();
+  };
+
   return (
     <div className="space-y-6">
+      {/* Диалог подтверждения */}
+      {confirmLogin && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center px-4"
+          style={{ background: "rgba(0,0,0,0.7)", backdropFilter: "blur(4px)" }}>
+          <div className="rounded-2xl border p-6 w-full max-w-sm space-y-4 animate-scale-in"
+            style={{ background: "hsl(var(--card))", borderColor: "#ff444444", boxShadow: "0 0 40px #ff444433" }}>
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style={{ background: "#ff444420" }}>
+                <Icon name="Trash2" size={18} style={{ color: "#ff4444" }} />
+              </div>
+              <div>
+                <div className="font-orbitron text-sm font-bold text-white">Удалить студента?</div>
+                <div className="text-xs text-muted-foreground font-rajdhani mt-0.5">@{confirmLogin} · это действие необратимо</div>
+              </div>
+            </div>
+            <div className="flex gap-3">
+              <button onClick={() => setConfirmLogin(null)}
+                className="flex-1 py-2.5 rounded-lg font-orbitron text-xs transition-all"
+                style={{ background: "rgba(255,255,255,0.05)", color: "#888", border: "1px solid rgba(255,255,255,0.1)" }}>
+                ОТМЕНА
+              </button>
+              <button onClick={() => handleDelete(confirmLogin)} disabled={deleting}
+                className="flex-1 py-2.5 rounded-lg font-orbitron text-xs font-bold transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+                style={{ background: "linear-gradient(135deg, #ff4444, #bf2222)", color: "white", boxShadow: "0 0 16px rgba(255,68,68,0.4)" }}>
+                {deleting ? <><Icon name="Loader" size={13} className="animate-spin" />...</> : <><Icon name="Trash2" size={13} />УДАЛИТЬ</>}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="flex items-center justify-between">
         <div>
           <h2 className="font-orbitron text-xl font-bold text-white">СТУДЕНТЫ</h2>
@@ -691,9 +737,9 @@ function TeacherStudents({ token, onSelectPlayer }: { token: string; onSelectPla
           {students.map((s, i) => {
             const lvl = getLevelInfo(s.xp);
             return (
-              <div key={s.login} className="flex items-center gap-3 rounded-xl border border-white/6 bg-card px-4 py-3 cursor-pointer hover:border-white/20 transition-all animate-fade-in-up"
-                style={{ animationDelay: `${i * 40}ms` }} onClick={() => onSelectPlayer(s.player_id)}>
-                <div className="text-2xl">{getAvatarEmoji(s.avatar_id)}</div>
+              <div key={s.login} className="flex items-center gap-3 rounded-xl border border-white/6 bg-card px-4 py-3 transition-all animate-fade-in-up hover:border-white/15"
+                style={{ animationDelay: `${i * 40}ms` }}>
+                <div className="text-2xl shrink-0">{getAvatarEmoji(s.avatar_id)}</div>
                 <div className="flex-1 min-w-0">
                   <div className="font-rajdhani font-semibold text-sm text-white truncate">{s.nickname}</div>
                   <div className="text-xs text-muted-foreground">@{s.login} · {s.created_at}</div>
@@ -702,7 +748,12 @@ function TeacherStudents({ token, onSelectPlayer }: { token: string; onSelectPla
                   <div className="font-orbitron text-sm font-bold" style={{ color: lvl.color }}>{s.xp.toLocaleString()} XP</div>
                   <div className="text-xs text-muted-foreground">Ур. {lvl.level}</div>
                 </div>
-                <Icon name="ChevronRight" size={14} className="text-muted-foreground shrink-0" />
+                <button onClick={() => setConfirmLogin(s.login)}
+                  className="p-2 rounded-lg shrink-0 transition-all hover:scale-110 ml-1"
+                  style={{ background: "#ff444415", color: "#ff4444", border: "1px solid #ff444430" }}
+                  title="Удалить студента">
+                  <Icon name="Trash2" size={14} />
+                </button>
               </div>
             );
           })}

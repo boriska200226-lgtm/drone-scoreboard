@@ -160,7 +160,7 @@ def handler(event: dict, context) -> dict:
                 SELECT u.login, u.player_id, p.nickname, p.avatar_id, p.xp, u.created_at
                 FROM {SCHEMA}.users u
                 LEFT JOIN {SCHEMA}.players p ON u.player_id = p.player_id
-                WHERE u.role = 'student'
+                WHERE u.role = 'student' AND u.password_hash != 'DELETED'
                 ORDER BY p.xp DESC
             """)
             rows = cur.fetchall()
@@ -240,6 +240,56 @@ def handler(event: dict, context) -> dict:
             conn.close()
             return {"statusCode": 200, "headers": CORS,
                     "body": json.dumps({"new_password": new_password}, ensure_ascii=False)}
+
+        # POST ?action=delete_student — удаление студента (только преподаватель)
+        if method == "POST" and action == "delete_student":
+            if not require_teacher(cur, token):
+                conn.close()
+                return {"statusCode": 403, "headers": CORS,
+                        "body": json.dumps({"error": "Только преподаватель"}, ensure_ascii=False)}
+
+            body = json.loads(event.get("body") or "{}")
+            login_target = body.get("login", "").strip()
+            if not login_target:
+                conn.close()
+                return {"statusCode": 400, "headers": CORS,
+                        "body": json.dumps({"error": "Укажи логин студента"}, ensure_ascii=False)}
+
+            # Получаем player_id студента
+            cur.execute(f"""
+                SELECT player_id FROM {SCHEMA}.users
+                WHERE login = '{login_target}' AND role = 'student'
+            """)
+            row = cur.fetchone()
+            if not row:
+                conn.close()
+                return {"statusCode": 404, "headers": CORS,
+                        "body": json.dumps({"error": "Студент не найден"}, ensure_ascii=False)}
+
+            player_id = row[0]
+
+            # Удаляем связанные данные, затем пользователя и игрока
+            if player_id:
+                cur.execute(f"UPDATE {SCHEMA}.auth_sessions SET expires_at = NOW() WHERE player_id = '{player_id}'")
+                cur.execute(f"UPDATE {SCHEMA}.achievements_unlocked SET player_id = NULL WHERE player_id = '{player_id}'")
+                cur.execute(f"UPDATE {SCHEMA}.penalties SET player_id = NULL WHERE player_id = '{player_id}'")
+                cur.execute(f"UPDATE {SCHEMA}.sessions SET player_id = NULL WHERE player_id = '{player_id}'")
+
+            cur.execute(f"UPDATE {SCHEMA}.users SET player_id = NULL WHERE login = '{login_target}'")
+
+            # Помечаем пользователя как удалённого (деактивируем)
+            cur.execute(f"""
+                UPDATE {SCHEMA}.users
+                SET login = 'deleted_' || id || '_' || login,
+                    password_hash = 'DELETED',
+                    role = 'deleted'
+                WHERE login = '{login_target}'
+            """)
+
+            conn.commit()
+            conn.close()
+            return {"statusCode": 200, "headers": CORS,
+                    "body": json.dumps({"ok": True}, ensure_ascii=False)}
 
         conn.close()
         return {"statusCode": 404, "headers": CORS, "body": json.dumps({"error": "not found"})}
