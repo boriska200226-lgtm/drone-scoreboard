@@ -15,7 +15,7 @@ CORS = {
 }
 
 def get_conn():
-    return psycopg2.connect(os.environ["DATABASE_URL"])
+    return psycopg2.connect(os.environ["DATABASE_URL"], connect_timeout=5)
 
 def sha256(s: str) -> str:
     return hashlib.sha256(s.encode()).hexdigest()
@@ -53,10 +53,11 @@ def handler(event: dict, context) -> dict:
     headers = event.get("headers") or {}
     token = headers.get("x-token", "") or headers.get("X-Token", "")
 
-    conn = get_conn()
-    cur = conn.cursor()
-
+    conn = None
     try:
+        conn = get_conn()
+        cur = conn.cursor()
+
         # POST ?action=login
         if method == "POST" and action == "login":
             body = json.loads(event.get("body") or "{}")
@@ -295,6 +296,7 @@ def handler(event: dict, context) -> dict:
         return {"statusCode": 404, "headers": CORS, "body": json.dumps({"error": "not found"})}
 
     except Exception as e:
-        conn.rollback()
-        conn.close()
+        if conn:
+            conn.rollback()
+            conn.close()
         return {"statusCode": 500, "headers": CORS, "body": json.dumps({"error": str(e)})}

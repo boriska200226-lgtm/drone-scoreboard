@@ -19,7 +19,7 @@ ACHIEVEMENTS_CONFIG = [
 ]
 
 def get_conn():
-    return psycopg2.connect(os.environ["DATABASE_URL"])
+    return psycopg2.connect(os.environ["DATABASE_URL"], connect_timeout=5)
 
 def get_session(cur, token: str):
     """Возвращает (user_id, role, player_id) или None"""
@@ -91,10 +91,10 @@ def handler(event: dict, context) -> dict:
     action = qs.get("action", "")
     headers = event.get("headers") or {}
     token = headers.get("x-token", "") or headers.get("X-Token", "")
-    conn = get_conn()
-    cur = conn.cursor()
-
+    conn = None
     try:
+        conn = get_conn()
+        cur = conn.cursor()
         # GET ?action=profile
         if method == "GET" and action == "profile":
             player_id = qs.get("player_id", "ИГРОК_001")
@@ -263,6 +263,7 @@ def handler(event: dict, context) -> dict:
         return {"statusCode": 404, "headers": cors, "body": json.dumps({"error": "not found"})}
 
     except Exception as e:
-        conn.rollback()
-        conn.close()
+        if conn:
+            conn.rollback()
+            conn.close()
         return {"statusCode": 500, "headers": cors, "body": json.dumps({"error": str(e)})}
