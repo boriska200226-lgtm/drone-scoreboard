@@ -28,20 +28,20 @@ def gen_token() -> str:
     return secrets.token_hex(32)
 
 def get_session(cur, token: str):
-    """Возвращает (user_id, role, player_id) или None"""
     if not token:
         return None
-    cur.execute(f"""
-        SELECT user_id, role, player_id FROM {SCHEMA}.auth_sessions
-        WHERE token = '{token}' AND expires_at > NOW()
-    """)
+    cur.execute(f"SELECT user_id, role, player_id FROM {SCHEMA}.auth_sessions WHERE token = '{token}' AND expires_at > NOW()")
     return cur.fetchone()
 
 def require_teacher(cur, token: str):
     sess = get_session(cur, token)
-    if not sess or sess[1] != "teacher":
-        return None
-    return sess
+    return sess if (sess and sess[1] == "teacher") else None
+
+def ok(body):
+    return {"statusCode": 200, "headers": CORS, "body": json.dumps(body, ensure_ascii=False)}
+
+def err(status, msg):
+    return {"statusCode": status, "headers": CORS, "body": json.dumps({"error": msg}, ensure_ascii=False)}
 
 def handler(event: dict, context) -> dict:
     if event.get("httpMethod") == "OPTIONS":
@@ -63,17 +63,14 @@ def handler(event: dict, context) -> dict:
             body = json.loads(event.get("body") or "{}")
             login = body.get("login", "").strip()
             password = body.get("password", "")
-
             cur.execute(f"""
                 SELECT id, role, player_id FROM {SCHEMA}.users
                 WHERE login = '{login}' AND password_hash = '{sha256(password)}'
+                  AND role != 'deleted'
             """)
             user = cur.fetchone()
             if not user:
-                conn.close()
-                return {"statusCode": 401, "headers": CORS,
-                        "body": json.dumps({"error": "Неверный логин или пароль"}, ensure_ascii=False)}
-
+                return err(401, "Неверный логин или пароль")
             user_id, role, player_id = user
             token_new = gen_token()
             cur.execute(f"""
@@ -81,155 +78,106 @@ def handler(event: dict, context) -> dict:
                 VALUES ('{token_new}', {user_id}, '{role}', {f"'{player_id}'" if player_id else "NULL"})
             """)
             conn.commit()
-            conn.close()
-            return {"statusCode": 200, "headers": CORS, "body": json.dumps({
-                "token": token_new, "role": role, "player_id": player_id,
-                "login": login
-            }, ensure_ascii=False)}
+            return ok({"token": token_new, "role": role, "player_id": player_id, "login": login})
 
-        # GET ?action=me — проверка токена
+        # GET ?action=me
         if method == "GET" and action == "me":
             sess = get_session(cur, token)
             if not sess:
-                conn.close()
-                return {"statusCode": 401, "headers": CORS,
-                        "body": json.dumps({"error": "Не авторизован"}, ensure_ascii=False)}
-            conn.close()
-            return {"statusCode": 200, "headers": CORS, "body": json.dumps({
-                "user_id": sess[0], "role": sess[1], "player_id": sess[2]
-            }, ensure_ascii=False)}
+                return err(401, "Не авторизован")
+            return ok({"user_id": sess[0], "role": sess[1], "player_id": sess[2]})
 
         # POST ?action=logout
         if method == "POST" and action == "logout":
             if token:
                 cur.execute(f"UPDATE {SCHEMA}.auth_sessions SET expires_at = NOW() WHERE token = '{token}'")
                 conn.commit()
-            conn.close()
-            return {"statusCode": 200, "headers": CORS, "body": json.dumps({"ok": True})}
+            return ok({"ok": True})
 
-        # POST ?action=create_student — только преподаватель
+        # POST ?action=create_student
         if method == "POST" and action == "create_student":
             if not require_teacher(cur, token):
-                conn.close()
-                return {"statusCode": 403, "headers": CORS,
-                        "body": json.dumps({"error": "Только преподаватель"}, ensure_ascii=False)}
-
+                return err(403, "Только преподаватель")
             body = json.loads(event.get("body") or "{}")
             nickname = body.get("nickname", "").strip()
             if not nickname:
-                conn.close()
-                return {"statusCode": 400, "headers": CORS,
-                        "body": json.dumps({"error": "Укажи имя студента"}, ensure_ascii=False)}
+                return err(400, "Укажи имя студента")
 
-            # Генерируем логин и пароль
+            # Генерация уникального логина одним запросом
             cur.execute(f"SELECT COUNT(*) FROM {SCHEMA}.users WHERE role = 'student'")
             count = cur.fetchone()[0] + 1
             login = f"student{count:02d}"
-            # Проверяем уникальность логина
-            cur.execute(f"SELECT id FROM {SCHEMA}.users WHERE login = '{login}'")
+            cur.execute(f"SELECT 1 FROM {SCHEMA}.users WHERE login = '{login}'")
             if cur.fetchone():
                 login = f"s{secrets.token_hex(3)}"
 
             password = gen_password(8)
-            # Генерируем player_id
             player_id = f"player_{secrets.token_hex(4)}"
             avatar_id = body.get("avatar_id", "boy_1")
+            safe_nick = nickname.replace("'", "''")
 
+            # Два INSERT одной транзакцией
             cur.execute(f"""
                 INSERT INTO {SCHEMA}.players (player_id, nickname, avatar_id, xp)
-                VALUES ('{player_id}', '{nickname.replace(chr(39), chr(39)*2)}', '{avatar_id}', 0)
+                VALUES ('{player_id}', '{safe_nick}', '{avatar_id}', 0)
             """)
             cur.execute(f"""
                 INSERT INTO {SCHEMA}.users (login, password_hash, role, player_id)
                 VALUES ('{login}', '{sha256(password)}', 'student', '{player_id}')
             """)
             conn.commit()
-            conn.close()
-            return {"statusCode": 200, "headers": CORS, "body": json.dumps({
-                "login": login, "password": password,
-                "player_id": player_id, "nickname": nickname
-            }, ensure_ascii=False)}
+            return ok({"login": login, "password": password, "player_id": player_id, "nickname": nickname})
 
-        # GET ?action=students — список студентов (только преподаватель)
+        # GET ?action=students
         if method == "GET" and action == "students":
             if not require_teacher(cur, token):
-                conn.close()
-                return {"statusCode": 403, "headers": CORS,
-                        "body": json.dumps({"error": "Только преподаватель"}, ensure_ascii=False)}
-
+                return err(403, "Только преподаватель")
             cur.execute(f"""
                 SELECT u.login, u.player_id, p.nickname, p.avatar_id, p.xp, u.created_at
                 FROM {SCHEMA}.users u
                 LEFT JOIN {SCHEMA}.players p ON u.player_id = p.player_id
                 WHERE u.role = 'student' AND u.password_hash != 'DELETED'
-                ORDER BY p.xp DESC
+                ORDER BY p.xp DESC NULLS LAST
             """)
-            rows = cur.fetchall()
             students = [{"login": r[0], "player_id": r[1], "nickname": r[2],
                          "avatar_id": r[3], "xp": r[4],
-                         "created_at": r[5].strftime("%d.%m.%Y") if r[5] else ""} for r in rows]
-            conn.close()
-            return {"statusCode": 200, "headers": CORS,
-                    "body": json.dumps({"students": students}, ensure_ascii=False)}
+                         "created_at": r[5].strftime("%d.%m.%Y") if r[5] else ""} for r in cur.fetchall()]
+            return ok({"students": students})
 
-        # PUT ?action=rename — студент меняет своё имя
+        # PUT ?action=rename
         if method == "PUT" and action == "rename":
             sess = get_session(cur, token)
             if not sess:
-                conn.close()
-                return {"statusCode": 401, "headers": CORS,
-                        "body": json.dumps({"error": "Не авторизован"}, ensure_ascii=False)}
-
+                return err(401, "Не авторизован")
             body = json.loads(event.get("body") or "{}")
             new_nickname = body.get("nickname", "").strip()
             if not new_nickname or len(new_nickname) > 30:
-                conn.close()
-                return {"statusCode": 400, "headers": CORS,
-                        "body": json.dumps({"error": "Имя 1–30 символов"}, ensure_ascii=False)}
-
+                return err(400, "Имя 1–30 символов")
             player_id = sess[2]
             if not player_id:
-                conn.close()
-                return {"statusCode": 400, "headers": CORS,
-                        "body": json.dumps({"error": "Нет привязанного профиля"}, ensure_ascii=False)}
-
-            safe_name = new_nickname.replace("'", "''")
-            cur.execute(f"""
-                UPDATE {SCHEMA}.players SET nickname = '{safe_name}'
-                WHERE player_id = '{player_id}'
-            """)
+                return err(400, "Нет привязанного профиля")
+            cur.execute(f"UPDATE {SCHEMA}.players SET nickname = '{new_nickname.replace(chr(39), chr(39)*2)}' WHERE player_id = '{player_id}'")
             conn.commit()
-            conn.close()
-            return {"statusCode": 200, "headers": CORS, "body": json.dumps({"ok": True, "nickname": new_nickname}, ensure_ascii=False)}
+            return ok({"ok": True, "nickname": new_nickname})
 
-        # PUT ?action=avatar — студент меняет аватар
+        # PUT ?action=avatar
         if method == "PUT" and action == "avatar":
             sess = get_session(cur, token)
             if not sess:
-                conn.close()
-                return {"statusCode": 401, "headers": CORS,
-                        "body": json.dumps({"error": "Не авторизован"}, ensure_ascii=False)}
-
+                return err(401, "Не авторизован")
             body = json.loads(event.get("body") or "{}")
             avatar_id = body.get("avatar_id", "")
             player_id = sess[2]
             if not player_id or not avatar_id:
-                conn.close()
-                return {"statusCode": 400, "headers": CORS,
-                        "body": json.dumps({"error": "Ошибка данных"}, ensure_ascii=False)}
-
+                return err(400, "Ошибка данных")
             cur.execute(f"UPDATE {SCHEMA}.players SET avatar_id = '{avatar_id}' WHERE player_id = '{player_id}'")
             conn.commit()
-            conn.close()
-            return {"statusCode": 200, "headers": CORS, "body": json.dumps({"ok": True})}
+            return ok({"ok": True})
 
-        # POST ?action=reset_password — преподаватель сбрасывает пароль студента
+        # POST ?action=reset_password
         if method == "POST" and action == "reset_password":
             if not require_teacher(cur, token):
-                conn.close()
-                return {"statusCode": 403, "headers": CORS,
-                        "body": json.dumps({"error": "Только преподаватель"}, ensure_ascii=False)}
-
+                return err(403, "Только преподаватель")
             body = json.loads(event.get("body") or "{}")
             login_target = body.get("login", "")
             new_password = gen_password(8)
@@ -238,47 +186,27 @@ def handler(event: dict, context) -> dict:
                 WHERE login = '{login_target}' AND role = 'student'
             """)
             conn.commit()
-            conn.close()
-            return {"statusCode": 200, "headers": CORS,
-                    "body": json.dumps({"new_password": new_password}, ensure_ascii=False)}
+            return ok({"new_password": new_password})
 
-        # POST ?action=delete_student — удаление студента (только преподаватель)
+        # POST ?action=delete_student
         if method == "POST" and action == "delete_student":
             if not require_teacher(cur, token):
-                conn.close()
-                return {"statusCode": 403, "headers": CORS,
-                        "body": json.dumps({"error": "Только преподаватель"}, ensure_ascii=False)}
-
+                return err(403, "Только преподаватель")
             body = json.loads(event.get("body") or "{}")
             login_target = body.get("login", "").strip()
             if not login_target:
-                conn.close()
-                return {"statusCode": 400, "headers": CORS,
-                        "body": json.dumps({"error": "Укажи логин студента"}, ensure_ascii=False)}
-
-            # Получаем player_id студента
-            cur.execute(f"""
-                SELECT player_id FROM {SCHEMA}.users
-                WHERE login = '{login_target}' AND role = 'student'
-            """)
+                return err(400, "Укажи логин студента")
+            cur.execute(f"SELECT player_id FROM {SCHEMA}.users WHERE login = '{login_target}' AND role = 'student'")
             row = cur.fetchone()
             if not row:
-                conn.close()
-                return {"statusCode": 404, "headers": CORS,
-                        "body": json.dumps({"error": "Студент не найден"}, ensure_ascii=False)}
-
+                return err(404, "Студент не найден")
             player_id = row[0]
-
-            # Удаляем связанные данные, затем пользователя и игрока
             if player_id:
                 cur.execute(f"UPDATE {SCHEMA}.auth_sessions SET expires_at = NOW() WHERE player_id = '{player_id}'")
                 cur.execute(f"UPDATE {SCHEMA}.achievements_unlocked SET player_id = NULL WHERE player_id = '{player_id}'")
                 cur.execute(f"UPDATE {SCHEMA}.penalties SET player_id = NULL WHERE player_id = '{player_id}'")
                 cur.execute(f"UPDATE {SCHEMA}.sessions SET player_id = NULL WHERE player_id = '{player_id}'")
-
             cur.execute(f"UPDATE {SCHEMA}.users SET player_id = NULL WHERE login = '{login_target}'")
-
-            # Помечаем пользователя как удалённого (деактивируем)
             cur.execute(f"""
                 UPDATE {SCHEMA}.users
                 SET login = 'deleted_' || id || '_' || login,
@@ -286,17 +214,15 @@ def handler(event: dict, context) -> dict:
                     role = 'deleted'
                 WHERE login = '{login_target}'
             """)
-
             conn.commit()
-            conn.close()
-            return {"statusCode": 200, "headers": CORS,
-                    "body": json.dumps({"ok": True}, ensure_ascii=False)}
+            return ok({"ok": True})
 
-        conn.close()
-        return {"statusCode": 404, "headers": CORS, "body": json.dumps({"error": "not found"})}
+        return err(404, "not found")
 
     except Exception as e:
         if conn:
             conn.rollback()
+        return err(500, str(e))
+    finally:
+        if conn:
             conn.close()
-        return {"statusCode": 500, "headers": CORS, "body": json.dumps({"error": str(e)})}
