@@ -1,0 +1,50 @@
+# Разворачивание «Гильдии» на школьном ноутбуке или VPS:
+#   cp .env.guild.example .env && docker compose up -d --build
+# Дальше — создание класса, см. backend/guild-server/README.md.
+services:
+  guild-db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-guild}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?задай пароль в .env}
+      POSTGRES_DB: ${POSTGRES_DB:-guild}
+    volumes:
+      - guild-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-guild} -d ${POSTGRES_DB:-guild}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  guild-api:
+    build:
+      context: ./backend/guild-server
+    restart: unless-stopped
+    depends_on:
+      guild-db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-guild}:${POSTGRES_PASSWORD}@guild-db:5432/${POSTGRES_DB:-guild}
+      DB_SCHEMA: ${DB_SCHEMA:-guild}
+      REGISTRY_KEY: ${REGISTRY_KEY:?сгенерируй ключ Fernet}
+      BOOTSTRAP_TOKEN: ${BOOTSTRAP_TOKEN:?задай разовый токен создания класса}
+      REQUIRE_TEACHER_2FA: ${REQUIRE_TEACHER_2FA:-true}
+      ARMOR_JOB_HOUR: ${ARMOR_JOB_HOUR:-22}
+      TZ_NAME: ${TZ_NAME:-Europe/Moscow}
+      CORS_ORIGINS: ${CORS_ORIGINS:-*}
+      # Один воркер — комнаты WebSocket и планировщик живут в памяти процесса.
+      WEB_CONCURRENCY: 1
+
+  guild-web:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.web
+    restart: unless-stopped
+    depends_on:
+      - guild-api
+    ports:
+      - "${WEB_PORT:-8080}:80"
+
+volumes:
+  guild-db-data:
