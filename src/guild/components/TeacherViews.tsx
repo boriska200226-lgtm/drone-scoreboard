@@ -3,14 +3,62 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Icon from "@/components/ui/icon";
 
 import { api, ApiError } from "../api";
+import { BRANCH_THEME, GUILD_EMBER, GUILD_GOLD, GUILD_GREEN, rankOf } from "../theme";
 import type {
   AttendanceStatus, GameRules, GuildMapData, Sticker, StudentRow,
 } from "../types";
+import { BranchSigil, HeroAvatar, RankBadge, ShieldBadge } from "./art";
 import { TreeMeter } from "./Common";
-import { BRANCH_GLYPH, GUILD_EMBER, GUILD_GOLD, GUILD_GREEN } from "../theme";
 
 function errorText(err: unknown, fallback: string) {
   return err instanceof ApiError ? err.message : fallback;
+}
+
+const ACTION_ICON: Record<string, string> = {
+  kind_word: "Heart",
+  translate_mat: "Languages",
+  help_three: "HandHeart",
+  hand_raise: "Hand",
+  cheat_code: "Wand2",
+  quiet_mail: "Mail",
+};
+
+/** Выбор героя аватарами: 25 кличек списком — это журнал, а не игра. */
+function HeroPicker({ students, value, onChange }: {
+  students: StudentRow[];
+  value: number | null;
+  onChange: (heroId: number) => void;
+}) {
+  return (
+    <div className="flex gap-2 overflow-x-auto pb-2 -mx-1 px-1">
+      {students.map((s) => {
+        const active = s.hero_id === value;
+        const tone = BRANCH_THEME[s.branch];
+        return (
+          <button
+            key={s.hero_id}
+            type="button"
+            onClick={() => onChange(s.hero_id)}
+            className="guild-btn shrink-0 w-[4.6rem] rounded-xl px-1 py-2 flex flex-col items-center gap-1"
+            style={{
+              background: active ? `${tone.color}1f` : "rgba(255,255,255,0.035)",
+              border: `1px solid ${active ? `${tone.color}88` : "rgba(255,255,255,0.07)"}`,
+              boxShadow: active ? `0 0 20px -8px ${tone.color}` : "none",
+            }}
+          >
+            <HeroAvatar avatar="" nickname={s.nickname} branch={s.branch} size={34} dimmed={!active} />
+            <span className="font-rajdhani text-[11px] truncate w-full text-center"
+                  style={{ color: active ? "#e8f5ee" : "#93ab9f" }}>
+              {s.nickname}
+            </span>
+            <span className="font-orbitron text-[9px]" style={{ color: GUILD_GREEN }}>
+              {s.souls}
+            </span>
+          </button>
+        );
+      })}
+    </div>
+  );
 }
 
 // ─── Начисление СЗ ────────────────────────────────────────────────────────────
@@ -21,7 +69,7 @@ export function AwardPanel({ token, students, rules, onDone }: {
   onDone: () => void;
 }) {
   const [heroId, setHeroId] = useState<number | null>(null);
-  const [message, setMessage] = useState("");
+  const [flash, setFlash] = useState<{ text: string; key: number } | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
 
@@ -29,38 +77,49 @@ export function AwardPanel({ token, students, rules, onDone }: {
     if (heroId === null && students.length > 0) setHeroId(students[0].hero_id);
   }, [students, heroId]);
 
+  const hero = students.find((s) => s.hero_id === heroId) ?? null;
+
   const award = async (action: string, title: string) => {
     if (heroId === null) return;
     setBusy(action);
     setError("");
     try {
       const res = await api.award(token, heroId, action);
-      setMessage(`${title}: +${res.delta} СЗ · Древо ${res.tree.percent}%`);
+      setFlash({ text: `${title} · +${res.delta} СЗ · Древо ${res.tree.percent}%`, key: Date.now() });
       onDone();
     } catch (err) {
       setError(errorText(err, "Не удалось начислить"));
-      setMessage("");
+      setFlash(null);
     } finally {
       setBusy(null);
     }
   };
 
   return (
-    <div className="guild-panel p-5 space-y-4">
-      <h2 className="font-orbitron text-sm tracking-[0.16em]">✨ НАЧИСЛИТЬ СЗ</h2>
+    <section className="guild-panel p-5 space-y-4 guild-rise">
+      <div className="flex items-center gap-2">
+        <Icon name="Sparkles" size={16} style={{ color: GUILD_GREEN }} />
+        <h2 className="font-orbitron text-sm tracking-[0.16em]">НАЧИСЛИТЬ СЗ</h2>
+      </div>
 
-      <select
-        value={heroId ?? ""}
-        onChange={(e) => setHeroId(Number(e.target.value))}
-        className="w-full rounded-xl px-3 py-2.5 font-rajdhani outline-none"
-        style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.12)", color: "#e8f5ee" }}
-      >
-        {students.map((s) => (
-          <option key={s.hero_id} value={s.hero_id} style={{ background: "#0c120f" }}>
-            {s.nickname} · {s.souls} СЗ · броня {s.armor}
-          </option>
-        ))}
-      </select>
+      <HeroPicker students={students} value={heroId} onChange={setHeroId} />
+
+      {hero && (
+        <div className="guild-panel-flat px-3 py-2 flex items-center gap-3">
+          <HeroAvatar avatar="" nickname={hero.nickname} branch={hero.branch} size={36} />
+          <div className="min-w-0 flex-1">
+            <div className="font-rajdhani font-semibold truncate">{hero.nickname}</div>
+            <div className="font-rajdhani text-xs flex items-center gap-1.5"
+                 style={{ color: BRANCH_THEME[hero.branch].color }}>
+              <BranchSigil branch={hero.branch} size={12} />
+              {BRANCH_THEME[hero.branch].title}
+              <span style={{ color: "#5d6f65" }}>· {rankOf(Math.floor(hero.souls / 100) + 1).title}</span>
+            </div>
+          </div>
+          <ShieldBadge shield={hero.armor <= 0 ? "bleeding" : hero.armor >= 8 ? "green" : "yellow"}
+                       armor={hero.armor} size={24} />
+        </div>
+      )}
 
       <div className="grid grid-cols-2 gap-2">
         {(rules?.soul_actions ?? []).map((action) => (
@@ -69,21 +128,32 @@ export function AwardPanel({ token, students, rules, onDone }: {
             type="button"
             disabled={busy !== null || heroId === null}
             onClick={() => void award(action.id, action.title)}
-            className="px-3 py-3 rounded-xl font-rajdhani text-sm text-left disabled:opacity-50 transition-transform active:scale-95"
+            className="guild-btn relative px-3 py-3 rounded-xl text-left disabled:opacity-50 overflow-hidden"
             style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}
           >
-            <span className="block">{action.title}</span>
+            <span className="flex items-center gap-2 mb-1">
+              <Icon name={ACTION_ICON[action.id] ?? "Circle"} size={14}
+                    style={{ color: GUILD_GREEN }} />
+              <span className="font-rajdhani text-sm leading-tight">{action.title}</span>
+            </span>
             <span className="font-orbitron text-xs" style={{ color: GUILD_GREEN }}>
               +{action.delta} СЗ
-              {action.weekly_limit ? ` · до ${action.weekly_limit}/нед` : ""}
+              {action.weekly_limit ? (
+                <span style={{ color: "#6b7a72" }}> · до {action.weekly_limit}/нед</span>
+              ) : null}
             </span>
           </button>
         ))}
       </div>
 
-      {message && <p className="font-rajdhani text-sm" style={{ color: GUILD_GREEN }}>{message}</p>}
+      {flash && (
+        <p key={flash.key} className="guild-pop font-rajdhani text-sm flex items-center gap-2"
+           style={{ color: GUILD_GREEN }}>
+          <Icon name="CheckCircle2" size={14} /> {flash.text}
+        </p>
+      )}
       {error && <p className="font-rajdhani text-sm" style={{ color: GUILD_EMBER }}>{error}</p>}
-    </div>
+    </section>
   );
 }
 
@@ -109,43 +179,68 @@ export function ControlPanel({ token, students, festivalReady, onDone }: {
     }
   };
 
+  const selectStyle = {
+    background: "rgba(255,255,255,0.05)",
+    border: "1px solid rgba(255,255,255,0.12)",
+    color: "#e8f5ee",
+  };
+
   return (
     <div className="space-y-4">
-      <div className="guild-panel p-5 space-y-3">
-        <h2 className="font-orbitron text-sm tracking-[0.16em]">📣 СВИСТОК</h2>
-        <p className="font-rajdhani text-sm" style={{ color: "#9db3a6" }}>
+      <section className="guild-panel p-5 space-y-4 guild-rise">
+        <div className="flex items-center gap-2">
+          <Icon name="Megaphone" size={16} style={{ color: GUILD_EMBER }} />
+          <h2 className="font-orbitron text-sm tracking-[0.16em]">СВИСТОК</h2>
+        </div>
+        <p className="font-rajdhani text-sm" style={{ color: "#93ab9f" }}>
           Один свист — стоп-игра, два — разбор. Звук и вибрация уходят на все
           устройства класса сразу.
         </p>
-        <div className="grid grid-cols-2 gap-3">
+
+        {/* Главная кнопка урока: её должно быть видно с любой парты */}
+        <div className="flex items-center justify-center gap-5 py-2">
           <button
             type="button"
             onClick={() => void run(async () => {
               const res = await api.whistle(token, 1);
               return `Свисток ушёл на ${res.delivered} устройств`;
             })}
-            className="py-5 rounded-2xl font-orbitron text-sm font-bold transition-transform active:scale-95"
-            style={{ background: GUILD_EMBER, color: "#fff" }}
+            className="guild-btn relative w-32 h-32 rounded-full flex flex-col items-center justify-center gap-1"
+            style={{
+              background: `radial-gradient(circle at 35% 28%, #ff9a7a, ${GUILD_EMBER} 55%, #b8341a)`,
+              boxShadow: `0 16px 40px -14px ${GUILD_EMBER}, inset 0 2px 0 rgba(255,255,255,0.35)`,
+              color: "#fff",
+            }}
           >
-            🔔 СТОП-ИГРА
+            <span className="text-3xl">🔔</span>
+            <span className="font-orbitron text-[11px] font-bold tracking-wider">СТОП-ИГРА</span>
           </button>
+
           <button
             type="button"
             onClick={() => void run(async () => {
               const res = await api.whistle(token, 2);
               return `Два свистка ушли на ${res.delivered} устройств`;
             })}
-            className="py-5 rounded-2xl font-orbitron text-sm font-bold transition-transform active:scale-95"
-            style={{ background: "rgba(226,96,63,0.18)", color: GUILD_EMBER, border: `1px solid ${GUILD_EMBER}55` }}
+            className="guild-btn w-24 h-24 rounded-full flex flex-col items-center justify-center gap-0.5"
+            style={{
+              background: "rgba(255,107,69,0.12)",
+              border: `2px solid ${GUILD_EMBER}66`,
+              color: GUILD_EMBER,
+            }}
           >
-            🔔🔔 РАЗБОР
+            <span className="text-xl">🔔🔔</span>
+            <span className="font-orbitron text-[10px] font-bold">РАЗБОР</span>
           </button>
         </div>
-      </div>
+      </section>
 
-      <div className="guild-panel p-5 space-y-3">
-        <h2 className="font-orbitron text-sm tracking-[0.16em]">🤬 ДЕБАФФ «МАТ»</h2>
-        <p className="font-rajdhani text-sm" style={{ color: "#9db3a6" }}>
+      <section className="guild-panel p-5 space-y-3 guild-rise">
+        <div className="flex items-center gap-2">
+          <Icon name="ShieldOff" size={16} style={{ color: GUILD_EMBER }} />
+          <h2 className="font-orbitron text-sm tracking-[0.16em]">ДЕБАФФ «МАТ»</h2>
+        </div>
+        <p className="font-rajdhani text-sm" style={{ color: "#93ab9f" }}>
           −10% Древа и дебафф на 24 часа. Герой указывается по желанию: можно
           отметить только урон гильдии, не показывая класс на одного человека.
         </p>
@@ -153,11 +248,13 @@ export function ControlPanel({ token, students, festivalReady, onDone }: {
           value={matHero ?? ""}
           onChange={(e) => setMatHero(e.target.value ? Number(e.target.value) : null)}
           className="w-full rounded-xl px-3 py-2.5 font-rajdhani outline-none"
-          style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.12)", color: "#e8f5ee" }}
+          style={selectStyle}
         >
           <option value="" style={{ background: "#0c120f" }}>Без указания героя</option>
           {students.map((s) => (
-            <option key={s.hero_id} value={s.hero_id} style={{ background: "#0c120f" }}>{s.nickname}</option>
+            <option key={s.hero_id} value={s.hero_id} style={{ background: "#0c120f" }}>
+              {s.nickname}
+            </option>
           ))}
         </select>
         <input
@@ -165,7 +262,7 @@ export function ControlPanel({ token, students, festivalReady, onDone }: {
           onChange={(e) => setNote(e.target.value)}
           placeholder="Пометка для журнала (необязательно)"
           className="w-full rounded-xl px-3 py-2.5 font-rajdhani outline-none"
-          style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.12)", color: "#e8f5ee" }}
+          style={selectStyle}
         />
         <button
           type="button"
@@ -174,15 +271,19 @@ export function ControlPanel({ token, students, festivalReady, onDone }: {
             setNote("");
             return `Дебафф применён · Древо ${res.tree.percent}%`;
           })}
-          className="w-full py-3 rounded-xl font-orbitron text-xs font-bold"
-          style={{ background: "rgba(226,96,63,0.2)", color: GUILD_EMBER, border: `1px solid ${GUILD_EMBER}55` }}
+          className="guild-btn w-full py-3 rounded-xl font-orbitron text-xs font-bold"
+          style={{ background: "rgba(255,107,69,0.18)", color: GUILD_EMBER,
+                   border: `1px solid ${GUILD_EMBER}55` }}
         >
           ПРИМЕНИТЬ ДЕБАФФ
         </button>
-      </div>
+      </section>
 
-      <div className="guild-panel p-5 space-y-3">
-        <h2 className="font-orbitron text-sm tracking-[0.16em]">🎪 ФЕСТИВАЛЬ</h2>
+      <section className="guild-panel p-5 space-y-3 guild-rise">
+        <div className="flex items-center gap-2">
+          <Icon name="PartyPopper" size={16} style={{ color: GUILD_GOLD }} />
+          <h2 className="font-orbitron text-sm tracking-[0.16em]">ФЕСТИВАЛЬ</h2>
+        </div>
         <p className="font-rajdhani text-sm" style={{ color: festivalReady ? GUILD_GREEN : GUILD_GOLD }}>
           {festivalReady
             ? "Древо доросло до 70% — можно запускать."
@@ -194,27 +295,31 @@ export function ControlPanel({ token, students, festivalReady, onDone }: {
             const res = await api.startFestival(token);
             return res.festival.status === "running" ? "Фестиваль начался" : "Начат Рейд";
           })}
-          className="w-full py-3 rounded-xl font-orbitron text-xs font-bold"
-          style={{
-            background: festivalReady ? GUILD_GREEN : "rgba(255,255,255,0.06)",
-            color: festivalReady ? "#0c120f" : GUILD_GOLD,
-          }}
+          className="guild-btn w-full py-3.5 rounded-xl font-orbitron text-xs font-bold"
+          style={festivalReady
+            ? { background: `linear-gradient(135deg, ${GUILD_GOLD}, #c9922f)`, color: "#1a1204",
+                boxShadow: `0 12px 30px -14px ${GUILD_GOLD}` }
+            : { background: "rgba(255,255,255,0.06)", color: GUILD_GOLD }}
         >
           {festivalReady ? "ЗАПУСТИТЬ ФЕСТИВАЛЬ" : "ЗАПУСТИТЬ (БУДЕТ РЕЙД)"}
         </button>
-      </div>
+      </section>
 
-      {status && <p className="font-rajdhani text-sm" style={{ color: GUILD_GREEN }}>{status}</p>}
+      {status && (
+        <p className="guild-pop font-rajdhani text-sm flex items-center gap-2" style={{ color: GUILD_GREEN }}>
+          <Icon name="CheckCircle2" size={14} /> {status}
+        </p>
+      )}
       {error && <p className="font-rajdhani text-sm" style={{ color: GUILD_EMBER }}>{error}</p>}
     </div>
   );
 }
 
 // ─── Посещаемость ─────────────────────────────────────────────────────────────
-const STATUS_META: Record<AttendanceStatus, { label: string; color: string }> = {
-  present: { label: "был", color: GUILD_GREEN },
-  absent: { label: "нет", color: GUILD_EMBER },
-  excused: { label: "ув.", color: GUILD_GOLD },
+const STATUS_META: Record<AttendanceStatus, { label: string; color: string; icon: string }> = {
+  present: { label: "был", color: GUILD_GREEN, icon: "Check" },
+  absent: { label: "нет", color: GUILD_EMBER, icon: "X" },
+  excused: { label: "ув.", color: GUILD_GOLD, icon: "FileText" },
 };
 
 export function AttendancePanel({ token, students, onDone }: {
@@ -231,6 +336,8 @@ export function AttendancePanel({ token, students, onDone }: {
 
   const setMark = (heroId: number, value: AttendanceStatus) =>
     setMarks((prev) => ({ ...prev, [heroId]: value }));
+
+  const absent = students.filter((s) => (marks[s.hero_id] ?? "present") === "absent").length;
 
   const save = async () => {
     setError("");
@@ -259,25 +366,34 @@ export function AttendancePanel({ token, students, onDone }: {
     }
   };
 
+  const inputStyle = {
+    background: "rgba(255,255,255,0.05)",
+    border: "1px solid rgba(255,255,255,0.12)",
+    color: "#e8f5ee",
+  };
+
   return (
-    <div className="guild-panel p-5 space-y-4">
+    <section className="guild-panel p-5 space-y-4 guild-rise">
       <div>
-        <h2 className="font-orbitron text-sm tracking-[0.16em] mb-1">🛡️ ПОСЕЩАЕМОСТЬ</h2>
-        <p className="font-rajdhani text-sm" style={{ color: "#9db3a6" }}>
+        <div className="flex items-center gap-2 mb-1">
+          <Icon name="Shield" size={16} style={{ color: GUILD_GREEN }} />
+          <h2 className="font-orbitron text-sm tracking-[0.16em]">ПОСЕЩАЕМОСТЬ</h2>
+        </div>
+        <p className="font-rajdhani text-sm" style={{ color: "#93ab9f" }}>
           «Уважительная» не бьёт по Броне. Итог дня система считает сама в 22:00 —
           кнопка ниже нужна, только если сервер в это время спал.
         </p>
       </div>
 
-      <div className="flex flex-wrap gap-3">
+      <div className="flex flex-wrap items-center gap-3">
         <input
           type="date"
           value={day}
           onChange={(e) => setDay(e.target.value)}
           className="rounded-lg px-3 py-2 font-rajdhani outline-none"
-          style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.12)", color: "#e8f5ee" }}
+          style={inputStyle}
         />
-        <label className="flex items-center gap-2 font-rajdhani text-sm" style={{ color: "#9db3a6" }}>
+        <label className="flex items-center gap-2 font-rajdhani text-sm" style={{ color: "#93ab9f" }}>
           урок
           <input
             type="number"
@@ -286,32 +402,42 @@ export function AttendancePanel({ token, students, onDone }: {
             value={lesson}
             onChange={(e) => setLesson(Number(e.target.value))}
             className="w-16 rounded-lg px-2 py-2 outline-none"
-            style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.12)", color: "#e8f5ee" }}
+            style={inputStyle}
           />
         </label>
+        {absent > 0 && (
+          <span className="font-rajdhani text-xs px-2.5 py-1 rounded-full"
+                style={{ background: `${GUILD_EMBER}18`, color: GUILD_EMBER }}>
+            отмечено отсутствий: {absent}
+          </span>
+        )}
       </div>
 
-      <ul className="space-y-1.5 max-h-[22rem] overflow-y-auto pr-1">
+      <ul className="space-y-1 max-h-[24rem] overflow-y-auto pr-1">
         {students.map((s) => {
           const current = marks[s.hero_id] ?? "present";
           return (
-            <li key={s.hero_id} className="flex items-center gap-2">
+            <li key={s.hero_id} className="flex items-center gap-2 py-0.5">
+              <HeroAvatar avatar="" nickname={s.nickname} branch={s.branch} size={28} />
               <span className="flex-1 font-rajdhani text-sm truncate">{s.nickname}</span>
-              {(Object.keys(STATUS_META) as AttendanceStatus[]).map((value) => (
-                <button
-                  key={value}
-                  type="button"
-                  onClick={() => setMark(s.hero_id, value)}
-                  className="px-2.5 py-1 rounded-lg font-rajdhani text-xs"
-                  style={{
-                    background: current === value ? `${STATUS_META[value].color}22` : "rgba(255,255,255,0.04)",
-                    border: `1px solid ${current === value ? `${STATUS_META[value].color}66` : "transparent"}`,
-                    color: current === value ? STATUS_META[value].color : "#7f9488",
-                  }}
-                >
-                  {STATUS_META[value].label}
-                </button>
-              ))}
+              {(Object.keys(STATUS_META) as AttendanceStatus[]).map((value) => {
+                const active = current === value;
+                return (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => setMark(s.hero_id, value)}
+                    className="guild-btn px-2.5 py-1 rounded-lg font-rajdhani text-xs"
+                    style={{
+                      background: active ? `${STATUS_META[value].color}22` : "rgba(255,255,255,0.04)",
+                      border: `1px solid ${active ? `${STATUS_META[value].color}66` : "transparent"}`,
+                      color: active ? STATUS_META[value].color : "#7f9488",
+                    }}
+                  >
+                    {STATUS_META[value].label}
+                  </button>
+                );
+              })}
             </li>
           );
         })}
@@ -321,15 +447,15 @@ export function AttendancePanel({ token, students, onDone }: {
         <button
           type="button"
           onClick={() => void save()}
-          className="px-4 py-2.5 rounded-xl font-orbitron text-xs font-bold"
-          style={{ background: GUILD_GREEN, color: "#0c120f" }}
+          className="guild-btn px-4 py-2.5 rounded-xl font-orbitron text-xs font-bold"
+          style={{ background: GUILD_GREEN, color: "#06120c" }}
         >
           СОХРАНИТЬ УРОК
         </button>
         <button
           type="button"
           onClick={() => void runArmor()}
-          className="px-4 py-2.5 rounded-xl font-orbitron text-xs"
+          className="guild-btn px-4 py-2.5 rounded-xl font-orbitron text-xs"
           style={{ background: "rgba(255,255,255,0.06)", color: GUILD_GOLD }}
         >
           ПЕРЕСЧИТАТЬ БРОНЮ ЗА ДЕНЬ
@@ -338,15 +464,15 @@ export function AttendancePanel({ token, students, onDone }: {
 
       {status && <p className="font-rajdhani text-sm" style={{ color: GUILD_GREEN }}>{status}</p>}
       {error && <p className="font-rajdhani text-sm" style={{ color: GUILD_EMBER }}>{error}</p>}
-    </div>
+    </section>
   );
 }
 
 // ─── Карта гильдии ────────────────────────────────────────────────────────────
-const STICKER_LABEL: Record<Sticker, string> = {
-  angry: "😤 бесит",
-  scared: "😨 страшно",
-  change: "🔁 хочу изменить",
+const STICKER_META: Record<Sticker, { glyph: string; label: string }> = {
+  angry: { glyph: "😤", label: "бесит" },
+  scared: { glyph: "😨", label: "страшно" },
+  change: { glyph: "🔁", label: "хочу изменить" },
 };
 
 export function GuildMapView({ token }: { token: string }) {
@@ -369,54 +495,88 @@ export function GuildMapView({ token }: { token: string }) {
   if (error) return <p className="font-rajdhani text-sm" style={{ color: GUILD_EMBER }}>{error}</p>;
   if (!data) return <p className="font-rajdhani text-sm" style={{ color: "#6b7a72" }}>Загружаем…</p>;
 
+  const maxSouls = Math.max(1, ...data.branches.map((b) => b.souls));
+
   return (
     <div className="space-y-4">
       <TreeMeter tree={data.tree} />
 
-      <div className="guild-panel p-5">
-        <h2 className="font-orbitron text-sm tracking-[0.16em] mb-3">🧭 КАРТА ГИЛЬДИИ</h2>
+      <section className="guild-panel p-5 guild-rise">
+        <div className="flex items-center gap-2 mb-1">
+          <Icon name="Compass" size={16} style={{ color: GUILD_GREEN }} />
+          <h2 className="font-orbitron text-sm tracking-[0.16em]">КАРТА ГИЛЬДИИ</h2>
+        </div>
         <p className="font-rajdhani text-xs mb-4" style={{ color: "#6b7a72" }}>
           Только сводка по веткам: ни одной клички, ни одного имени.
         </p>
+
         <div className="grid gap-3 sm:grid-cols-3">
-          {data.branches.map((branch) => (
-            <div key={branch.branch} className="rounded-xl p-3"
-                 style={{ background: "rgba(255,255,255,0.04)" }}>
-              <div className="text-2xl mb-1">{BRANCH_GLYPH[branch.branch]}</div>
-              <div className="font-orbitron text-sm">{branch.title}</div>
-              <div className="font-rajdhani text-xs mt-1" style={{ color: "#9db3a6" }}>
-                {branch.heroes} героев · {branch.souls} СЗ · броня ⌀{branch.avg_armor}
+          {data.branches.map((branch) => {
+            const tone = BRANCH_THEME[branch.branch];
+            return (
+              <div key={branch.branch} className="guild-panel-flat p-3.5 relative overflow-hidden"
+                   style={{ borderColor: `${tone.color}33` }}>
+                <div className="absolute inset-0 opacity-[0.07] pointer-events-none"
+                     style={{ background: `radial-gradient(circle at 80% 0%, ${tone.color}, transparent 60%)` }} />
+                <div className="relative">
+                  <div className="flex items-center gap-2 mb-2" style={{ color: tone.color }}>
+                    <BranchSigil branch={branch.branch} size={22} />
+                    <span className="font-orbitron text-sm">{branch.title}</span>
+                  </div>
+                  <div className="font-orbitron text-2xl font-bold" style={{ color: tone.color }}>
+                    {branch.souls}
+                    <span className="font-rajdhani text-xs ml-1" style={{ color: "#6b7a72" }}>СЗ</span>
+                  </div>
+                  <div className="h-1.5 rounded-full mt-2 overflow-hidden"
+                       style={{ background: "rgba(255,255,255,0.08)" }}>
+                    <div className="h-full rounded-full transition-all duration-700"
+                         style={{ width: `${(branch.souls / maxSouls) * 100}%`, background: tone.color }} />
+                  </div>
+                  <div className="font-rajdhani text-xs mt-2" style={{ color: "#93ab9f" }}>
+                    {branch.heroes} героев · броня ⌀{branch.avg_armor}
+                  </div>
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
 
         {data.heroes_low_armor > 0 && (
-          <p className="mt-4 font-rajdhani text-sm flex items-center gap-2" style={{ color: GUILD_GOLD }}>
-            <Icon name="ShieldAlert" size={14} />
+          <p className="mt-4 font-rajdhani text-sm flex items-center gap-2 px-3 py-2 rounded-xl"
+             style={{ background: `${GUILD_GOLD}12`, color: GUILD_GOLD }}>
+            <Icon name="ShieldAlert" size={15} />
             У {data.heroes_low_armor} героев Броня 3 и ниже — стоит поговорить с классом.
           </p>
         )}
-      </div>
+      </section>
 
-      <div className="guild-panel p-5">
-        <h2 className="font-orbitron text-sm tracking-[0.16em] mb-3">📬 ТИХАЯ ПОЧТА</h2>
+      <section className="guild-panel p-5 guild-rise">
+        <div className="flex items-center gap-2 mb-3">
+          <Icon name="Mail" size={16} style={{ color: GUILD_GOLD }} />
+          <h2 className="font-orbitron text-sm tracking-[0.16em]">ТИХАЯ ПОЧТА</h2>
+        </div>
         {letters.length === 0 ? (
           <p className="font-rajdhani text-sm" style={{ color: "#6b7a72" }}>Писем пока нет.</p>
         ) : (
           <ul className="space-y-1.5">
             {letters.map((letter, i) => (
               <li key={`${letter.day}-${letter.sticker}-${i}`}
-                  className="flex items-center justify-between font-rajdhani text-sm">
-                <span>{STICKER_LABEL[letter.sticker]}</span>
+                  className="flex items-center gap-3 font-rajdhani text-sm py-1.5 px-2 rounded-lg"
+                  style={{ background: "rgba(255,255,255,0.03)" }}>
+                <span className="text-xl">{STICKER_META[letter.sticker].glyph}</span>
+                <span className="flex-1">{STICKER_META[letter.sticker].label}</span>
                 <span style={{ color: "#6b7a72" }}>
-                  {new Date(letter.day).toLocaleDateString("ru-RU")} · ×{letter.count}
+                  {new Date(letter.day).toLocaleDateString("ru-RU")}
+                </span>
+                <span className="font-orbitron text-xs px-2 py-0.5 rounded-full"
+                      style={{ background: `${GUILD_GOLD}18`, color: GUILD_GOLD }}>
+                  ×{letter.count}
                 </span>
               </li>
             ))}
           </ul>
         )}
-      </div>
+      </section>
     </div>
   );
 }
@@ -433,10 +593,7 @@ export function RosterPanel({ token, students, onDone }: {
   const [realName, setRealName] = useState<string | null>(null);
   const [error, setError] = useState("");
 
-  const sorted = useMemo(
-    () => [...students].sort((a, b) => b.souls - a.souls),
-    [students],
-  );
+  const sorted = useMemo(() => [...students].sort((a, b) => b.souls - a.souls), [students]);
 
   const doReset = async (login: string) => {
     setError("");
@@ -461,69 +618,83 @@ export function RosterPanel({ token, students, onDone }: {
     }
   };
 
+  const inputStyle = {
+    background: "rgba(255,255,255,0.05)",
+    border: "1px solid rgba(255,255,255,0.12)",
+    color: "#e8f5ee",
+  };
+
   return (
     <div className="space-y-4">
-      <div className="guild-panel p-5">
+      <section className="guild-panel p-5 guild-rise">
         <div className="flex items-center justify-between mb-3">
-          <h2 className="font-orbitron text-sm tracking-[0.16em]">👥 ГЕРОИ</h2>
-          <a
-            href={api.exportUrl()}
-            className="font-rajdhani text-xs flex items-center gap-1.5"
-            style={{ color: GUILD_GOLD }}
-          >
+          <div className="flex items-center gap-2">
+            <Icon name="ScrollText" size={16} style={{ color: GUILD_GREEN }} />
+            <h2 className="font-orbitron text-sm tracking-[0.16em]">ГЕРОИ</h2>
+          </div>
+          <a href={api.exportUrl()} className="font-rajdhani text-xs flex items-center gap-1.5"
+             style={{ color: GUILD_GOLD }}>
             <Icon name="Download" size={12} /> экспорт CSV
           </a>
         </div>
 
-        <ul className="space-y-1.5">
-          {sorted.map((s) => (
-            <li key={s.hero_id} className="flex items-center gap-2 py-1">
-              <span className="flex-1 font-rajdhani text-sm truncate">
-                {BRANCH_GLYPH[s.branch]} {s.nickname}
-              </span>
-              <span className="font-orbitron text-xs w-20 text-right" style={{ color: GUILD_GREEN }}>
-                {s.souls} СЗ
-              </span>
-              <span className="font-mono text-[11px] w-24 text-right hidden sm:block"
-                    style={{ color: "#6b7a72" }}>
-                {s.login}
-              </span>
-              <button
-                type="button"
-                onClick={() => void doReset(s.login)}
-                className="px-2 py-1 rounded-lg font-rajdhani text-[11px]"
-                style={{ background: "rgba(255,255,255,0.05)", color: "#9db3a6" }}
-              >
-                сброс пароля
-              </button>
-            </li>
-          ))}
+        <ul className="space-y-1">
+          {sorted.map((s, i) => {
+            const level = Math.floor(s.souls / 100) + 1;
+            return (
+              <li key={s.hero_id}
+                  className="guild-altar-item flex items-center gap-2.5 py-1.5 px-2 rounded-lg">
+                <span className="font-orbitron text-[11px] w-5 text-right" style={{ color: "#5d6f65" }}>
+                  {i + 1}
+                </span>
+                <HeroAvatar avatar="" nickname={s.nickname} branch={s.branch} size={30} />
+                <span className="flex-1 min-w-0">
+                  <span className="block font-rajdhani text-sm truncate">{s.nickname}</span>
+                  <span className="block font-rajdhani text-[11px] truncate"
+                        style={{ color: BRANCH_THEME[s.branch].color }}>
+                    {BRANCH_THEME[s.branch].title} · {s.login}
+                  </span>
+                </span>
+                <RankBadge level={level} size={26} />
+                <span className="font-orbitron text-xs w-16 text-right" style={{ color: GUILD_GREEN }}>
+                  {s.souls} СЗ
+                </span>
+                <button
+                  type="button"
+                  onClick={() => void doReset(s.login)}
+                  className="guild-btn px-2 py-1 rounded-lg font-rajdhani text-[11px] shrink-0"
+                  style={{ background: "rgba(255,255,255,0.05)", color: "#93ab9f" }}
+                >
+                  сброс
+                </button>
+              </li>
+            );
+          })}
         </ul>
 
         {reset && (
-          <div className="mt-4 rounded-xl p-3 space-y-2"
+          <div className="mt-4 rounded-xl p-3 space-y-2 guild-pop"
                style={{ background: `${GUILD_GOLD}14`, border: `1px solid ${GUILD_GOLD}44` }}>
             <p className="font-rajdhani text-sm">
-              {reset.login} → <span className="font-mono">{reset.password}</span>
+              {reset.login} → <span className="font-mono text-base">{reset.password}</span>
             </p>
-            <p className="font-rajdhani text-xs" style={{ color: "#9db3a6" }}>
+            <p className="font-rajdhani text-xs" style={{ color: "#93ab9f" }}>
               Шаблон для родителя: {reset.parent_message}
             </p>
-            <button
-              type="button"
-              onClick={() => setReset(null)}
-              className="font-rajdhani text-xs underline"
-              style={{ color: "#6b7a72" }}
-            >
+            <button type="button" onClick={() => setReset(null)}
+                    className="font-rajdhani text-xs underline" style={{ color: "#6b7a72" }}>
               скрыть
             </button>
           </div>
         )}
-      </div>
+      </section>
 
-      <div className="guild-panel p-5 space-y-3">
-        <h2 className="font-orbitron text-sm tracking-[0.16em]">🔐 РЕЕСТР</h2>
-        <p className="font-rajdhani text-sm" style={{ color: "#9db3a6" }}>
+      <section className="guild-panel p-5 space-y-3 guild-rise">
+        <div className="flex items-center gap-2">
+          <Icon name="KeyRound" size={16} style={{ color: GUILD_GOLD }} />
+          <h2 className="font-orbitron text-sm tracking-[0.16em]">РЕЕСТР</h2>
+        </div>
+        <p className="font-rajdhani text-sm" style={{ color: "#93ab9f" }}>
           Единственное место, где кличка связана с учеником. Запись хранится
           зашифрованной, каждое открытие требует свежий код 2FA и попадает в журнал.
         </p>
@@ -531,11 +702,13 @@ export function RosterPanel({ token, students, onDone }: {
           value={lookupHero ?? ""}
           onChange={(e) => setLookupHero(e.target.value ? Number(e.target.value) : null)}
           className="w-full rounded-xl px-3 py-2.5 font-rajdhani outline-none"
-          style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.12)", color: "#e8f5ee" }}
+          style={inputStyle}
         >
           <option value="" style={{ background: "#0c120f" }}>Выбери кличку</option>
           {sorted.map((s) => (
-            <option key={s.hero_id} value={s.hero_id} style={{ background: "#0c120f" }}>{s.nickname}</option>
+            <option key={s.hero_id} value={s.hero_id} style={{ background: "#0c120f" }}>
+              {s.nickname}
+            </option>
           ))}
         </select>
         <div className="flex gap-2">
@@ -545,21 +718,18 @@ export function RosterPanel({ token, students, onDone }: {
             inputMode="numeric"
             placeholder="код 2FA"
             className="flex-1 rounded-xl px-3 py-2.5 font-rajdhani outline-none"
-            style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.12)", color: "#e8f5ee" }}
+            style={inputStyle}
           />
-          <button
-            type="button"
-            onClick={() => void doLookup()}
-            className="px-4 rounded-xl font-orbitron text-xs"
-            style={{ background: "rgba(255,255,255,0.06)", color: GUILD_GOLD }}
-          >
+          <button type="button" onClick={() => void doLookup()}
+                  className="guild-btn px-4 rounded-xl font-orbitron text-xs"
+                  style={{ background: "rgba(255,255,255,0.06)", color: GUILD_GOLD }}>
             ОТКРЫТЬ
           </button>
         </div>
         {realName && (
-          <p className="font-rajdhani text-sm" style={{ color: GUILD_GREEN }}>{realName}</p>
+          <p className="font-rajdhani text-base guild-pop" style={{ color: GUILD_GREEN }}>{realName}</p>
         )}
-      </div>
+      </section>
 
       {error && <p className="font-rajdhani text-sm" style={{ color: GUILD_EMBER }}>{error}</p>}
     </div>

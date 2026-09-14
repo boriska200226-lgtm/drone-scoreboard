@@ -5,7 +5,8 @@ import Icon from "@/components/ui/icon";
 
 import { api, ApiError } from "../api";
 import type { Credential } from "../types";
-import { BRANCH_GLYPH, GUILD_EMBER, GUILD_GOLD, GUILD_GREEN } from "../theme";
+import { BRANCH_THEME, GUILD_EMBER, GUILD_GOLD, GUILD_GREEN } from "../theme";
+import { BranchSigil, HeroAvatar } from "./art";
 
 /**
  * Карточки доступа.
@@ -81,7 +82,7 @@ export function CardsSheet({ token, className }: { token: string; className: str
             type="button"
             onClick={() => void generate()}
             disabled={busy}
-            className="px-4 py-2.5 rounded-xl font-orbitron text-xs font-bold disabled:opacity-50 flex items-center gap-2"
+            className="guild-btn px-4 py-2.5 rounded-xl font-orbitron text-xs font-bold disabled:opacity-50 flex items-center gap-2"
             style={{ background: GUILD_GREEN, color: "#0c120f" }}
           >
             {busy ? <Icon name="Loader" size={14} className="animate-spin" /> : <Icon name="UserPlus" size={14} />}
@@ -92,7 +93,7 @@ export function CardsSheet({ token, className }: { token: string; className: str
             <button
               type="button"
               onClick={() => window.print()}
-              className="px-4 py-2.5 rounded-xl font-orbitron text-xs flex items-center gap-2"
+              className="guild-btn px-4 py-2.5 rounded-xl font-orbitron text-xs flex items-center gap-2"
               style={{ background: "rgba(255,255,255,0.06)", color: GUILD_GOLD }}
             >
               <Icon name="Printer" size={14} /> ПЕЧАТЬ / PDF
@@ -138,33 +139,50 @@ export function CardsSheet({ token, className }: { token: string; className: str
           {cards.map((card) => (
             <article
               key={card.login}
-              className="guild-print-card rounded-2xl p-4"
-              style={{ border: `1.5px solid ${GUILD_GREEN}55`, background: "rgba(43,75,59,0.35)" }}
+              className="guild-print-card relative rounded-2xl p-4 overflow-hidden"
+              style={{
+                border: `1.5px solid ${BRANCH_THEME[card.branch].color}66`,
+                background: `linear-gradient(150deg, ${BRANCH_THEME[card.branch].soft}, rgba(12,18,15,0.6))`,
+              }}
             >
               <header className="flex items-center justify-between mb-3">
-                <span className="font-orbitron text-xs tracking-[0.16em]">ГИЛЬДИЯ · {className}</span>
-                <span className="text-lg">{BRANCH_GLYPH[card.branch]}</span>
+                <span className="font-orbitron text-[10px] tracking-[0.18em]"
+                      style={{ color: "#93ab9f" }}>
+                  ГИЛЬДИЯ · {className}
+                </span>
+                <span style={{ color: BRANCH_THEME[card.branch].color }}>
+                  <BranchSigil branch={card.branch} size={18} />
+                </span>
               </header>
 
-              <div className="flex gap-4 items-center">
+              <div className="flex gap-3 items-center">
+                <HeroAvatar avatar="" nickname={card.nickname} branch={card.branch} size={46} />
+
                 <div className="min-w-0 flex-1">
-                  <p className="font-orbitron text-xl font-black truncate">{card.nickname}</p>
-                  <dl className="mt-3 space-y-1 font-rajdhani text-sm">
+                  <p className="font-orbitron text-lg font-black truncate leading-tight">
+                    {card.nickname}
+                  </p>
+                  <p className="font-rajdhani text-[11px]"
+                     style={{ color: BRANCH_THEME[card.branch].color }}>
+                    {BRANCH_THEME[card.branch].title} · «{BRANCH_THEME[card.branch].motto}»
+                  </p>
+                  <dl className="mt-2 space-y-0.5 font-rajdhani text-sm">
                     <div className="flex gap-2">
                       <dt style={{ color: "#7f9488" }}>логин</dt>
                       <dd className="font-mono">{card.login}</dd>
                     </div>
                     <div className="flex gap-2">
                       <dt style={{ color: "#7f9488" }}>пароль</dt>
-                      <dd className="font-mono tracking-wider">{card.password}</dd>
+                      <dd className="font-mono tracking-wider font-semibold">{card.password}</dd>
                     </div>
                   </dl>
                 </div>
+
                 {qr[card.login] && (
                   <img
                     src={qr[card.login]}
                     alt={`QR для входа ${card.login}`}
-                    className="w-20 h-20 rounded bg-white p-1 shrink-0"
+                    className="w-[74px] h-[74px] rounded-lg bg-white p-1 shrink-0"
                   />
                 )}
               </div>

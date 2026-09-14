@@ -6,7 +6,10 @@ import { api, ApiError } from "../api";
 import { useInstallPrompt } from "../pwa";
 import { unlockAudio } from "../sound";
 import { GUILD_EMBER, GUILD_GOLD, GUILD_GREEN } from "../theme";
+import { rankOf } from "../theme";
 import type { GuildAuth, LinkStatus, TreeState } from "../types";
+import { useCountUp } from "../useCountUp";
+import { TreeArt } from "./art";
 
 // ─── Значок связи ─────────────────────────────────────────────────────────────
 const LINK_LABEL: Record<LinkStatus, { text: string; color: string; icon: string }> = {
@@ -22,14 +25,26 @@ export function ConnectionBadge({ status }: { status: LinkStatus }) {
     <span
       className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full font-rajdhani text-[11px]"
       style={{ background: `${meta.color}18`, border: `1px solid ${meta.color}40`, color: meta.color }}
+      data-link-status={status}
+      aria-label={`Связь: ${meta.text}`}
       title={
         status === "polling"
           ? "WebSocket недоступен — данные обновляются опросом раз в 5 секунд"
-          : undefined
+          : meta.text
       }
     >
-      <Icon name={meta.icon} size={11} className={status === "connecting" ? "animate-spin" : ""} />
-      {meta.text}
+      <span className="relative flex w-1.5 h-1.5">
+        {status === "live" && (
+          <span className="absolute inline-flex w-full h-full rounded-full animate-ping"
+                style={{ background: meta.color, opacity: 0.7 }} />
+        )}
+        <span className="relative inline-flex w-1.5 h-1.5 rounded-full"
+              style={{ background: meta.color }} />
+      </span>
+      {/* Когда всё хорошо, подпись на телефоне только занимает место.
+          Как только связь просела — текст виден всегда: это уже важно. */}
+      <span className={status === "live" ? "hidden sm:inline" : "inline"}>{meta.text}</span>
+      {status === "connecting" && <Icon name="Loader" size={11} className="animate-spin sm:hidden" />}
     </span>
   );
 }
@@ -43,7 +58,7 @@ export function InstallBanner() {
 
   return (
     <div className="guild-panel guild-no-print px-4 py-3 flex items-center gap-3 guild-rise">
-      <Icon name="Download" size={18} style={{ color: GUILD_GREEN }} />
+      <span className="text-2xl shrink-0">📲</span>
       <div className="flex-1 font-rajdhani text-sm">
         {manualIos ? (
           <>Добавь Гильдию на экран: «Поделиться» → «На экран “Домой”».</>
@@ -55,8 +70,8 @@ export function InstallBanner() {
         <button
           type="button"
           onClick={() => void install()}
-          className="px-3 py-1.5 rounded-lg font-orbitron text-[11px]"
-          style={{ background: GUILD_GREEN, color: "#0c120f" }}
+          className="guild-btn px-3 py-1.5 rounded-lg font-orbitron text-[11px] shrink-0"
+          style={{ background: GUILD_GREEN, color: "#06120c" }}
         >
           УСТАНОВИТЬ
         </button>
@@ -71,18 +86,70 @@ export function InstallBanner() {
 // ─── Свисток ──────────────────────────────────────────────────────────────────
 export function WhistleOverlay({ title, onDone }: { title: string; onDone: () => void }) {
   useEffect(() => {
-    const timer = window.setTimeout(onDone, 1600);
+    const timer = window.setTimeout(onDone, 1700);
     return () => window.clearTimeout(timer);
   }, [onDone]);
 
   return (
-    <div className="fixed inset-0 z-[120] flex items-center justify-center pointer-events-none">
-      <div className="absolute inset-0 guild-flash" style={{ background: GUILD_EMBER }} />
-      <div
-        className="relative font-orbitron text-4xl md:text-6xl font-black guild-rise"
-        style={{ color: "#fff", textShadow: "0 0 30px rgba(0,0,0,0.6)" }}
-      >
-        {title}
+    <div className="fixed inset-0 z-[120] flex items-center justify-center pointer-events-none overflow-hidden">
+      <div className="absolute inset-0 guild-flash"
+           style={{ background: `radial-gradient(circle at 50% 45%, ${GUILD_EMBER}, #7a1f0c)` }} />
+      {/* Ударная волна: сигнал должен читаться боковым зрением через весь класс */}
+      {[0, 1, 2].map((i) => (
+        <span
+          key={i}
+          className="absolute rounded-full guild-shock"
+          style={{
+            width: "40vmin",
+            height: "40vmin",
+            border: "3px solid rgba(255,255,255,0.65)",
+            animationDelay: `${i * 0.16}s`,
+          }}
+        />
+      ))}
+      <div className="relative text-center guild-pop">
+        <div className="text-6xl md:text-8xl mb-2">🔔</div>
+        <div className="font-orbitron text-4xl md:text-6xl font-black"
+             style={{ color: "#fff", textShadow: "0 6px 30px rgba(0,0,0,0.55)", letterSpacing: "0.06em" }}>
+          {title}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Повышение уровня ─────────────────────────────────────────────────────────
+/**
+ * Момент, ради которого всё и затевалось.
+ *
+ * Уровень растёт редко, поэтому он не должен проскочить незамеченным строкой
+ * в ленте: экран на секунду принадлежит только этому событию.
+ */
+export function LevelUpBanner({ level, onDone }: { level: number; onDone: () => void }) {
+  const rank = rankOf(level);
+
+  useEffect(() => {
+    const timer = window.setTimeout(onDone, 3200);
+    return () => window.clearTimeout(timer);
+  }, [onDone]);
+
+  return (
+    <div className="fixed inset-0 z-[130] flex items-center justify-center pointer-events-none px-6">
+      {/* Затемнение почти в глухое: секунду экран принадлежит только новому уровню */}
+      <div className="absolute inset-0"
+           style={{ background: `radial-gradient(circle at 50% 45%, ${rank.color}2e, rgba(4,8,6,0.96) 62%)` }} />
+      <div className="relative guild-pop text-center">
+        <div className="text-7xl mb-3" style={{ filter: `drop-shadow(0 0 24px ${rank.color})` }}>⭐</div>
+        <div className="font-orbitron text-xs tracking-[0.3em] mb-1" style={{ color: "#93ab9f" }}>
+          НОВЫЙ УРОВЕНЬ
+        </div>
+        <div className="font-orbitron text-6xl font-black"
+             style={{ color: rank.color, textShadow: `0 0 40px ${rank.color}66` }}>
+          {level}
+        </div>
+        <div className="font-orbitron text-lg mt-2" style={{ color: rank.color }}>
+          {rank.title}
+        </div>
       </div>
     </div>
   );
@@ -91,18 +158,19 @@ export function WhistleOverlay({ title, onDone }: { title: string; onDone: () =>
 // ─── Конфетти на 70% ──────────────────────────────────────────────────────────
 export function Confetti({ onDone }: { onDone: () => void }) {
   const pieces = useMemo(
-    () => Array.from({ length: 60 }, (_, i) => ({
+    () => Array.from({ length: 80 }, (_, i) => ({
       id: i,
       left: Math.random() * 100,
-      delay: Math.random() * 0.8,
-      duration: 2.2 + Math.random() * 1.4,
-      color: [GUILD_GREEN, GUILD_GOLD, "#8fd8ff", "#ffffff"][i % 4],
+      delay: Math.random() * 0.9,
+      duration: 2.4 + Math.random() * 1.6,
+      color: [GUILD_GREEN, GUILD_GOLD, "#5cc8ff", "#ffffff", "#a98bff"][i % 5],
+      width: 6 + Math.random() * 6,
     })),
     [],
   );
 
   useEffect(() => {
-    const timer = window.setTimeout(onDone, 4200);
+    const timer = window.setTimeout(onDone, 4600);
     return () => window.clearTimeout(timer);
   }, [onDone]);
 
@@ -114,6 +182,7 @@ export function Confetti({ onDone }: { onDone: () => void }) {
           className="guild-confetto"
           style={{
             left: `${p.left}%`,
+            width: p.width,
             background: p.color,
             animationDelay: `${p.delay}s`,
             animationDuration: `${p.duration}s`,
@@ -126,69 +195,125 @@ export function Confetti({ onDone }: { onDone: () => void }) {
 
 // ─── Древо ────────────────────────────────────────────────────────────────────
 const TREE_TONE: Record<TreeState["color"], string> = {
-  gray: "#6b7a72",
-  blue: "#5aa9e6",
+  gray: "#7d8f86",
+  blue: "#5cc8ff",
   yellow: GUILD_GOLD,
   green: GUILD_GREEN,
 };
 
+const MILESTONES: { at: number; title: string; icon: string }[] = [
+  { at: 50, title: "Плейлист класса", icon: "Music" },
+  { at: 70, title: "Фестиваль", icon: "PartyPopper" },
+  { at: 85, title: "Чит-код ×3", icon: "Wand2" },
+  { at: 100, title: "Отмена проверочной", icon: "ShieldCheck" },
+];
+
 export function TreeMeter({ tree, compact = false }: { tree: TreeState; compact?: boolean }) {
   const tone = TREE_TONE[tree.color];
-  return (
-    <div className={compact ? "" : "guild-panel p-4"}>
-      <div className="flex items-baseline justify-between mb-2">
-        <span className="font-orbitron text-xs tracking-[0.18em]" style={{ color: "#9db3a6" }}>
-          ДРЕВО ГИЛЬДИИ
-        </span>
-        <span className="font-orbitron text-xl font-bold" style={{ color: tone }}>
-          {tree.percent}%
-        </span>
-      </div>
+  const percent = useCountUp(tree.percent, 900);
 
-      <div
-        className={`h-3 rounded-full overflow-hidden ${tree.blinks ? "guild-blink" : ""}`}
-        style={{ background: "rgba(255,255,255,0.07)" }}
-        role="progressbar"
-        aria-valuenow={tree.percent}
-        aria-valuemin={0}
-        aria-valuemax={100}
-        aria-label="Древо гильдии"
-      >
-        <div
-          className="h-full rounded-full transition-all duration-700"
-          style={{ width: `${tree.percent}%`, background: tone, boxShadow: `0 0 12px ${tone}80` }}
-        />
-      </div>
-
-      {!compact && (
-        <div className="mt-3 flex flex-wrap gap-2">
-          {[50, 70, 85, 100].map((mark) => {
-            const reached = tree.percent >= mark;
-            const title = tree.bonuses.find((b) => b.threshold === mark)?.title
-              ?? { 50: "Плейлист класса", 70: "Фестиваль", 85: "Чит-код ×3", 100: "Отмена проверочной" }[mark];
-            return (
-              <span
-                key={mark}
-                className="px-2 py-1 rounded-lg font-rajdhani text-[11px]"
-                style={{
-                  background: reached ? `${GUILD_GREEN}18` : "rgba(255,255,255,0.04)",
-                  border: `1px solid ${reached ? `${GUILD_GREEN}44` : "rgba(255,255,255,0.07)"}`,
-                  color: reached ? GUILD_GREEN : "#6b7a72",
-                }}
-              >
-                {reached ? "✓" : "🔒"} {mark}% · {title}
-              </span>
-            );
-          })}
+  if (compact) {
+    return (
+      <div className="flex items-center gap-3">
+        <TreeArt percent={tree.percent} color={tone} blinks={tree.blinks} height={54} />
+        <div className="flex-1 min-w-0">
+          <div className="h-2 rounded-full overflow-hidden" style={{ background: "rgba(255,255,255,0.08)" }}>
+            <div className="h-full rounded-full transition-all duration-700"
+                 style={{ width: `${tree.percent}%`, background: tone, boxShadow: `0 0 10px ${tone}` }} />
+          </div>
         </div>
-      )}
+        <span className="font-orbitron text-sm" style={{ color: tone }}>{percent}%</span>
+      </div>
+    );
+  }
 
-      {tree.color === "gray" && !compact && (
-        <p className="mt-3 font-rajdhani text-xs" style={{ color: GUILD_EMBER }}>
-          Древо ниже 50% — гильдия идёт в Рейд, печенья не будет.
-        </p>
-      )}
-    </div>
+  return (
+    <section className="guild-panel overflow-hidden">
+      <div className="relative px-4 sm:px-5 pt-4 pb-4 flex items-center gap-3 sm:gap-5">
+        <div className="relative shrink-0">
+          <span className="sm:hidden">
+            <TreeArt percent={tree.percent} color={tone} blinks={tree.blinks} height={132} />
+          </span>
+          <span className="hidden sm:block">
+            <TreeArt percent={tree.percent} color={tone} blinks={tree.blinks} height={186} />
+          </span>
+        </div>
+
+        <div className="flex-1 min-w-0">
+          <div className="font-orbitron text-[10px] tracking-[0.22em]" style={{ color: "#93ab9f" }}>
+            ДРЕВО ГИЛЬДИИ
+          </div>
+
+          <div className="flex items-baseline gap-2 mt-1">
+            <span className="font-orbitron text-4xl sm:text-5xl font-black tabular-nums"
+                  style={{ color: tone, textShadow: `0 0 26px ${tone}55` }}>
+              {percent}
+            </span>
+            <span className="font-orbitron text-xl" style={{ color: `${tone}99` }}>%</span>
+          </div>
+
+          <p className="font-rajdhani text-sm mt-1" style={{ color: "#93ab9f" }}>
+            {tree.total_souls} СЗ собрано гильдией
+            {tree.adjust < 0 && (
+              <span style={{ color: GUILD_EMBER }}> · дебаффы {tree.adjust} п.п.</span>
+            )}
+          </p>
+
+          {/* Рейка вех: видно, что уже взято и сколько до следующей награды */}
+          <div className="relative mt-4 mb-1 h-2 rounded-full"
+               style={{ background: "rgba(255,255,255,0.08)" }}>
+            <div className={`h-full rounded-full transition-all duration-1000 ${tree.blinks ? "guild-blink" : ""}`}
+                 style={{ width: `${tree.percent}%`, background: `linear-gradient(90deg, ${tone}77, ${tone})`,
+                          boxShadow: `0 0 14px ${tone}88` }} />
+            {MILESTONES.map((m) => (
+              <span key={m.at} className="absolute -top-1 w-1 h-4 rounded-full"
+                    style={{ left: `calc(${m.at}% - 2px)`,
+                             background: tree.percent >= m.at ? "#fff" : "rgba(255,255,255,0.25)" }} />
+            ))}
+          </div>
+
+          <div className="mt-3 flex flex-wrap gap-1.5">
+            {MILESTONES.map((m) => {
+              const reached = tree.percent >= m.at;
+              return (
+                <span
+                  key={m.at}
+                  className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-lg font-rajdhani text-[11px] ${
+                    reached ? "guild-pop" : ""
+                  }`}
+                  style={{
+                    background: reached ? `${GUILD_GOLD}1c` : "rgba(255,255,255,0.04)",
+                    border: `1px solid ${reached ? `${GUILD_GOLD}55` : "rgba(255,255,255,0.07)"}`,
+                    color: reached ? GUILD_GOLD : "#6b7a72",
+                  }}
+                >
+                  <Icon name={reached ? m.icon : "Lock"} size={11} />
+                  {m.at}% · {m.title}
+                </span>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+
+      <footer className="px-4 sm:px-5 py-3 font-rajdhani text-sm"
+              style={{ borderTop: "1px solid rgba(255,255,255,0.06)",
+                       background: tree.festival_ready ? `${GUILD_GREEN}0e` : "rgba(255,255,255,0.02)" }}>
+        {tree.festival_ready ? (
+          <span style={{ color: GUILD_GREEN }}>
+            🎪 Древо доросло до Фестиваля. Печенье заслужено.
+          </span>
+        ) : tree.color === "gray" ? (
+          <span style={{ color: GUILD_EMBER }}>
+            ⚔️ Древо ниже 50% — гильдия идёт в Рейд, печенья не будет.
+          </span>
+        ) : (
+          <span style={{ color: "#93ab9f" }}>
+            До Фестиваля осталось <b style={{ color: GUILD_GOLD }}>{tree.souls_to_festival} СЗ</b> на всю гильдию
+          </span>
+        )}
+      </footer>
+    </section>
   );
 }
 
@@ -225,7 +350,7 @@ export function LoginForm({ onLogin }: { onLogin: (auth: GuildAuth) => void }) {
     }
   };
 
-  const field = "w-full rounded-xl px-4 py-3 font-rajdhani text-base outline-none";
+  const field = "w-full rounded-xl px-4 py-3 font-rajdhani text-base outline-none transition-colors focus:border-white/30";
   const fieldStyle = {
     background: "rgba(255,255,255,0.05)",
     border: "1px solid rgba(255,255,255,0.12)",
@@ -233,19 +358,25 @@ export function LoginForm({ onLogin }: { onLogin: (auth: GuildAuth) => void }) {
   };
 
   return (
-    <div className="guild-root flex items-center justify-center px-4 py-10">
-      <div className="w-full max-w-sm space-y-6 guild-rise">
+    <div className="guild-root flex items-center justify-center px-4 py-10 relative overflow-hidden">
+      {/* Древо на фоне: первый экран должен объяснять, куда ты попал */}
+      <div className="absolute inset-0 flex items-end justify-center pointer-events-none"
+           style={{ opacity: 0.13 }} aria-hidden>
+        <TreeArt percent={100} color={GUILD_GREEN} height={520} />
+      </div>
+
+      <div className="relative w-full max-w-sm space-y-6 guild-rise">
         <div className="text-center">
-          <div
-            className="w-16 h-16 rounded-2xl mx-auto mb-4 flex items-center justify-center text-3xl"
-            style={{ background: "#2b4b3b", border: `1px solid ${GUILD_GREEN}44` }}
-          >
-            🌳
+          <div className="w-20 h-20 rounded-3xl mx-auto mb-4 flex items-center justify-center guild-pop"
+               style={{ background: "linear-gradient(160deg, #2b4b3b, #0d1a13)",
+                        border: `1px solid ${GUILD_GREEN}55`,
+                        boxShadow: `0 0 40px ${GUILD_GREEN}22` }}>
+            <TreeArt percent={100} color={GUILD_GREEN} height={58} />
           </div>
-          <h1 className="font-orbitron text-3xl font-black" style={{ letterSpacing: "0.12em" }}>
+          <h1 className="font-orbitron text-4xl font-black" style={{ letterSpacing: "0.14em" }}>
             ГИЛЬДИЯ
           </h1>
-          <p className="font-rajdhani mt-2" style={{ color: "#9db3a6" }}>
+          <p className="font-rajdhani mt-2" style={{ color: "#93ab9f" }}>
             Здесь нет имён — только клички
           </p>
         </div>
@@ -253,7 +384,7 @@ export function LoginForm({ onLogin }: { onLogin: (auth: GuildAuth) => void }) {
         <div className="guild-panel p-6 space-y-4">
           <div>
             <label className="block text-[10px] font-orbitron tracking-[0.18em] mb-2"
-                   style={{ color: "#9db3a6" }}>
+                   style={{ color: "#93ab9f" }}>
               ЛОГИН
             </label>
             <input
@@ -270,7 +401,7 @@ export function LoginForm({ onLogin }: { onLogin: (auth: GuildAuth) => void }) {
 
           <div>
             <label className="block text-[10px] font-orbitron tracking-[0.18em] mb-2"
-                   style={{ color: "#9db3a6" }}>
+                   style={{ color: "#93ab9f" }}>
               ПАРОЛЬ
             </label>
             <input
@@ -285,7 +416,7 @@ export function LoginForm({ onLogin }: { onLogin: (auth: GuildAuth) => void }) {
           </div>
 
           {needsTotp && (
-            <div>
+            <div className="guild-rise">
               <label className="block text-[10px] font-orbitron tracking-[0.18em] mb-2"
                      style={{ color: GUILD_GOLD }}>
                 КОД ХРАНИТЕЛЯ (2FA)
@@ -313,8 +444,9 @@ export function LoginForm({ onLogin }: { onLogin: (auth: GuildAuth) => void }) {
             type="button"
             onClick={() => void submit()}
             disabled={busy}
-            className="w-full py-3.5 rounded-xl font-orbitron text-sm font-bold disabled:opacity-50 flex items-center justify-center gap-2"
-            style={{ background: GUILD_GREEN, color: "#0c120f" }}
+            className="guild-btn w-full py-3.5 rounded-xl font-orbitron text-sm font-bold disabled:opacity-50 flex items-center justify-center gap-2"
+            style={{ background: `linear-gradient(135deg, ${GUILD_GREEN}, #24b378)`,
+                     color: "#06120c", boxShadow: `0 10px 30px -12px ${GUILD_GREEN}` }}
           >
             {busy ? <Icon name="Loader" size={16} className="animate-spin" /> : <Icon name="LogIn" size={16} />}
             ВОЙТИ В ГИЛЬДИЮ
