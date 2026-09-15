@@ -11,6 +11,85 @@ import { BRANCH_THEME, MEDALS, SHIELD_THEME, avatarOf, rankOf } from "../theme";
  * расти вместе с классом. Ни одного файла с диска по дороге не грузится.
  */
 
+
+/** Кронштейны по углам панели — самый дешёвый способ сказать «это HUD». */
+export function HudCorners() {
+  return (
+    <>
+      <span className="guild-corner guild-corner-tl" aria-hidden />
+      <span className="guild-corner guild-corner-tr" aria-hidden />
+      <span className="guild-corner guild-corner-bl" aria-hidden />
+      <span className="guild-corner guild-corner-br" aria-hidden />
+    </>
+  );
+}
+
+/**
+ * Радиальная шкала.
+ *
+ * Полоска говорит «сколько», кольцо — «насколько близко». Для Древа нужен
+ * второй вариант: цифра в центре кольца читается через весь класс.
+ */
+export function RadialGauge({ percent, color, size = 132, thickness = 9, ticks = 24, children }: {
+  percent: number;
+  color: string;
+  size?: number;
+  thickness?: number;
+  ticks?: number;
+  children?: React.ReactNode;
+}) {
+  const id = useId();
+  const p = Math.max(0, Math.min(100, percent));
+  const r = (size - thickness) / 2 - 6;
+  const circumference = 2 * Math.PI * r;
+  const dash = (p / 100) * circumference;
+
+  return (
+    <span className="relative inline-flex items-center justify-center shrink-0"
+          style={{ width: size, height: size }}>
+      <svg width={size} height={size} className="absolute inset-0 -rotate-90" aria-hidden>
+        <defs>
+          <linearGradient id={`${id}-g`} x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0%" stopColor="#ffffff" stopOpacity="0.9" />
+            <stop offset="45%" stopColor={color} />
+            <stop offset="100%" stopColor={color} stopOpacity="0.55" />
+          </linearGradient>
+        </defs>
+
+        {/* Насечки по кругу — шкала прибора, а не просто кольцо */}
+        <g stroke="rgba(143,163,200,0.28)" strokeWidth="1.5" strokeLinecap="round">
+          {Array.from({ length: ticks }, (_, i) => {
+            const a = (i / ticks) * Math.PI * 2;
+            const inner = r + thickness / 2 + 2;
+            const outer = inner + (i % 6 === 0 ? 6 : 3);
+            const cx = size / 2;
+            const cy = size / 2;
+            const lit = (i / ticks) * 100 <= p;
+            return (
+              <line key={i}
+                    x1={cx + Math.cos(a) * inner} y1={cy + Math.sin(a) * inner}
+                    x2={cx + Math.cos(a) * outer} y2={cy + Math.sin(a) * outer}
+                    stroke={lit ? color : "rgba(143,163,200,0.22)"}
+                    opacity={lit ? 0.85 : 1} />
+            );
+          })}
+        </g>
+
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none"
+                stroke="rgba(143,163,200,0.16)" strokeWidth={thickness} />
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none"
+                stroke={`url(#${id}-g)`} strokeWidth={thickness} strokeLinecap="round"
+                strokeDasharray={`${dash} ${circumference}`}
+                style={{ filter: `drop-shadow(0 0 10px ${color})`,
+                         transition: "stroke-dasharray 1s cubic-bezier(0.22,1,0.36,1)" }} />
+      </svg>
+      <span className="relative flex flex-col items-center justify-center leading-none">
+        {children}
+      </span>
+    </span>
+  );
+}
+
 // ─── Гербы веток ──────────────────────────────────────────────────────────────
 function TacticsSigil() {
   return (
@@ -61,9 +140,10 @@ export function BranchSigil({ branch, size = 20, color }: {
   color?: string;
 }) {
   const Sigil = SIGILS[branch];
+  const tone = color ?? BRANCH_THEME[branch].color;
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden
-         style={{ color: color ?? BRANCH_THEME[branch].color, flexShrink: 0 }}>
+         style={{ color: tone, flexShrink: 0, filter: `drop-shadow(0 0 5px ${tone})` }}>
       <Sigil />
     </svg>
   );
@@ -97,7 +177,7 @@ export function ShieldBadge({ shield, armor, max = 10, size = 26 }: {
             clipPath={`url(#${id}-body)`}
             style={{ transition: "y 0.6s cubic-bezier(0.22,1,0.36,1)" }} />
       <path d={SHIELD_PATH} fill="none" stroke={tone.color} strokeWidth="1.6"
-            strokeLinejoin="round" />
+            strokeLinejoin="round" style={{ filter: `drop-shadow(0 0 4px ${tone.color})` }} />
       {shield === "bleeding" && (
         // Трещина: Броня пробита, и это должно быть видно без подписи.
         <path d="M12 6 l-2.4 5 3 1.2 -2.2 5.4" fill="none" stroke="#fff" strokeWidth="1.3"
@@ -122,9 +202,11 @@ export function RankBadge({ level, size = 34 }: { level: number; size?: number }
       </defs>
       <path d="M20 2 L34 10 v20 L20 38 L6 30 V10 Z" fill={`url(#${id}-metal)`} opacity="0.22" />
       <path d="M20 2 L34 10 v20 L20 38 L6 30 V10 Z" fill="none"
-            stroke={`url(#${id}-metal)`} strokeWidth="2" strokeLinejoin="round" />
+            stroke={`url(#${id}-metal)`} strokeWidth="2" strokeLinejoin="round"
+            style={{ filter: `drop-shadow(0 0 6px ${rank.color})` }} />
       <text x="20" y="26" textAnchor="middle" fontSize="16" fontWeight="700"
-            fontFamily="Orbitron, monospace" fill={rank.color}>
+            fontFamily="Orbitron, monospace" fill={rank.color}
+            style={{ filter: `drop-shadow(0 0 5px ${rank.color})` }}>
         {level}
       </text>
     </svg>
@@ -279,7 +361,7 @@ export function TreeArt({ percent, color, blinks = false, height = 210 }: {
         <g fill="none" stroke="#c6a76a" strokeWidth="4.5" strokeLinecap="round">
           {LIMBS.map((d, i) => <path key={i} d={d} />)}
         </g>
-        <path d={CANOPY} fill={color} />
+        <path d={CANOPY} fill={color} style={{ filter: `drop-shadow(0 0 12px ${color})` }} />
         <path d={CANOPY} fill={`url(#${id}-vol)`} />
         <path d={CANOPY} fill="none" stroke="#ffffff" strokeOpacity="0.16" strokeWidth="1.5" />
         <g fill="#f3fff9">

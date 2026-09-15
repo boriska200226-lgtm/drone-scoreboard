@@ -5,7 +5,7 @@ import Icon from "@/components/ui/icon";
 
 import { api, ApiError } from "../api";
 import type { Credential } from "../types";
-import { BRANCH_THEME, GUILD_EMBER, GUILD_GOLD, GUILD_GREEN } from "../theme";
+import { BRANCH_THEME, GUILD_EMBER, GUILD_GOLD, GUILD_GREEN, NEON_CYAN, ring } from "../theme";
 import { BranchSigil, HeroAvatar } from "./art";
 
 /**
@@ -54,10 +54,10 @@ export function CardsSheet({ token, className }: { token: string; className: str
 
   return (
     <div className="space-y-4">
-      <div className="guild-panel p-5 space-y-4 guild-no-print">
+      <div className="guild-panel p-5 space-y-4 guild-no-print" style={ring(NEON_CYAN, GUILD_GOLD)}>
         <div>
           <h2 className="font-orbitron text-sm tracking-[0.16em] mb-1">🎟️ КАРТОЧКИ ДОСТУПА</h2>
-          <p className="font-rajdhani text-sm" style={{ color: "#9db3a6" }}>
+          <p className="font-rajdhani text-sm" style={{ color: "#a9bcdd" }}>
             Логины по шаблону s_{className}_NN, пароли по 12 символов, клички без повторов.
             Пароли показываются один раз — распечатай сразу.
           </p>
@@ -66,7 +66,7 @@ export function CardsSheet({ token, className }: { token: string; className: str
         <div className="flex flex-wrap items-end gap-3">
           <label className="font-rajdhani text-sm">
             <span className="block text-[10px] font-orbitron tracking-[0.16em] mb-1"
-                  style={{ color: "#9db3a6" }}>СКОЛЬКО</span>
+                  style={{ color: "#a9bcdd" }}>СКОЛЬКО</span>
             <input
               type="number"
               min={1}
@@ -74,7 +74,7 @@ export function CardsSheet({ token, className }: { token: string; className: str
               value={count}
               onChange={(e) => setCount(Number(e.target.value))}
               className="w-24 rounded-lg px-3 py-2 outline-none"
-              style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.12)", color: "#e8f5ee" }}
+              style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.12)", color: "#e6f0ff" }}
             />
           </label>
 
@@ -83,7 +83,8 @@ export function CardsSheet({ token, className }: { token: string; className: str
             onClick={() => void generate()}
             disabled={busy}
             className="guild-btn px-4 py-2.5 rounded-xl font-orbitron text-xs font-bold disabled:opacity-50 flex items-center gap-2"
-            style={{ background: GUILD_GREEN, color: "#0c120f" }}
+            style={{ background: `linear-gradient(120deg, ${NEON_CYAN}, ${GUILD_GREEN})`,
+                     color: "#05060f", boxShadow: `0 0 26px -10px ${GUILD_GREEN}` }}
           >
             {busy ? <Icon name="Loader" size={14} className="animate-spin" /> : <Icon name="UserPlus" size={14} />}
             СОЗДАТЬ {count}
@@ -102,10 +103,10 @@ export function CardsSheet({ token, className }: { token: string; className: str
         </div>
 
         <details>
-          <summary className="font-rajdhani text-sm cursor-pointer" style={{ color: "#9db3a6" }}>
+          <summary className="font-rajdhani text-sm cursor-pointer" style={{ color: "#a9bcdd" }}>
             Заполнить Реестр (необязательно)
           </summary>
-          <p className="font-rajdhani text-xs mt-2 mb-2" style={{ color: "#6b7a72" }}>
+          <p className="font-rajdhani text-xs mt-2 mb-2" style={{ color: "#6d7fa3" }}>
             По одному имени в строке, в том же порядке, что и карточки. Имена уходят
             в зашифрованный Реестр и больше нигде не показываются. Оставь поле пустым —
             и связь «кличка → ученик» останется только у тебя в голове.
@@ -116,7 +117,7 @@ export function CardsSheet({ token, className }: { token: string; className: str
             onChange={(e) => setNames(e.target.value)}
             placeholder={"Иванов Пётр\nСидорова Аня"}
             className="w-full rounded-lg px-3 py-2 font-rajdhani text-sm outline-none"
-            style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.12)", color: "#e8f5ee" }}
+            style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.12)", color: "#e6f0ff" }}
           />
         </details>
 
@@ -168,11 +169,11 @@ export function CardsSheet({ token, className }: { token: string; className: str
                   </p>
                   <dl className="mt-2 space-y-0.5 font-rajdhani text-sm">
                     <div className="flex gap-2">
-                      <dt style={{ color: "#7f9488" }}>логин</dt>
+                      <dt style={{ color: "#7f93b8" }}>логин</dt>
                       <dd className="font-mono">{card.login}</dd>
                     </div>
                     <div className="flex gap-2">
-                      <dt style={{ color: "#7f9488" }}>пароль</dt>
+                      <dt style={{ color: "#7f93b8" }}>пароль</dt>
                       <dd className="font-mono tracking-wider font-semibold">{card.password}</dd>
                     </div>
                   </dl>
@@ -188,7 +189,7 @@ export function CardsSheet({ token, className }: { token: string; className: str
               </div>
 
               <footer className="mt-3 pt-2 font-rajdhani text-[10px]"
-                      style={{ borderTop: "1px dashed rgba(127,148,136,0.4)", color: "#7f9488" }}>
+                      style={{ borderTop: "1px dashed rgba(127,148,136,0.4)", color: "#7f93b8" }}>
                 Карточка личная. Пароль никому не показывай — даже другу из гильдии.
               </footer>
             </article>

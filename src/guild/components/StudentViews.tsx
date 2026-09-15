@@ -4,12 +4,12 @@ import Icon from "@/components/ui/icon";
 
 import { api, ApiError } from "../api";
 import {
-  AVATARS, BRANCH_THEME, GUILD_EMBER, GUILD_GOLD, GUILD_GREEN, SHIELD_THEME,
-  avatarOf, rankOf,
+  AVATARS, BRANCH_THEME, GUILD_EMBER, GUILD_GOLD, GUILD_GREEN, NEON_CYAN,
+  NEON_VIOLET, SHIELD_THEME, avatarOf, neon, rankOf, ring,
 } from "../theme";
 import type { AltarRow, FestivalForecast, HeroCardData, Sticker, TreeState } from "../types";
 import { useCountUp } from "../useCountUp";
-import { BranchSigil, HeroAvatar, Medal, RankBadge, ShieldBadge } from "./art";
+import { BranchSigil, HeroAvatar, HudCorners, Medal, RadialGauge, RankBadge, ShieldBadge } from "./art";
 import { TreeMeter } from "./Common";
 import ProgressBar from "./ProgressBar";
 
@@ -24,31 +24,35 @@ function PodiumCard({ row, place, mine }: { row: AltarRow; place: number; mine: 
     <article
       className={`guild-panel relative px-3 pt-7 pb-4 text-center guild-pop transition-transform ${lift}`}
       style={{
-        borderColor: place === 1 ? `${GUILD_GOLD}55` : `${tone.color}33`,
-        boxShadow: place === 1 ? `0 0 34px -10px ${GUILD_GOLD}` : undefined,
+        ...ring(place === 1 ? GUILD_GOLD : tone.color, place === 1 ? tone.color : NEON_VIOLET),
         animationDelay: `${place * 90}ms`,
       }}
     >
+      {place === 1 && <span className="guild-rail" aria-hidden />}
       <span className="absolute -top-3 left-1/2 -translate-x-1/2">
         <Medal place={place} size={30} />
       </span>
 
+      {/* Кольцо вокруг облика: видно вклад героя в свою ветку */}
       <div className="flex justify-center mb-2">
-        <HeroAvatar avatar={row.avatar} nickname={row.nickname} branch={row.branch}
-                    size={place === 1 ? 62 : 52} />
+        <RadialGauge percent={row.branch_percent} color={tone.color}
+                     size={place === 1 ? 84 : 72} thickness={4} ticks={18}>
+          <HeroAvatar avatar={row.avatar} nickname={row.nickname} branch={row.branch}
+                      size={place === 1 ? 56 : 48} />
+        </RadialGauge>
       </div>
 
       <h3 className="font-orbitron text-sm font-bold truncate">{row.nickname}</h3>
-      <p className="font-rajdhani text-[11px] truncate" style={{ color: rank.color }}>
+      <p className="font-rajdhani text-[11px] truncate neon-label" style={neon(rank.color)}>
         {rank.title}
       </p>
 
       <div className="mt-2 flex items-center justify-center gap-2">
         <BranchSigil branch={row.branch} size={15} />
-        <span className="font-orbitron text-base" style={{ color: GUILD_GREEN }}>
+        <span className="font-orbitron text-lg neon-num" style={neon(GUILD_GREEN)}>
           {row.souls}
         </span>
-        <span className="font-rajdhani text-[11px]" style={{ color: "#6b7a72" }}>СЗ</span>
+        <span className="font-rajdhani text-[11px]" style={{ color: "#6d7fa3" }}>СЗ</span>
       </div>
 
       {mine && (
@@ -90,7 +94,7 @@ export function Altar({ rows, tree, myHeroId }: {
             <Icon name="Flame" size={15} style={{ color: GUILD_GOLD }} />
             АЛТАРЬ
           </h2>
-          <span className="font-rajdhani text-xs" style={{ color: "#6b7a72" }}>
+          <span className="font-rajdhani text-xs" style={{ color: "#6d7fa3" }}>
             {rows.length} героев · без имён
           </span>
         </div>
@@ -98,7 +102,7 @@ export function Altar({ rows, tree, myHeroId }: {
         {/* Шапка таблицы только на широком экране: на телефоне строка
             складывается в три этажа, и подписи столбцов теряют смысл. */}
         <div className="guild-altar-head guild-altar-row px-4 py-2 font-orbitron text-[10px] tracking-[0.14em]"
-             style={{ color: "#6b7a72" }}>
+             style={{ color: "#6d7fa3" }}>
           <span className="guild-altar-face" />
           <span className="guild-altar-name">КЛИЧКА</span>
           <span className="guild-altar-level">УР.</span>
@@ -127,7 +131,7 @@ export function Altar({ rows, tree, myHeroId }: {
               >
                 <span className="guild-altar-face flex items-center gap-2">
                   <span className="font-orbitron text-[11px] w-5 text-right shrink-0"
-                        style={{ color: "#5d6f65" }}>
+                        style={{ color: "#6d7fa3" }}>
                     {place}
                   </span>
                   <HeroAvatar avatar={row.avatar} nickname={row.nickname} branch={row.branch}
@@ -154,19 +158,19 @@ export function Altar({ rows, tree, myHeroId }: {
                 <span className="guild-altar-meta font-rajdhani text-xs flex items-center gap-1.5">
                   <BranchSigil branch={row.branch} size={14} />
                   <span className="truncate" style={{ color: tone.color }}>{row.branch_title}</span>
-                  <span className="md:hidden" style={{ color: "#5d6f65" }}>
+                  <span className="md:hidden" style={{ color: "#6d7fa3" }}>
                     · {rank.title}
                   </span>
                 </span>
 
                 <span className="guild-altar-bar h-2 rounded-full overflow-hidden"
-                      style={{ background: "rgba(255,255,255,0.07)" }}
+                      style={{ background: "rgba(143,163,200,0.14)" }}
                       title={`Вклад в ветку: ${row.branch_percent}%`}>
                   <span
                     className="block h-full rounded-full transition-all duration-700"
-                    style={{ width: `${row.branch_percent}%`,
-                             background: `linear-gradient(90deg, ${tone.color}88, ${tone.color})`,
-                             boxShadow: `0 0 8px ${tone.color}66` }}
+                    style={{ width: `${Math.max(3, row.branch_percent)}%`,
+                             background: `linear-gradient(90deg, ${NEON_VIOLET}, ${tone.color})`,
+                             boxShadow: `0 0 12px ${tone.color}` }}
                   />
                 </span>
 
@@ -179,7 +183,7 @@ export function Altar({ rows, tree, myHeroId }: {
         </ul>
 
         {rows.length === 0 && (
-          <p className="px-4 py-10 text-center font-rajdhani text-sm" style={{ color: "#6b7a72" }}>
+          <p className="px-4 py-10 text-center font-rajdhani text-sm" style={{ color: "#6d7fa3" }}>
             Гильдия пуста — Хранитель ещё не создал героев.
           </p>
         )}
@@ -218,10 +222,10 @@ function AvatarPicker({ current, onPick, onClose }: {
         <div className="flex items-center justify-between mb-4">
           <h3 className="font-orbitron text-sm tracking-[0.16em]">ОБЛИК ГЕРОЯ</h3>
           <button type="button" onClick={onClose} aria-label="Закрыть">
-            <Icon name="X" size={18} style={{ color: "#7f9488" }} />
+            <Icon name="X" size={18} style={{ color: "#7f93b8" }} />
           </button>
         </div>
-        <p className="font-rajdhani text-xs mb-4" style={{ color: "#7f9488" }}>
+        <p className="font-rajdhani text-xs mb-4" style={{ color: "#7f93b8" }}>
           Кличка и ветка остаются навсегда. Облик — единственное, что ты меняешь сам.
         </p>
         <div className="grid grid-cols-6 gap-2">
@@ -256,6 +260,7 @@ export function HeroCard({ card, place, token, onReload }: {
   const rank = rankOf(card.level);
   const souls = useCountUp(card.souls);
   const armorBar = card.bars.find((b) => b.id === "armor");
+  const levelBar = card.bars.find((b) => b.id === "level")?.value ?? 0;
   const bleeding = (armorBar?.value ?? 1) <= 0;
 
   const pick = async (emoji: string) => {
@@ -276,20 +281,25 @@ export function HeroCard({ card, place, token, onReload }: {
       )}
 
       {/* Знамя героя */}
-      <section className="guild-panel overflow-hidden guild-rise"
+      <section className="guild-panel overflow-hidden guild-rise relative"
                style={bleeding
-                 ? { borderColor: SHIELD_THEME.bleeding.color,
-                     boxShadow: `0 0 30px -8px ${SHIELD_THEME.bleeding.color}` }
-                 : { borderColor: `${tone.color}3a` }}>
+                 ? ring(SHIELD_THEME.bleeding.color, GUILD_EMBER)
+                 : ring(tone.color, NEON_CYAN)}>
+        <span className="guild-rail" aria-hidden />
+        <HudCorners />
         <div className="relative px-5 py-5"
              style={{ background: `linear-gradient(135deg, ${tone.soft}, transparent 65%)` }}>
           <div className="flex items-center gap-4">
             <button type="button" onClick={() => setPicking(true)}
                     className="guild-btn relative shrink-0" aria-label="Сменить облик">
-              <HeroAvatar avatar={card.avatar} nickname={card.nickname} branch={card.branch}
-                          size={76} />
-              <span className="absolute -bottom-1 -right-1 w-6 h-6 rounded-full flex items-center justify-center"
-                    style={{ background: "#0d1a13", border: `1px solid ${tone.color}66` }}>
+              {/* Кольцо показывает опыт внутри текущего уровня */}
+              <RadialGauge percent={levelBar} color={rank.color} size={92} thickness={5} ticks={20}>
+                <HeroAvatar avatar={card.avatar} nickname={card.nickname} branch={card.branch}
+                            size={64} />
+              </RadialGauge>
+              <span className="absolute bottom-0 right-0 w-6 h-6 rounded-full flex items-center justify-center"
+                    style={{ background: "#0a0e22", border: `1px solid ${tone.color}88`,
+                             boxShadow: `0 0 12px -2px ${tone.color}` }}>
                 <Icon name="Pencil" size={11} style={{ color: tone.color }} />
               </span>
             </button>
@@ -306,7 +316,7 @@ export function HeroCard({ card, place, token, onReload }: {
                   {card.branch_title}
                 </span>
               </p>
-              <p className="font-rajdhani text-xs italic mt-0.5" style={{ color: "#6b7a72" }}>
+              <p className="font-rajdhani text-xs italic mt-0.5" style={{ color: "#6d7fa3" }}>
                 «{tone.motto}»
               </p>
             </div>
@@ -324,13 +334,14 @@ export function HeroCard({ card, place, token, onReload }: {
               { label: "УРОВЕНЬ", value: card.level, color: rank.color },
               { label: "МЕСТО", value: place ? `#${place}` : "—", color: GUILD_GOLD },
             ].map((stat) => (
-              <div key={stat.label} className="guild-panel-flat px-2 py-2 text-center">
-                <div className="font-orbitron text-xl font-bold tabular-nums"
-                     style={{ color: stat.color }}>
+              <div key={stat.label} className="guild-panel-flat px-2 py-2 text-center"
+                   style={{ borderColor: `${stat.color}44`, boxShadow: `0 0 20px -12px ${stat.color}` }}>
+                <div className="font-orbitron text-xl font-bold tabular-nums neon-num"
+                     style={neon(stat.color)}>
                   {stat.value}
                 </div>
                 <div className="font-orbitron text-[9px] tracking-[0.16em]"
-                     style={{ color: "#6b7a72" }}>
+                     style={{ color: "#6d7fa3" }}>
                   {stat.label}
                 </div>
               </div>
@@ -376,7 +387,7 @@ export function HeroCard({ card, place, token, onReload }: {
 
       {card.bonuses.length > 0 && (
         <section className="guild-panel p-4 guild-rise">
-          <h3 className="font-orbitron text-xs tracking-[0.16em] mb-3" style={{ color: "#93ab9f" }}>
+          <h3 className="font-orbitron text-xs tracking-[0.16em] mb-3" style={{ color: "#8fa3c8" }}>
             ОТКРЫТЫЕ БОНУСЫ
           </h3>
           <ul className="space-y-2">
@@ -395,7 +406,7 @@ export function HeroCard({ card, place, token, onReload }: {
 
       <section className="guild-panel p-4 guild-rise">
         <div className="flex items-center justify-between mb-3">
-          <h3 className="font-orbitron text-xs tracking-[0.16em]" style={{ color: "#93ab9f" }}>
+          <h3 className="font-orbitron text-xs tracking-[0.16em]" style={{ color: "#8fa3c8" }}>
             ЛЕНТА СЗ
           </h3>
           <span className="font-rajdhani text-xs px-2 py-0.5 rounded-full"
@@ -404,7 +415,7 @@ export function HeroCard({ card, place, token, onReload }: {
           </span>
         </div>
         {card.history.length === 0 ? (
-          <p className="font-rajdhani text-sm py-3 text-center" style={{ color: "#6b7a72" }}>
+          <p className="font-rajdhani text-sm py-3 text-center" style={{ color: "#6d7fa3" }}>
             Пока пусто. Первое доброе слово — и здесь появится строчка.
           </p>
         ) : (
@@ -417,11 +428,11 @@ export function HeroCard({ card, place, token, onReload }: {
                     style={{ animationDelay: `${i * 45}ms`,
                              background: i === 0 ? `${GUILD_GREEN}0c` : undefined }}>
                   <span className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0"
-                        style={{ background: "rgba(255,255,255,0.05)" }}>
+                        style={{ background: "rgba(143,163,200,0.1)" }}>
                     <Icon name={meta.icon} size={13} style={{ color: GUILD_GREEN }} />
                   </span>
                   <span className="flex-1 font-rajdhani text-sm truncate">{meta.title}</span>
-                  <span className="font-rajdhani text-[11px]" style={{ color: "#5d6f65" }}>
+                  <span className="font-rajdhani text-[11px]" style={{ color: "#6d7fa3" }}>
                     {new Date(item.at).toLocaleDateString("ru-RU")}
                   </span>
                   <span className="font-orbitron text-sm" style={{ color: GUILD_GREEN }}>
@@ -477,7 +488,7 @@ export function QuietMail({ token, onSent }: { token: string; onSent: () => void
       <div className="text-center">
         <div className="text-5xl mb-2">📬</div>
         <h2 className="font-orbitron text-sm tracking-[0.16em] mb-2">ТИХАЯ ПОЧТА</h2>
-        <p className="font-rajdhani text-sm mx-auto max-w-sm" style={{ color: "#93ab9f" }}>
+        <p className="font-rajdhani text-sm mx-auto max-w-sm" style={{ color: "#8fa3c8" }}>
           Один стикер — и Хранитель узнает, что в классе что-то не так.
           Ни имени, ни клички в письме нет. За письмо начисляется +2 СЗ.
         </p>
@@ -569,7 +580,7 @@ function TeaVote({ token, canVote }: { token: string; canVote: boolean }) {
 
   return (
     <div className="guild-panel p-5">
-      <h3 className="font-orbitron text-xs tracking-[0.16em] mb-3" style={{ color: "#93ab9f" }}>
+      <h3 className="font-orbitron text-xs tracking-[0.16em] mb-3" style={{ color: "#8fa3c8" }}>
         ☕ МЕНЮ ЧАЕПИТИЯ
       </h3>
       <div className="space-y-2">
@@ -597,7 +608,7 @@ function TeaVote({ token, canVote }: { token: string; canVote: boolean }) {
               <span className="relative flex items-center gap-2">
                 <span className="text-lg">{option.glyph}</span>
                 <span className="flex-1">{chosen ? "✓ " : ""}{option.title}</span>
-                <span style={{ color: "#6b7a72" }}>{votes}</span>
+                <span style={{ color: "#6d7fa3" }}>{votes}</span>
               </span>
             </button>
           );
@@ -631,7 +642,7 @@ export function FestivalView({ token, canVote }: { token: string; canVote: boole
   }, [token]);
 
   if (error) return <p className="font-rajdhani text-sm" style={{ color: GUILD_EMBER }}>{error}</p>;
-  if (!data) return <p className="font-rajdhani text-sm" style={{ color: "#6b7a72" }}>Считаем…</p>;
+  if (!data) return <p className="font-rajdhani text-sm" style={{ color: "#6d7fa3" }}>Считаем…</p>;
 
   return (
     <div className="space-y-4">
@@ -655,7 +666,7 @@ export function FestivalView({ token, canVote }: { token: string; canVote: boole
                 </span>
                 <span className="font-orbitron text-2xl" style={{ color: `${GUILD_GOLD}99` }}>СЗ</span>
               </div>
-              <p className="font-rajdhani text-sm mt-2 mx-auto max-w-sm" style={{ color: "#93ab9f" }}>
+              <p className="font-rajdhani text-sm mt-2 mx-auto max-w-sm" style={{ color: "#8fa3c8" }}>
                 осталось гильдии до {data.threshold}%. Это примерно
                 {" "}<b style={{ color: GUILD_GOLD }}>{data.souls_left_per_hero} СЗ</b> на каждого —
                 и ни одного имени в этом расчёте.
@@ -667,10 +678,10 @@ export function FestivalView({ token, canVote }: { token: string; canVote: boole
 
       <section className="guild-panel p-5 guild-rise">
         <div className="flex items-baseline justify-between mb-4">
-          <h3 className="font-orbitron text-xs tracking-[0.16em]" style={{ color: "#93ab9f" }}>
+          <h3 className="font-orbitron text-xs tracking-[0.16em]" style={{ color: "#8fa3c8" }}>
             ПРОГРАММА
           </h3>
-          <span className="font-rajdhani text-xs" style={{ color: "#6b7a72" }}>
+          <span className="font-rajdhani text-xs" style={{ color: "#6d7fa3" }}>
             {data.total_minutes} минут
           </span>
         </div>
@@ -688,7 +699,7 @@ export function FestivalView({ token, canVote }: { token: string; canVote: boole
                       style={{ color: GUILD_GOLD }} />
               </span>
               <span className="flex-1 font-rajdhani text-sm">{block.title}</span>
-              <span className="font-orbitron text-[11px]" style={{ color: "#6b7a72" }}>
+              <span className="font-orbitron text-[11px]" style={{ color: "#6d7fa3" }}>
                 {block.minutes}′
               </span>
             </li>

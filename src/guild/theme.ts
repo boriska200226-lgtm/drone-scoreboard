@@ -1,18 +1,30 @@
-/** Палитра, ранги и гербы «Гильдии». Вынесено из компонентов, чтобы не ломать HMR. */
+/** Неоновая палитра, ранги и гербы «Гильдии». Вынесено из компонентов, чтобы не ломать HMR. */
+import type { CSSProperties } from "react";
+
 import type { BranchId, Shield } from "./types";
 
-export const GUILD_GREEN = "#3ddc97";
-export const GUILD_GOLD = "#f0c661";
-export const GUILD_EMBER = "#ff6b45";
-export const GUILD_MIST = "#93ab9f";
-export const GUILD_NIGHT = "#070d0a";
+// Базовые неоны. Всё светится на почти чёрном сине-фиолетовом фоне.
+export const NEON_CYAN = "#00e5ff";
+export const NEON_MAGENTA = "#ff2bd6";
+export const NEON_VIOLET = "#a855ff";
+export const NEON_LIME = "#39ff88";
+export const NEON_AMBER = "#ffc53d";
+export const NEON_ROSE = "#ff3d6e";
 
-/** Ветка — это не просто подпись, а свой цвет, герб и характер. */
+export const GUILD_GREEN = NEON_LIME;   // «всё хорошо»
+export const GUILD_GOLD = NEON_AMBER;   // «внимание, награда»
+export const GUILD_EMBER = NEON_ROSE;   // «тревога»
+export const GUILD_MIST = "#8fa3c8";
+export const GUILD_NIGHT = "#05060f";
+
+/** Ветка — это не просто подпись, а свой неон, герб и характер. */
 export interface BranchTheme {
   id: BranchId;
   title: string;
   color: string;
+  glow: string;
   soft: string;
+  gradient: string;
   motto: string;
 }
 
@@ -20,27 +32,33 @@ export const BRANCH_THEME: Record<BranchId, BranchTheme> = {
   tactics: {
     id: "tactics",
     title: "Тактика",
-    color: "#ff7a59",
-    soft: "rgba(255,122,89,0.16)",
+    color: NEON_MAGENTA,
+    glow: "rgba(255,43,214,0.55)",
+    soft: "rgba(255,43,214,0.14)",
+    gradient: "linear-gradient(135deg, #ff2bd6, #ff7ae0)",
     motto: "Думай на ход вперёд",
   },
   diplomacy: {
     id: "diplomacy",
     title: "Дипломатия",
-    color: "#5cc8ff",
-    soft: "rgba(92,200,255,0.16)",
+    color: NEON_CYAN,
+    glow: "rgba(0,229,255,0.55)",
+    soft: "rgba(0,229,255,0.14)",
+    gradient: "linear-gradient(135deg, #00e5ff, #6df1ff)",
     motto: "Слово сильнее крика",
   },
   keeper: {
     id: "keeper",
     title: "Хранитель",
-    color: "#a98bff",
-    soft: "rgba(169,139,255,0.16)",
+    color: NEON_VIOLET,
+    glow: "rgba(168,85,255,0.55)",
+    soft: "rgba(168,85,255,0.14)",
+    gradient: "linear-gradient(135deg, #a855ff, #d2a6ff)",
     motto: "Держи строй",
   },
 };
 
-/** Ранг по уровню: у каждого своё имя и свой металл. */
+/** Ранг по уровню: у каждого своё имя и свой неон. */
 export interface Rank {
   from: number;
   title: string;
@@ -49,11 +67,11 @@ export interface Rank {
 }
 
 export const RANKS: Rank[] = [
-  { from: 1, title: "Новобранец", color: "#9db3a6", metal: ["#9db3a6", "#5d6f65"] },
-  { from: 2, title: "Оруженосец", color: "#5cc8ff", metal: ["#8fdcff", "#2c7fae"] },
-  { from: 3, title: "Страж", color: "#3ddc97", metal: ["#7bf3bd", "#1d8f5f"] },
-  { from: 4, title: "Витязь", color: "#f0c661", metal: ["#ffe29a", "#a37a1e"] },
-  { from: 6, title: "Легенда", color: "#ff9d4d", metal: ["#ffd0a1", "#c2591a"] },
+  { from: 1, title: "Новобранец", color: "#8fa3c8", metal: ["#bcd0f0", "#4b5c7d"] },
+  { from: 2, title: "Оруженосец", color: NEON_CYAN, metal: ["#8df3ff", "#0088a8"] },
+  { from: 3, title: "Страж", color: NEON_LIME, metal: ["#9dffc4", "#12b35c"] },
+  { from: 4, title: "Витязь", color: NEON_AMBER, metal: ["#ffe28f", "#c98a08"] },
+  { from: 6, title: "Легенда", color: NEON_MAGENTA, metal: ["#ff9ae8", "#c00d9c"] },
 ];
 
 export function rankOf(level: number): Rank {
@@ -64,16 +82,31 @@ export function rankOf(level: number): Rank {
 
 /** Состояния щита на Алтаре. */
 export const SHIELD_THEME: Record<Shield, { color: string; label: string }> = {
-  green: { color: "#3ddc97", label: "Броня цела" },
-  yellow: { color: "#f0c661", label: "Броня просела" },
-  red: { color: "#ff6b45", label: "Дебафф активен" },
-  bleeding: { color: "#ff3b30", label: "Броня на нуле" },
+  green: { color: NEON_LIME, label: "Броня цела" },
+  yellow: { color: NEON_AMBER, label: "Броня просела" },
+  red: { color: NEON_ROSE, label: "Дебафф активен" },
+  bleeding: { color: "#ff1744", label: "Броня на нуле" },
 };
 
 export const BAR_COLOR = {
-  green: "#3ddc97",
-  yellow: "#f0c661",
-  red: "#ff6b45",
+  green: NEON_LIME,
+  yellow: NEON_AMBER,
+  red: NEON_ROSE,
+} as const;
+
+/** Второй цвет градиента шкалы: неон всегда переливается, а не заливает плоско. */
+export const BAR_GRADIENT: Record<keyof typeof BAR_COLOR, [string, string]> = {
+  green: ["#00e5ff", "#39ff88"],
+  yellow: ["#ffc53d", "#ff8a3d"],
+  red: ["#ff3d6e", "#ff2bd6"],
+};
+
+/** Цвет Древа по уровню роста. */
+export const TREE_TONE = {
+  gray: "#5c6b8f",
+  blue: NEON_CYAN,
+  yellow: NEON_AMBER,
+  green: NEON_LIME,
 } as const;
 
 /**
@@ -97,7 +130,23 @@ export function avatarOf(avatar: string, nickname: string): string {
 
 /** Медали первой тройки Алтаря. */
 export const MEDALS: Record<number, { color: string; metal: [string, string] }> = {
-  1: { color: "#f0c661", metal: ["#ffe6a3", "#b8860b"] },
-  2: { color: "#cfd9d3", metal: ["#eef4f0", "#8a9992"] },
-  3: { color: "#d98f5a", metal: ["#f2bc8e", "#96551f"] },
+  1: { color: NEON_AMBER, metal: ["#ffe9a8", "#c98a08"] },
+  2: { color: "#cfe2ff", metal: ["#eef4ff", "#7f93b8"] },
+  3: { color: "#ff9d5c", metal: ["#ffc79a", "#b1571c"] },
 };
+
+/**
+ * Цвет неоновой рамки панели.
+ *
+ * `.guild-panel` рисует рамку градиентом в один пиксель через маску —
+ * обычный `border-color` там просто нечему красить, поэтому цвет передаётся
+ * переменными, а не свойством.
+ */
+export function ring(color: string, second?: string): CSSProperties {
+  return { "--ring": color, "--ring2": second ?? color } as CSSProperties;
+}
+
+/** Цвет свечения для `.neon-num` и `.neon-label`. */
+export function neon(color: string): CSSProperties {
+  return { "--neon": color } as CSSProperties;
+}

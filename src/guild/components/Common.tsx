@@ -5,15 +5,17 @@ import Icon from "@/components/ui/icon";
 import { api, ApiError } from "../api";
 import { useInstallPrompt } from "../pwa";
 import { unlockAudio } from "../sound";
-import { GUILD_EMBER, GUILD_GOLD, GUILD_GREEN } from "../theme";
-import { rankOf } from "../theme";
+import {
+  GUILD_EMBER, GUILD_GOLD, GUILD_GREEN, NEON_CYAN, NEON_MAGENTA, NEON_VIOLET,
+  TREE_TONE, neon, rankOf, ring,
+} from "../theme";
 import type { GuildAuth, LinkStatus, TreeState } from "../types";
 import { useCountUp } from "../useCountUp";
-import { TreeArt } from "./art";
+import { HudCorners, RadialGauge, TreeArt } from "./art";
 
 // ─── Значок связи ─────────────────────────────────────────────────────────────
 const LINK_LABEL: Record<LinkStatus, { text: string; color: string; icon: string }> = {
-  live: { text: "реальное время", color: GUILD_GREEN, icon: "Zap" },
+  live: { text: "реальное время", color: NEON_CYAN, icon: "Zap" },
   connecting: { text: "подключение…", color: GUILD_GOLD, icon: "Loader" },
   polling: { text: "резервный канал", color: GUILD_GOLD, icon: "RefreshCw" },
   offline: { text: "нет связи", color: GUILD_EMBER, icon: "WifiOff" },
@@ -24,7 +26,12 @@ export function ConnectionBadge({ status }: { status: LinkStatus }) {
   return (
     <span
       className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full font-rajdhani text-[11px]"
-      style={{ background: `${meta.color}18`, border: `1px solid ${meta.color}40`, color: meta.color }}
+      style={{
+        background: `${meta.color}14`,
+        border: `1px solid ${meta.color}55`,
+        color: meta.color,
+        boxShadow: `0 0 14px -4px ${meta.color}`,
+      }}
       data-link-status={status}
       aria-label={`Связь: ${meta.text}`}
       title={
@@ -36,10 +43,10 @@ export function ConnectionBadge({ status }: { status: LinkStatus }) {
       <span className="relative flex w-1.5 h-1.5">
         {status === "live" && (
           <span className="absolute inline-flex w-full h-full rounded-full animate-ping"
-                style={{ background: meta.color, opacity: 0.7 }} />
+                style={{ background: meta.color, opacity: 0.8 }} />
         )}
         <span className="relative inline-flex w-1.5 h-1.5 rounded-full"
-              style={{ background: meta.color }} />
+              style={{ background: meta.color, boxShadow: `0 0 8px ${meta.color}` }} />
       </span>
       {/* Когда всё хорошо, подпись на телефоне только занимает место.
           Как только связь просела — текст виден всегда: это уже важно. */}
@@ -57,7 +64,8 @@ export function InstallBanner() {
   if (installed || dismissed || (!available && !manualIos)) return null;
 
   return (
-    <div className="guild-panel guild-no-print px-4 py-3 flex items-center gap-3 guild-rise">
+    <div className="guild-panel guild-no-print px-4 py-3 flex items-center gap-3 guild-rise"
+         style={ring(NEON_VIOLET, NEON_CYAN)}>
       <span className="text-2xl shrink-0">📲</span>
       <div className="flex-1 font-rajdhani text-sm">
         {manualIos ? (
@@ -71,13 +79,14 @@ export function InstallBanner() {
           type="button"
           onClick={() => void install()}
           className="guild-btn px-3 py-1.5 rounded-lg font-orbitron text-[11px] shrink-0"
-          style={{ background: GUILD_GREEN, color: "#06120c" }}
+          style={{ background: `linear-gradient(135deg, ${NEON_CYAN}, ${NEON_VIOLET})`,
+                   color: "#05060f", boxShadow: `0 0 20px -6px ${NEON_CYAN}` }}
         >
           УСТАНОВИТЬ
         </button>
       )}
       <button type="button" onClick={() => setDismissed(true)} aria-label="Скрыть">
-        <Icon name="X" size={16} style={{ color: "#7f9488" }} />
+        <Icon name="X" size={16} style={{ color: "#7f93b8" }} />
       </button>
     </div>
   );
@@ -93,7 +102,7 @@ export function WhistleOverlay({ title, onDone }: { title: string; onDone: () =>
   return (
     <div className="fixed inset-0 z-[120] flex items-center justify-center pointer-events-none overflow-hidden">
       <div className="absolute inset-0 guild-flash"
-           style={{ background: `radial-gradient(circle at 50% 45%, ${GUILD_EMBER}, #7a1f0c)` }} />
+           style={{ background: `radial-gradient(circle at 50% 45%, ${GUILD_EMBER}, #3d0418)` }} />
       {/* Ударная волна: сигнал должен читаться боковым зрением через весь класс */}
       {[0, 1, 2].map((i) => (
         <span
@@ -102,7 +111,8 @@ export function WhistleOverlay({ title, onDone }: { title: string; onDone: () =>
           style={{
             width: "40vmin",
             height: "40vmin",
-            border: "3px solid rgba(255,255,255,0.65)",
+            border: "3px solid rgba(255,255,255,0.7)",
+            boxShadow: `0 0 40px ${GUILD_EMBER}`,
             animationDelay: `${i * 0.16}s`,
           }}
         />
@@ -110,7 +120,8 @@ export function WhistleOverlay({ title, onDone }: { title: string; onDone: () =>
       <div className="relative text-center guild-pop">
         <div className="text-6xl md:text-8xl mb-2">🔔</div>
         <div className="font-orbitron text-4xl md:text-6xl font-black"
-             style={{ color: "#fff", textShadow: "0 6px 30px rgba(0,0,0,0.55)", letterSpacing: "0.06em" }}>
+             style={{ color: "#fff", textShadow: "0 0 40px #fff, 0 6px 30px rgba(0,0,0,0.6)",
+                      letterSpacing: "0.06em" }}>
           {title}
         </div>
       </div>
@@ -137,19 +148,20 @@ export function LevelUpBanner({ level, onDone }: { level: number; onDone: () => 
     <div className="fixed inset-0 z-[130] flex items-center justify-center pointer-events-none px-6">
       {/* Затемнение почти в глухое: секунду экран принадлежит только новому уровню */}
       <div className="absolute inset-0"
-           style={{ background: `radial-gradient(circle at 50% 45%, ${rank.color}2e, rgba(4,8,6,0.96) 62%)` }} />
+           style={{ background: `radial-gradient(circle at 50% 45%, ${rank.color}2e, rgba(3,4,12,0.96) 62%)` }} />
       <div className="relative guild-pop text-center">
-        <div className="text-7xl mb-3" style={{ filter: `drop-shadow(0 0 24px ${rank.color})` }}>⭐</div>
-        <div className="font-orbitron text-xs tracking-[0.3em] mb-1" style={{ color: "#93ab9f" }}>
-          НОВЫЙ УРОВЕНЬ
-        </div>
-        <div className="font-orbitron text-6xl font-black"
-             style={{ color: rank.color, textShadow: `0 0 40px ${rank.color}66` }}>
-          {level}
-        </div>
-        <div className="font-orbitron text-lg mt-2" style={{ color: rank.color }}>
-          {rank.title}
-        </div>
+        <RadialGauge percent={100} color={rank.color} size={190} thickness={7} ticks={36}>
+          <span className="font-orbitron text-[10px] tracking-[0.3em] mb-1"
+                style={{ color: "#8fa3c8" }}>
+            НОВЫЙ УРОВЕНЬ
+          </span>
+          <span className="font-orbitron text-6xl font-black neon-num" style={neon(rank.color)}>
+            {level}
+          </span>
+          <span className="font-orbitron text-sm mt-2 neon-label" style={neon(rank.color)}>
+            {rank.title}
+          </span>
+        </RadialGauge>
       </div>
     </div>
   );
@@ -163,7 +175,7 @@ export function Confetti({ onDone }: { onDone: () => void }) {
       left: Math.random() * 100,
       delay: Math.random() * 0.9,
       duration: 2.4 + Math.random() * 1.6,
-      color: [GUILD_GREEN, GUILD_GOLD, "#5cc8ff", "#ffffff", "#a98bff"][i % 5],
+      color: [NEON_CYAN, GUILD_GOLD, NEON_MAGENTA, GUILD_GREEN, NEON_VIOLET][i % 5],
       width: 6 + Math.random() * 6,
     })),
     [],
@@ -184,6 +196,7 @@ export function Confetti({ onDone }: { onDone: () => void }) {
             left: `${p.left}%`,
             width: p.width,
             background: p.color,
+            boxShadow: `0 0 10px ${p.color}`,
             animationDelay: `${p.delay}s`,
             animationDuration: `${p.duration}s`,
           }}
@@ -194,13 +207,6 @@ export function Confetti({ onDone }: { onDone: () => void }) {
 }
 
 // ─── Древо ────────────────────────────────────────────────────────────────────
-const TREE_TONE: Record<TreeState["color"], string> = {
-  gray: "#7d8f86",
-  blue: "#5cc8ff",
-  yellow: GUILD_GOLD,
-  green: GUILD_GREEN,
-};
-
 const MILESTONES: { at: number; title: string; icon: string }[] = [
   { at: 50, title: "Плейлист класса", icon: "Music" },
   { at: 70, title: "Фестиваль", icon: "PartyPopper" },
@@ -217,58 +223,74 @@ export function TreeMeter({ tree, compact = false }: { tree: TreeState; compact?
       <div className="flex items-center gap-3">
         <TreeArt percent={tree.percent} color={tone} blinks={tree.blinks} height={54} />
         <div className="flex-1 min-w-0">
-          <div className="h-2 rounded-full overflow-hidden" style={{ background: "rgba(255,255,255,0.08)" }}>
+          <div className="h-2 rounded-full overflow-hidden"
+               style={{ background: "rgba(143,163,200,0.16)" }}>
             <div className="h-full rounded-full transition-all duration-700"
-                 style={{ width: `${tree.percent}%`, background: tone, boxShadow: `0 0 10px ${tone}` }} />
+                 style={{ width: `${tree.percent}%`, background: tone,
+                          boxShadow: `0 0 12px ${tone}` }} />
           </div>
         </div>
-        <span className="font-orbitron text-sm" style={{ color: tone }}>{percent}%</span>
+        <span className="font-orbitron text-sm neon-label" style={neon(tone)}>{percent}%</span>
       </div>
     );
   }
 
   return (
-    <section className="guild-panel overflow-hidden">
-      <div className="relative px-4 sm:px-5 pt-4 pb-4 flex items-center gap-3 sm:gap-5">
-        <div className="relative shrink-0">
+    <section className="guild-panel overflow-hidden" style={ring(tone, NEON_VIOLET)}>
+      <span className="guild-rail" aria-hidden />
+      <HudCorners />
+
+      <div className="relative px-4 sm:px-6 pt-5 pb-4 flex flex-col sm:flex-row sm:items-center gap-4 sm:gap-6">
+        {/* Дерево показывает, сколько выросло; кольцо — насколько близка цель */}
+        <div className="flex items-center justify-center gap-3 sm:gap-5 shrink-0">
           <span className="sm:hidden">
-            <TreeArt percent={tree.percent} color={tone} blinks={tree.blinks} height={132} />
+            <TreeArt percent={tree.percent} color={tone} blinks={tree.blinks} height={118} />
           </span>
           <span className="hidden sm:block">
-            <TreeArt percent={tree.percent} color={tone} blinks={tree.blinks} height={186} />
+            <TreeArt percent={tree.percent} color={tone} blinks={tree.blinks} height={168} />
+          </span>
+
+          <span className="sm:hidden">
+            <RadialGauge percent={tree.percent} color={tone} size={112} thickness={8}>
+              <span className="font-orbitron text-3xl font-black neon-num" style={neon(tone)}>
+                {percent}
+              </span>
+              <span className="font-orbitron text-[10px]" style={{ color: "#8fa3c8" }}>%</span>
+            </RadialGauge>
+          </span>
+          <span className="hidden sm:inline-flex">
+            <RadialGauge percent={tree.percent} color={tone} size={140} thickness={9}>
+              <span className="font-orbitron text-4xl font-black neon-num" style={neon(tone)}>
+                {percent}
+              </span>
+              <span className="font-orbitron text-[10px]" style={{ color: "#8fa3c8" }}>%</span>
+            </RadialGauge>
           </span>
         </div>
 
-        <div className="flex-1 min-w-0">
-          <div className="font-orbitron text-[10px] tracking-[0.22em]" style={{ color: "#93ab9f" }}>
+        <div className="min-w-0 flex-1">
+          <div className="font-orbitron text-[10px] tracking-[0.24em]" style={{ color: "#8fa3c8" }}>
             ДРЕВО ГИЛЬДИИ
           </div>
-
-          <div className="flex items-baseline gap-2 mt-1">
-            <span className="font-orbitron text-4xl sm:text-5xl font-black tabular-nums"
-                  style={{ color: tone, textShadow: `0 0 26px ${tone}55` }}>
-              {percent}
-            </span>
-            <span className="font-orbitron text-xl" style={{ color: `${tone}99` }}>%</span>
-          </div>
-
-          <p className="font-rajdhani text-sm mt-1" style={{ color: "#93ab9f" }}>
-            {tree.total_souls} СЗ собрано гильдией
+          <p className="font-rajdhani text-sm mt-1" style={{ color: "#a9bcdd" }}>
+            <b className="neon-label" style={neon(GUILD_GREEN)}>{tree.total_souls}</b> СЗ собрано гильдией
             {tree.adjust < 0 && (
               <span style={{ color: GUILD_EMBER }}> · дебаффы {tree.adjust} п.п.</span>
             )}
           </p>
 
           {/* Рейка вех: видно, что уже взято и сколько до следующей награды */}
-          <div className="relative mt-4 mb-1 h-2 rounded-full"
-               style={{ background: "rgba(255,255,255,0.08)" }}>
-            <div className={`h-full rounded-full transition-all duration-1000 ${tree.blinks ? "guild-blink" : ""}`}
-                 style={{ width: `${tree.percent}%`, background: `linear-gradient(90deg, ${tone}77, ${tone})`,
-                          boxShadow: `0 0 14px ${tone}88` }} />
+          <div className="relative mt-3 h-2.5 rounded-full overflow-hidden"
+               style={{ background: "rgba(143,163,200,0.14)" }}>
+            <div className={`h-full transition-all duration-1000 ${tree.blinks ? "guild-blink" : ""}`}
+                 style={{ width: `${tree.percent}%`,
+                          background: `linear-gradient(90deg, ${NEON_VIOLET}, ${tone})`,
+                          boxShadow: `0 0 16px ${tone}` }} />
             {MILESTONES.map((m) => (
-              <span key={m.at} className="absolute -top-1 w-1 h-4 rounded-full"
-                    style={{ left: `calc(${m.at}% - 2px)`,
-                             background: tree.percent >= m.at ? "#fff" : "rgba(255,255,255,0.25)" }} />
+              <span key={m.at} className="absolute top-0 w-0.5 h-full"
+                    style={{ left: `${m.at}%`,
+                             background: tree.percent >= m.at
+                               ? "rgba(255,255,255,0.9)" : "rgba(143,163,200,0.5)" }} />
             ))}
           </div>
 
@@ -282,9 +304,10 @@ export function TreeMeter({ tree, compact = false }: { tree: TreeState; compact?
                     reached ? "guild-pop" : ""
                   }`}
                   style={{
-                    background: reached ? `${GUILD_GOLD}1c` : "rgba(255,255,255,0.04)",
-                    border: `1px solid ${reached ? `${GUILD_GOLD}55` : "rgba(255,255,255,0.07)"}`,
-                    color: reached ? GUILD_GOLD : "#6b7a72",
+                    background: reached ? `${GUILD_GOLD}1a` : "rgba(143,163,200,0.06)",
+                    border: `1px solid ${reached ? `${GUILD_GOLD}66` : "rgba(143,163,200,0.16)"}`,
+                    color: reached ? GUILD_GOLD : "#6d7fa3",
+                    boxShadow: reached ? `0 0 16px -6px ${GUILD_GOLD}` : "none",
                   }}
                 >
                   <Icon name={reached ? m.icon : "Lock"} size={11} />
@@ -296,9 +319,11 @@ export function TreeMeter({ tree, compact = false }: { tree: TreeState; compact?
         </div>
       </div>
 
-      <footer className="px-4 sm:px-5 py-3 font-rajdhani text-sm"
-              style={{ borderTop: "1px solid rgba(255,255,255,0.06)",
-                       background: tree.festival_ready ? `${GUILD_GREEN}0e` : "rgba(255,255,255,0.02)" }}>
+      <footer className="relative px-4 sm:px-6 py-3 font-rajdhani text-sm"
+              style={{ borderTop: "1px solid rgba(143,163,200,0.14)",
+                       background: tree.festival_ready
+                         ? `linear-gradient(90deg, ${GUILD_GREEN}14, transparent)`
+                         : "rgba(255,255,255,0.02)" }}>
         {tree.festival_ready ? (
           <span style={{ color: GUILD_GREEN }}>
             🎪 Древо доросло до Фестиваля. Печенье заслужено.
@@ -308,8 +333,10 @@ export function TreeMeter({ tree, compact = false }: { tree: TreeState; compact?
             ⚔️ Древо ниже 50% — гильдия идёт в Рейд, печенья не будет.
           </span>
         ) : (
-          <span style={{ color: "#93ab9f" }}>
-            До Фестиваля осталось <b style={{ color: GUILD_GOLD }}>{tree.souls_to_festival} СЗ</b> на всю гильдию
+          <span style={{ color: "#a9bcdd" }}>
+            До Фестиваля осталось{" "}
+            <b className="neon-label" style={neon(GUILD_GOLD)}>{tree.souls_to_festival} СЗ</b>
+            {" "}на всю гильдию
           </span>
         )}
       </footer>
@@ -350,41 +377,45 @@ export function LoginForm({ onLogin }: { onLogin: (auth: GuildAuth) => void }) {
     }
   };
 
-  const field = "w-full rounded-xl px-4 py-3 font-rajdhani text-base outline-none transition-colors focus:border-white/30";
+  const field = "w-full rounded-xl px-4 py-3 font-rajdhani text-base outline-none transition-colors focus:border-cyan-400/60";
   const fieldStyle = {
-    background: "rgba(255,255,255,0.05)",
-    border: "1px solid rgba(255,255,255,0.12)",
-    color: "#e8f5ee",
+    background: "rgba(143,163,200,0.07)",
+    border: "1px solid rgba(143,163,200,0.22)",
+    color: "#e6f0ff",
   };
 
   return (
     <div className="guild-root flex items-center justify-center px-4 py-10 relative overflow-hidden">
       {/* Древо на фоне: первый экран должен объяснять, куда ты попал */}
       <div className="absolute inset-0 flex items-end justify-center pointer-events-none"
-           style={{ opacity: 0.13 }} aria-hidden>
-        <TreeArt percent={100} color={GUILD_GREEN} height={520} />
+           style={{ opacity: 0.16 }} aria-hidden>
+        <TreeArt percent={100} color={NEON_CYAN} height={540} />
       </div>
 
       <div className="relative w-full max-w-sm space-y-6 guild-rise">
         <div className="text-center">
-          <div className="w-20 h-20 rounded-3xl mx-auto mb-4 flex items-center justify-center guild-pop"
-               style={{ background: "linear-gradient(160deg, #2b4b3b, #0d1a13)",
-                        border: `1px solid ${GUILD_GREEN}55`,
-                        boxShadow: `0 0 40px ${GUILD_GREEN}22` }}>
-            <TreeArt percent={100} color={GUILD_GREEN} height={58} />
+          <div className="w-24 h-24 mx-auto mb-4 guild-pop">
+            <RadialGauge percent={100} color={NEON_CYAN} size={96} thickness={5} ticks={30}>
+              <TreeArt percent={100} color={NEON_CYAN} height={48} />
+            </RadialGauge>
           </div>
-          <h1 className="font-orbitron text-4xl font-black" style={{ letterSpacing: "0.14em" }}>
+          <h1 className="font-orbitron text-4xl font-black neon-num" style={{
+            ...neon(NEON_CYAN), letterSpacing: "0.14em",
+          }}>
             ГИЛЬДИЯ
           </h1>
-          <p className="font-rajdhani mt-2" style={{ color: "#93ab9f" }}>
+          <p className="font-rajdhani mt-2" style={{ color: "#8fa3c8" }}>
             Здесь нет имён — только клички
           </p>
         </div>
 
-        <div className="guild-panel p-6 space-y-4">
+        <div className="guild-panel p-6 space-y-4 relative" style={ring(NEON_CYAN, NEON_MAGENTA)}>
+          <span className="guild-rail" aria-hidden />
+          <HudCorners />
+
           <div>
             <label className="block text-[10px] font-orbitron tracking-[0.18em] mb-2"
-                   style={{ color: "#93ab9f" }}>
+                   style={{ color: "#8fa3c8" }}>
               ЛОГИН
             </label>
             <input
@@ -401,7 +432,7 @@ export function LoginForm({ onLogin }: { onLogin: (auth: GuildAuth) => void }) {
 
           <div>
             <label className="block text-[10px] font-orbitron tracking-[0.18em] mb-2"
-                   style={{ color: "#93ab9f" }}>
+                   style={{ color: "#8fa3c8" }}>
               ПАРОЛЬ
             </label>
             <input
@@ -445,15 +476,15 @@ export function LoginForm({ onLogin }: { onLogin: (auth: GuildAuth) => void }) {
             onClick={() => void submit()}
             disabled={busy}
             className="guild-btn w-full py-3.5 rounded-xl font-orbitron text-sm font-bold disabled:opacity-50 flex items-center justify-center gap-2"
-            style={{ background: `linear-gradient(135deg, ${GUILD_GREEN}, #24b378)`,
-                     color: "#06120c", boxShadow: `0 10px 30px -12px ${GUILD_GREEN}` }}
+            style={{ background: `linear-gradient(120deg, ${NEON_CYAN}, ${NEON_VIOLET} 60%, ${NEON_MAGENTA})`,
+                     color: "#05060f", boxShadow: `0 12px 34px -12px ${NEON_CYAN}` }}
           >
             {busy ? <Icon name="Loader" size={16} className="animate-spin" /> : <Icon name="LogIn" size={16} />}
             ВОЙТИ В ГИЛЬДИЮ
           </button>
         </div>
 
-        <p className="text-center font-rajdhani text-xs" style={{ color: "#6b7a72" }}>
+        <p className="text-center font-rajdhani text-xs" style={{ color: "#6d7fa3" }}>
           Логин и пароль выдаёт Хранитель Реестра на бумажной карточке
         </p>
       </div>

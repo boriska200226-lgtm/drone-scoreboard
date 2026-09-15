@@ -2,7 +2,7 @@ import { useState } from "react";
 
 import Icon from "@/components/ui/icon";
 
-import { BAR_COLOR } from "../theme";
+import { BAR_COLOR, BAR_GRADIENT } from "../theme";
 import type { BarColor } from "../types";
 import { useCountUp, usePrevious } from "../useCountUp";
 
@@ -28,9 +28,10 @@ export interface ProgressBarProps {
 /**
  * Шкала Карты героя.
  *
- * Нарочно клеточная, а не гладкая: ребёнку важно видеть, что до следующего
- * деления осталось «два квадратика», а не «семь процентов». Клетки, которые
- * только что зажглись, коротко подпрыгивают — это и есть награда.
+ * Клеточная и скошенная — как полоса здоровья в игре, а не прогресс-бар в
+ * форме: ребёнку важно видеть, что до следующего деления осталось «два
+ * квадратика», а не «семь процентов». Клетки, которые только что зажглись,
+ * подпрыгивают по очереди, а фронт заполнения дышит — это и есть награда.
  */
 export function ProgressBar({
   label, value, max, color, hint, bonusIcon, bonusTitle,
@@ -45,18 +46,19 @@ export function ProgressBar({
   const previousFilled = usePrevious(filled) ?? filled;
   const shown = useCountUp(clamped);
   const tone = BAR_COLOR[color];
+  const [from, to] = BAR_GRADIENT[color];
   const percent = Math.round((clamped / safeMax) * 100);
   const full = percent >= 80;
 
   return (
     <div
-      className="rounded-xl px-3 py-2.5 transition-all duration-300"
+      className="relative rounded-xl px-3 py-2.5 transition-all duration-300"
       style={{
         background: bleeding
-          ? "linear-gradient(100deg, rgba(255,59,48,0.14), rgba(255,255,255,0.03))"
+          ? "linear-gradient(100deg, rgba(255,23,68,0.18), rgba(255,255,255,0.03))"
           : "rgba(255,255,255,0.035)",
-        border: bleeding ? "1.5px solid #ff3b30" : "1px solid rgba(255,255,255,0.07)",
-        boxShadow: bleeding ? "0 0 22px rgba(255,59,48,0.28)" : "none",
+        border: `1px solid ${bleeding ? "#ff1744" : "rgba(143,163,200,0.16)"}`,
+        boxShadow: bleeding ? "0 0 26px -6px #ff1744" : "none",
       }}
     >
       <button
@@ -66,30 +68,35 @@ export function ProgressBar({
         className="w-full flex items-center gap-2.5 text-left"
       >
         {icon && (
-          <Icon name={icon} size={14} style={{ color: tone, flexShrink: 0 }} />
+          <Icon name={icon} size={14}
+                style={{ color: tone, flexShrink: 0, filter: `drop-shadow(0 0 6px ${tone})` }} />
         )}
         <span
           className="font-orbitron text-[10px] tracking-[0.14em] shrink-0"
-          style={{ color: "#93ab9f", width: icon ? 64 : 78 }}
+          style={{ color: "#8fa3c8", width: icon ? 64 : 78 }}
         >
           {label}
         </span>
 
-        <span className={`flex gap-[3px] flex-1 min-w-0 ${blink ? "guild-blink" : ""}`} aria-hidden>
+        <span className={`flex gap-[3px] flex-1 min-w-0 px-1 ${blink ? "guild-blink" : ""}`}
+              aria-hidden>
           {Array.from({ length: total }, (_, i) => {
             const lit = i < filled;
             const justLit = lit && i >= previousFilled;
+            const isTip = lit && i === filled - 1;
             return (
               <span
                 key={i}
-                className={`relative h-3.5 flex-1 rounded-[3px] overflow-hidden transition-all duration-500 ${
+                className={`guild-cell relative h-4 flex-1 rounded-[2px] overflow-hidden ${
                   justLit ? "guild-cell-new" : ""
-                } ${full && lit ? "guild-sheen" : ""}`}
+                } ${isTip ? "guild-tip" : ""} ${full && lit ? "guild-sheen" : ""}`}
                 style={{
                   background: lit
-                    ? `linear-gradient(180deg, ${tone}, ${tone}bb)`
-                    : "rgba(255,255,255,0.07)",
-                  boxShadow: lit ? `0 0 8px ${tone}66, inset 0 1px 0 rgba(255,255,255,0.4)` : "none",
+                    ? `linear-gradient(160deg, ${from}, ${to})`
+                    : "rgba(143,163,200,0.13)",
+                  boxShadow: lit
+                    ? `0 0 10px ${tone}99, inset 0 1px 0 rgba(255,255,255,0.55)`
+                    : "inset 0 0 0 1px rgba(143,163,200,0.08)",
                   animationDelay: justLit ? `${(i - previousFilled) * 60}ms` : undefined,
                 }}
               />
@@ -99,15 +106,16 @@ export function ProgressBar({
 
         <span
           className="font-orbitron text-[11px] tabular-nums shrink-0 text-right"
-          style={{ color: tone, width: 56 }}
+          style={{ color: tone, textShadow: `0 0 10px ${tone}`, width: 56 }}
         >
           {shown}<span style={{ opacity: 0.45 }}>/{safeMax}</span>
         </span>
 
         {bonusIcon && (
           <span title={bonusTitle} className="shrink-0 rounded-full p-1 guild-halo"
-                style={{ background: "rgba(240,198,97,0.14)" }}>
-            <Icon name={bonusIcon} size={13} style={{ color: "#f0c661" }} />
+                style={{ background: "rgba(255,197,61,0.16)" }}>
+            <Icon name={bonusIcon} size={13}
+                  style={{ color: "#ffc53d", filter: "drop-shadow(0 0 6px #ffc53d)" }} />
           </span>
         )}
       </button>
@@ -118,7 +126,7 @@ export function ProgressBar({
           style={{
             maxHeight: open ? 60 : 0,
             opacity: open ? 1 : 0,
-            color: "#7f9488",
+            color: "#7f93b8",
             marginTop: open ? 6 : 0,
           }}
         >

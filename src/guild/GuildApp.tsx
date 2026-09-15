@@ -13,7 +13,9 @@ import {
   AttendancePanel, AwardPanel, ControlPanel, GuildMapView, RosterPanel,
 } from "./components/TeacherViews";
 import { alarm, unlockAudio } from "./sound";
-import { GUILD_EMBER, GUILD_GOLD, GUILD_GREEN } from "./theme";
+import {
+  GUILD_EMBER, GUILD_GOLD, GUILD_GREEN, NEON_CYAN, NEON_VIOLET, neon,
+} from "./theme";
 import type { GameRules, GuildAuth, GuildEvent, HeroCardData, StudentRow } from "./types";
 import { useGuildLink } from "./ws";
 
@@ -200,19 +202,20 @@ export default function GuildApp() {
           <div
             key={toast.id}
             className="guild-slide-in flex items-center gap-2.5 px-3 py-2 rounded-xl max-w-[17rem]"
-            style={{ background: "rgba(10,17,13,0.95)", border: `1px solid ${toast.tone}55`,
-                     boxShadow: `0 12px 30px -16px ${toast.tone}` }}
+            style={{ background: "rgba(8,11,28,0.95)", border: `1px solid ${toast.tone}66`,
+                     boxShadow: `0 0 26px -10px ${toast.tone}, 0 12px 30px -16px #000` }}
           >
             <span className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0"
                   style={{ background: `${toast.tone}1c` }}>
-              <Icon name={toast.icon} size={14} style={{ color: toast.tone }} />
+              <Icon name={toast.icon} size={14}
+                    style={{ color: toast.tone, filter: `drop-shadow(0 0 6px ${toast.tone})` }} />
             </span>
             <span className="font-rajdhani text-sm flex-1 min-w-0 truncate"
-                  style={{ color: "#e8f5ee" }}>
+                  style={{ color: "#e6f0ff" }}>
               {toast.text}
             </span>
             {toast.amount !== undefined && (
-              <span className="font-orbitron text-sm shrink-0" style={{ color: toast.tone }}>
+              <span className="font-orbitron text-base shrink-0 neon-num" style={neon(toast.tone)}>
                 +{toast.amount}
               </span>
             )}
@@ -222,20 +225,24 @@ export default function GuildApp() {
 
       <header
         className="sticky top-0 z-[100] backdrop-blur-md guild-no-print"
-        style={{ background: "rgba(8,14,11,0.9)", borderBottom: "1px solid rgba(255,255,255,0.06)" }}
+        style={{ background: "rgba(5,7,20,0.88)",
+                 borderBottom: "1px solid rgba(0,229,255,0.18)",
+                 boxShadow: "0 12px 40px -30px #000, 0 1px 0 rgba(0,229,255,0.08)" }}
       >
         <div className="max-w-5xl mx-auto px-4 h-16 flex items-center gap-3">
           <span className="shrink-0 flex items-center justify-center w-10 h-10 rounded-xl"
-                style={{ background: "linear-gradient(160deg, #23402f, #0c1611)",
-                         border: `1px solid ${GUILD_GREEN}33` }}>
-            <TreeArt percent={tree?.percent ?? 0} color={GUILD_GREEN} height={30} />
+                style={{ background: "linear-gradient(160deg, #13224a, #070a1c)",
+                         border: `1px solid ${NEON_CYAN}44`,
+                         boxShadow: `0 0 18px -6px ${NEON_CYAN}` }}>
+            <TreeArt percent={tree?.percent ?? 0} color={NEON_CYAN} height={30} />
           </span>
 
           <div className="min-w-0 flex-1">
             <div className="font-orbitron text-sm font-bold leading-tight">
-              ГИЛЬДИЯ <span style={{ color: GUILD_GREEN }}>{auth.class_name}</span>
+              ГИЛЬДИЯ{" "}
+              <span className="neon-label" style={neon(NEON_CYAN)}>{auth.class_name}</span>
             </div>
-            <div className="font-rajdhani text-[11px] truncate" style={{ color: "#7f9488" }}>
+            <div className="font-rajdhani text-[11px] truncate" style={{ color: "#7f93b8" }}>
               {isTeacher ? "Хранитель Реестра" : auth.nickname}
               {!isTeacher && myPlace >= 0 && (
                 <span style={{ color: GUILD_GOLD }}> · #{myPlace + 1}</span>
@@ -254,7 +261,7 @@ export default function GuildApp() {
           )}
 
           <button type="button" onClick={() => void logout()} aria-label="Выйти" className="p-1.5 shrink-0">
-            <Icon name="LogOut" size={16} style={{ color: "#7f9488" }} />
+            <Icon name="LogOut" size={16} style={{ color: "#7f93b8" }} />
           </button>
         </div>
 
@@ -266,10 +273,12 @@ export default function GuildApp() {
                 type="button"
                 onClick={() => setTab(item.id)}
                 className="guild-btn flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-orbitron text-[10px] shrink-0"
-                style={{
-                  color: tab === item.id ? "#06120c" : "#7f9488",
-                  background: tab === item.id ? GUILD_GREEN : "rgba(255,255,255,0.04)",
-                }}
+                style={tab === item.id
+                  ? { color: "#05060f",
+                      background: `linear-gradient(120deg, ${NEON_CYAN}, ${NEON_VIOLET})`,
+                      boxShadow: `0 0 20px -6px ${NEON_CYAN}` }
+                  : { color: "#7f93b8", background: "rgba(143,163,200,0.07)",
+                      border: "1px solid rgba(143,163,200,0.14)" }}
               >
                 <Icon name={item.icon} size={12} />
                 {item.label}
@@ -289,7 +298,7 @@ export default function GuildApp() {
         {tab === "hero" && (card
           ? <HeroCard card={card} token={auth.token} place={myPlace >= 0 ? myPlace + 1 : null}
                       onReload={() => void reloadCard()} />
-          : <p className="font-rajdhani text-sm" style={{ color: "#6b7a72" }}>
+          : <p className="font-rajdhani text-sm" style={{ color: "#6d7fa3" }}>
               Разворачиваем карту героя…
             </p>)}
 
@@ -329,8 +338,9 @@ export default function GuildApp() {
         <nav
           className="fixed bottom-0 left-0 right-0 z-[100] guild-no-print backdrop-blur-md"
           style={{
-            background: "rgba(8,14,11,0.95)",
-            borderTop: "1px solid rgba(255,255,255,0.07)",
+            background: "rgba(5,7,20,0.95)",
+            borderTop: `1px solid ${NEON_CYAN}2e`,
+            boxShadow: `0 -14px 40px -30px ${NEON_CYAN}`,
             paddingBottom: "env(safe-area-inset-bottom)",
           }}
         >
@@ -343,13 +353,19 @@ export default function GuildApp() {
                   type="button"
                   onClick={() => setTab(item.id)}
                   className="relative flex flex-col items-center gap-1 py-2.5"
-                  style={{ color: active ? GUILD_GREEN : "#6b7a72" }}
+                  style={{ color: active ? NEON_CYAN : "#6d7fa3" }}
                 >
                   {active && (
-                    <span className="absolute top-0 w-10 h-[3px] rounded-b-full"
-                          style={{ background: GUILD_GREEN, boxShadow: `0 0 12px ${GUILD_GREEN}` }} />
+                    <>
+                      <span className="absolute top-0 w-10 h-[3px] rounded-b-full"
+                            style={{ background: `linear-gradient(90deg, ${NEON_VIOLET}, ${NEON_CYAN})`,
+                                     boxShadow: `0 0 16px ${NEON_CYAN}` }} />
+                      <span className="absolute inset-x-3 inset-y-1 rounded-xl -z-10"
+                            style={{ background: `radial-gradient(60% 70% at 50% 0%, ${NEON_CYAN}22, transparent)` }} />
+                    </>
                   )}
-                  <Icon name={item.icon} size={19} />
+                  <Icon name={item.icon} size={19}
+                        style={active ? { filter: `drop-shadow(0 0 8px ${NEON_CYAN})` } : undefined} />
                   <span className="font-orbitron text-[9px] tracking-wider">{item.label}</span>
                 </button>
               );

@@ -6,13 +6,18 @@
   "start_url": "/guild",
   "scope": "/",
   "display": "standalone",
-  "display_override": ["window-controls-overlay", "standalone"],
+  "display_override": [
+    "window-controls-overlay",
+    "standalone"
+  ],
   "orientation": "portrait-primary",
-  "background_color": "#0a0d14",
-  "theme_color": "#2b4b3b",
+  "background_color": "#05060f",
+  "theme_color": "#0a0f28",
   "lang": "ru",
   "dir": "ltr",
-  "categories": ["education"],
+  "categories": [
+    "education"
+  ],
   "icons": [
     {
       "src": "/guild-icon-192.png",
@@ -34,7 +39,25 @@
     }
   ],
   "shortcuts": [
-    { "name": "Алтарь", "url": "/guild?tab=altar", "icons": [{ "src": "/guild-icon-192.png", "sizes": "192x192" }] },
-    { "name": "Карта героя", "url": "/guild?tab=hero", "icons": [{ "src": "/guild-icon-192.png", "sizes": "192x192" }] }
+    {
+      "name": "Алтарь",
+      "url": "/guild?tab=altar",
+      "icons": [
+        {
+          "src": "/guild-icon-192.png",
+          "sizes": "192x192"
+        }
+      ]
+    },
+    {
+      "name": "Карта героя",
+      "url": "/guild?tab=hero",
+      "icons": [
+        {
+          "src": "/guild-icon-192.png",
+          "sizes": "192x192"
+        }
+      ]
+    }
   ]
 }

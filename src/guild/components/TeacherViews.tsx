@@ -3,11 +3,14 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Icon from "@/components/ui/icon";
 
 import { api, ApiError } from "../api";
-import { BRANCH_THEME, GUILD_EMBER, GUILD_GOLD, GUILD_GREEN, rankOf } from "../theme";
+import {
+  BRANCH_THEME, GUILD_EMBER, GUILD_GOLD, GUILD_GREEN, NEON_CYAN, NEON_MAGENTA,
+  NEON_VIOLET, neon, rankOf, ring,
+} from "../theme";
 import type {
   AttendanceStatus, GameRules, GuildMapData, Sticker, StudentRow,
 } from "../types";
-import { BranchSigil, HeroAvatar, RankBadge, ShieldBadge } from "./art";
+import { BranchSigil, HeroAvatar, HudCorners, RadialGauge, RankBadge, ShieldBadge } from "./art";
 import { TreeMeter } from "./Common";
 
 function errorText(err: unknown, fallback: string) {
@@ -48,7 +51,7 @@ function HeroPicker({ students, value, onChange }: {
           >
             <HeroAvatar avatar="" nickname={s.nickname} branch={s.branch} size={34} dimmed={!active} />
             <span className="font-rajdhani text-[11px] truncate w-full text-center"
-                  style={{ color: active ? "#e8f5ee" : "#93ab9f" }}>
+                  style={{ color: active ? "#e6f0ff" : "#8fa3c8" }}>
               {s.nickname}
             </span>
             <span className="font-orbitron text-[9px]" style={{ color: GUILD_GREEN }}>
@@ -96,7 +99,8 @@ export function AwardPanel({ token, students, rules, onDone }: {
   };
 
   return (
-    <section className="guild-panel p-5 space-y-4 guild-rise">
+    <section className="guild-panel p-5 space-y-4 guild-rise relative" style={ring(GUILD_GREEN, NEON_CYAN)}>
+      <span className="guild-rail" aria-hidden />
       <div className="flex items-center gap-2">
         <Icon name="Sparkles" size={16} style={{ color: GUILD_GREEN }} />
         <h2 className="font-orbitron text-sm tracking-[0.16em]">НАЧИСЛИТЬ СЗ</h2>
@@ -113,7 +117,7 @@ export function AwardPanel({ token, students, rules, onDone }: {
                  style={{ color: BRANCH_THEME[hero.branch].color }}>
               <BranchSigil branch={hero.branch} size={12} />
               {BRANCH_THEME[hero.branch].title}
-              <span style={{ color: "#5d6f65" }}>· {rankOf(Math.floor(hero.souls / 100) + 1).title}</span>
+              <span style={{ color: "#6d7fa3" }}>· {rankOf(Math.floor(hero.souls / 100) + 1).title}</span>
             </div>
           </div>
           <ShieldBadge shield={hero.armor <= 0 ? "bleeding" : hero.armor >= 8 ? "green" : "yellow"}
@@ -139,7 +143,7 @@ export function AwardPanel({ token, students, rules, onDone }: {
             <span className="font-orbitron text-xs" style={{ color: GUILD_GREEN }}>
               +{action.delta} СЗ
               {action.weekly_limit ? (
-                <span style={{ color: "#6b7a72" }}> · до {action.weekly_limit}/нед</span>
+                <span style={{ color: "#6d7fa3" }}> · до {action.weekly_limit}/нед</span>
               ) : null}
             </span>
           </button>
@@ -180,19 +184,23 @@ export function ControlPanel({ token, students, festivalReady, onDone }: {
   };
 
   const selectStyle = {
-    background: "rgba(255,255,255,0.05)",
+    background: "rgba(143,163,200,0.08)",
     border: "1px solid rgba(255,255,255,0.12)",
-    color: "#e8f5ee",
+    color: "#e6f0ff",
   };
 
   return (
     <div className="space-y-4">
-      <section className="guild-panel p-5 space-y-4 guild-rise">
+      {/* Единственная панель без анимации появления: свисток — кнопка-паника,
+          и она не должна ехать под пальцем в первые полсекунды. */}
+      <section className="guild-panel p-5 space-y-4 relative" style={ring(GUILD_EMBER, NEON_MAGENTA)}>
+        <span className="guild-rail" aria-hidden />
+        <HudCorners />
         <div className="flex items-center gap-2">
           <Icon name="Megaphone" size={16} style={{ color: GUILD_EMBER }} />
           <h2 className="font-orbitron text-sm tracking-[0.16em]">СВИСТОК</h2>
         </div>
-        <p className="font-rajdhani text-sm" style={{ color: "#93ab9f" }}>
+        <p className="font-rajdhani text-sm" style={{ color: "#8fa3c8" }}>
           Один свист — стоп-игра, два — разбор. Звук и вибрация уходят на все
           устройства класса сразу.
         </p>
@@ -207,8 +215,8 @@ export function ControlPanel({ token, students, festivalReady, onDone }: {
             })}
             className="guild-btn relative w-32 h-32 rounded-full flex flex-col items-center justify-center gap-1"
             style={{
-              background: `radial-gradient(circle at 35% 28%, #ff9a7a, ${GUILD_EMBER} 55%, #b8341a)`,
-              boxShadow: `0 16px 40px -14px ${GUILD_EMBER}, inset 0 2px 0 rgba(255,255,255,0.35)`,
+              background: `radial-gradient(circle at 34% 26%, #ffd0dd, ${GUILD_EMBER} 48%, ${NEON_MAGENTA})`,
+              boxShadow: `0 0 60px -10px ${GUILD_EMBER}, 0 16px 40px -14px ${NEON_MAGENTA}, inset 0 2px 0 rgba(255,255,255,0.45)`,
               color: "#fff",
             }}
           >
@@ -224,8 +232,9 @@ export function ControlPanel({ token, students, festivalReady, onDone }: {
             })}
             className="guild-btn w-24 h-24 rounded-full flex flex-col items-center justify-center gap-0.5"
             style={{
-              background: "rgba(255,107,69,0.12)",
-              border: `2px solid ${GUILD_EMBER}66`,
+              background: "rgba(255,61,110,0.12)",
+              border: `2px solid ${GUILD_EMBER}88`,
+              boxShadow: `0 0 26px -10px ${GUILD_EMBER}`,
               color: GUILD_EMBER,
             }}
           >
@@ -235,12 +244,12 @@ export function ControlPanel({ token, students, festivalReady, onDone }: {
         </div>
       </section>
 
-      <section className="guild-panel p-5 space-y-3 guild-rise">
+      <section className="guild-panel p-5 space-y-3 guild-rise" style={ring(GUILD_EMBER, NEON_VIOLET)}>
         <div className="flex items-center gap-2">
           <Icon name="ShieldOff" size={16} style={{ color: GUILD_EMBER }} />
           <h2 className="font-orbitron text-sm tracking-[0.16em]">ДЕБАФФ «МАТ»</h2>
         </div>
-        <p className="font-rajdhani text-sm" style={{ color: "#93ab9f" }}>
+        <p className="font-rajdhani text-sm" style={{ color: "#8fa3c8" }}>
           −10% Древа и дебафф на 24 часа. Герой указывается по желанию: можно
           отметить только урон гильдии, не показывая класс на одного человека.
         </p>
@@ -250,9 +259,9 @@ export function ControlPanel({ token, students, festivalReady, onDone }: {
           className="w-full rounded-xl px-3 py-2.5 font-rajdhani outline-none"
           style={selectStyle}
         >
-          <option value="" style={{ background: "#0c120f" }}>Без указания героя</option>
+          <option value="" style={{ background: "#0a0e22" }}>Без указания героя</option>
           {students.map((s) => (
-            <option key={s.hero_id} value={s.hero_id} style={{ background: "#0c120f" }}>
+            <option key={s.hero_id} value={s.hero_id} style={{ background: "#0a0e22" }}>
               {s.nickname}
             </option>
           ))}
@@ -279,7 +288,7 @@ export function ControlPanel({ token, students, festivalReady, onDone }: {
         </button>
       </section>
 
-      <section className="guild-panel p-5 space-y-3 guild-rise">
+      <section className="guild-panel p-5 space-y-3 guild-rise" style={ring(GUILD_GOLD, NEON_MAGENTA)}>
         <div className="flex items-center gap-2">
           <Icon name="PartyPopper" size={16} style={{ color: GUILD_GOLD }} />
           <h2 className="font-orbitron text-sm tracking-[0.16em]">ФЕСТИВАЛЬ</h2>
@@ -297,8 +306,8 @@ export function ControlPanel({ token, students, festivalReady, onDone }: {
           })}
           className="guild-btn w-full py-3.5 rounded-xl font-orbitron text-xs font-bold"
           style={festivalReady
-            ? { background: `linear-gradient(135deg, ${GUILD_GOLD}, #c9922f)`, color: "#1a1204",
-                boxShadow: `0 12px 30px -14px ${GUILD_GOLD}` }
+            ? { background: `linear-gradient(120deg, ${GUILD_GOLD}, ${NEON_MAGENTA})`, color: "#1a1204",
+                boxShadow: `0 0 34px -10px ${GUILD_GOLD}` }
             : { background: "rgba(255,255,255,0.06)", color: GUILD_GOLD }}
         >
           {festivalReady ? "ЗАПУСТИТЬ ФЕСТИВАЛЬ" : "ЗАПУСТИТЬ (БУДЕТ РЕЙД)"}
@@ -367,9 +376,9 @@ export function AttendancePanel({ token, students, onDone }: {
   };
 
   const inputStyle = {
-    background: "rgba(255,255,255,0.05)",
+    background: "rgba(143,163,200,0.08)",
     border: "1px solid rgba(255,255,255,0.12)",
-    color: "#e8f5ee",
+    color: "#e6f0ff",
   };
 
   return (
@@ -379,7 +388,7 @@ export function AttendancePanel({ token, students, onDone }: {
           <Icon name="Shield" size={16} style={{ color: GUILD_GREEN }} />
           <h2 className="font-orbitron text-sm tracking-[0.16em]">ПОСЕЩАЕМОСТЬ</h2>
         </div>
-        <p className="font-rajdhani text-sm" style={{ color: "#93ab9f" }}>
+        <p className="font-rajdhani text-sm" style={{ color: "#8fa3c8" }}>
           «Уважительная» не бьёт по Броне. Итог дня система считает сама в 22:00 —
           кнопка ниже нужна, только если сервер в это время спал.
         </p>
@@ -393,7 +402,7 @@ export function AttendancePanel({ token, students, onDone }: {
           className="rounded-lg px-3 py-2 font-rajdhani outline-none"
           style={inputStyle}
         />
-        <label className="flex items-center gap-2 font-rajdhani text-sm" style={{ color: "#93ab9f" }}>
+        <label className="flex items-center gap-2 font-rajdhani text-sm" style={{ color: "#8fa3c8" }}>
           урок
           <input
             type="number"
@@ -431,7 +440,7 @@ export function AttendancePanel({ token, students, onDone }: {
                     style={{
                       background: active ? `${STATUS_META[value].color}22` : "rgba(255,255,255,0.04)",
                       border: `1px solid ${active ? `${STATUS_META[value].color}66` : "transparent"}`,
-                      color: active ? STATUS_META[value].color : "#7f9488",
+                      color: active ? STATUS_META[value].color : "#7f93b8",
                     }}
                   >
                     {STATUS_META[value].label}
@@ -448,7 +457,8 @@ export function AttendancePanel({ token, students, onDone }: {
           type="button"
           onClick={() => void save()}
           className="guild-btn px-4 py-2.5 rounded-xl font-orbitron text-xs font-bold"
-          style={{ background: GUILD_GREEN, color: "#06120c" }}
+          style={{ background: `linear-gradient(120deg, ${NEON_CYAN}, ${GUILD_GREEN})`,
+                   color: "#05060f", boxShadow: `0 0 26px -10px ${GUILD_GREEN}` }}
         >
           СОХРАНИТЬ УРОК
         </button>
@@ -493,7 +503,7 @@ export function GuildMapView({ token }: { token: string }) {
   useEffect(() => { void load(); }, [load]);
 
   if (error) return <p className="font-rajdhani text-sm" style={{ color: GUILD_EMBER }}>{error}</p>;
-  if (!data) return <p className="font-rajdhani text-sm" style={{ color: "#6b7a72" }}>Загружаем…</p>;
+  if (!data) return <p className="font-rajdhani text-sm" style={{ color: "#6d7fa3" }}>Загружаем…</p>;
 
   const maxSouls = Math.max(1, ...data.branches.map((b) => b.souls));
 
@@ -506,7 +516,7 @@ export function GuildMapView({ token }: { token: string }) {
           <Icon name="Compass" size={16} style={{ color: GUILD_GREEN }} />
           <h2 className="font-orbitron text-sm tracking-[0.16em]">КАРТА ГИЛЬДИИ</h2>
         </div>
-        <p className="font-rajdhani text-xs mb-4" style={{ color: "#6b7a72" }}>
+        <p className="font-rajdhani text-xs mb-4" style={{ color: "#6d7fa3" }}>
           Только сводка по веткам: ни одной клички, ни одного имени.
         </p>
 
@@ -523,16 +533,28 @@ export function GuildMapView({ token }: { token: string }) {
                     <BranchSigil branch={branch.branch} size={22} />
                     <span className="font-orbitron text-sm">{branch.title}</span>
                   </div>
-                  <div className="font-orbitron text-2xl font-bold" style={{ color: tone.color }}>
-                    {branch.souls}
-                    <span className="font-rajdhani text-xs ml-1" style={{ color: "#6b7a72" }}>СЗ</span>
+                  <div className="flex items-center gap-3">
+                    <RadialGauge percent={(branch.souls / maxSouls) * 100} color={tone.color}
+                                 size={64} thickness={5} ticks={16}>
+                      <span className="font-orbitron text-base font-bold neon-num"
+                            style={neon(tone.color)}>
+                        {branch.souls}
+                      </span>
+                    </RadialGauge>
+                    <div className="flex-1 min-w-0">
+                      <div className="h-1.5 rounded-full overflow-hidden"
+                           style={{ background: "rgba(143,163,200,0.14)" }}>
+                        <div className="h-full rounded-full transition-all duration-700"
+                             style={{ width: `${(branch.souls / maxSouls) * 100}%`,
+                                      background: `linear-gradient(90deg, ${NEON_VIOLET}, ${tone.color})`,
+                                      boxShadow: `0 0 12px ${tone.color}` }} />
+                      </div>
+                      <div className="font-rajdhani text-[11px] mt-1" style={{ color: "#6d7fa3" }}>
+                        СЗ ветки
+                      </div>
+                    </div>
                   </div>
-                  <div className="h-1.5 rounded-full mt-2 overflow-hidden"
-                       style={{ background: "rgba(255,255,255,0.08)" }}>
-                    <div className="h-full rounded-full transition-all duration-700"
-                         style={{ width: `${(branch.souls / maxSouls) * 100}%`, background: tone.color }} />
-                  </div>
-                  <div className="font-rajdhani text-xs mt-2" style={{ color: "#93ab9f" }}>
+                  <div className="font-rajdhani text-xs mt-2" style={{ color: "#8fa3c8" }}>
                     {branch.heroes} героев · броня ⌀{branch.avg_armor}
                   </div>
                 </div>
@@ -556,7 +578,7 @@ export function GuildMapView({ token }: { token: string }) {
           <h2 className="font-orbitron text-sm tracking-[0.16em]">ТИХАЯ ПОЧТА</h2>
         </div>
         {letters.length === 0 ? (
-          <p className="font-rajdhani text-sm" style={{ color: "#6b7a72" }}>Писем пока нет.</p>
+          <p className="font-rajdhani text-sm" style={{ color: "#6d7fa3" }}>Писем пока нет.</p>
         ) : (
           <ul className="space-y-1.5">
             {letters.map((letter, i) => (
@@ -565,7 +587,7 @@ export function GuildMapView({ token }: { token: string }) {
                   style={{ background: "rgba(255,255,255,0.03)" }}>
                 <span className="text-xl">{STICKER_META[letter.sticker].glyph}</span>
                 <span className="flex-1">{STICKER_META[letter.sticker].label}</span>
-                <span style={{ color: "#6b7a72" }}>
+                <span style={{ color: "#6d7fa3" }}>
                   {new Date(letter.day).toLocaleDateString("ru-RU")}
                 </span>
                 <span className="font-orbitron text-xs px-2 py-0.5 rounded-full"
@@ -619,9 +641,9 @@ export function RosterPanel({ token, students, onDone }: {
   };
 
   const inputStyle = {
-    background: "rgba(255,255,255,0.05)",
+    background: "rgba(143,163,200,0.08)",
     border: "1px solid rgba(255,255,255,0.12)",
-    color: "#e8f5ee",
+    color: "#e6f0ff",
   };
 
   return (
@@ -644,7 +666,7 @@ export function RosterPanel({ token, students, onDone }: {
             return (
               <li key={s.hero_id}
                   className="guild-altar-item flex items-center gap-2.5 py-1.5 px-2 rounded-lg">
-                <span className="font-orbitron text-[11px] w-5 text-right" style={{ color: "#5d6f65" }}>
+                <span className="font-orbitron text-[11px] w-5 text-right" style={{ color: "#6d7fa3" }}>
                   {i + 1}
                 </span>
                 <HeroAvatar avatar="" nickname={s.nickname} branch={s.branch} size={30} />
@@ -663,7 +685,7 @@ export function RosterPanel({ token, students, onDone }: {
                   type="button"
                   onClick={() => void doReset(s.login)}
                   className="guild-btn px-2 py-1 rounded-lg font-rajdhani text-[11px] shrink-0"
-                  style={{ background: "rgba(255,255,255,0.05)", color: "#93ab9f" }}
+                  style={{ background: "rgba(143,163,200,0.08)", color: "#8fa3c8" }}
                 >
                   сброс
                 </button>
@@ -678,11 +700,11 @@ export function RosterPanel({ token, students, onDone }: {
             <p className="font-rajdhani text-sm">
               {reset.login} → <span className="font-mono text-base">{reset.password}</span>
             </p>
-            <p className="font-rajdhani text-xs" style={{ color: "#93ab9f" }}>
+            <p className="font-rajdhani text-xs" style={{ color: "#8fa3c8" }}>
               Шаблон для родителя: {reset.parent_message}
             </p>
             <button type="button" onClick={() => setReset(null)}
-                    className="font-rajdhani text-xs underline" style={{ color: "#6b7a72" }}>
+                    className="font-rajdhani text-xs underline" style={{ color: "#6d7fa3" }}>
               скрыть
             </button>
           </div>
@@ -694,7 +716,7 @@ export function RosterPanel({ token, students, onDone }: {
           <Icon name="KeyRound" size={16} style={{ color: GUILD_GOLD }} />
           <h2 className="font-orbitron text-sm tracking-[0.16em]">РЕЕСТР</h2>
         </div>
-        <p className="font-rajdhani text-sm" style={{ color: "#93ab9f" }}>
+        <p className="font-rajdhani text-sm" style={{ color: "#8fa3c8" }}>
           Единственное место, где кличка связана с учеником. Запись хранится
           зашифрованной, каждое открытие требует свежий код 2FA и попадает в журнал.
         </p>
@@ -704,9 +726,9 @@ export function RosterPanel({ token, students, onDone }: {
           className="w-full rounded-xl px-3 py-2.5 font-rajdhani outline-none"
           style={inputStyle}
         >
-          <option value="" style={{ background: "#0c120f" }}>Выбери кличку</option>
+          <option value="" style={{ background: "#0a0e22" }}>Выбери кличку</option>
           {sorted.map((s) => (
-            <option key={s.hero_id} value={s.hero_id} style={{ background: "#0c120f" }}>
+            <option key={s.hero_id} value={s.hero_id} style={{ background: "#0a0e22" }}>
               {s.nickname}
             </option>
           ))}
