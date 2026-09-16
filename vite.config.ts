@@ -19,6 +19,15 @@ const hmrKeepalive = {
     },
 };
 
+// «Гильдия» ходит в REST и WebSocket по относительным путям, чтобы в проде
+// фронт, /api и /ws жили на одном домене (см. deploy/nginx.conf). В разработке
+// эти пути проксируются на локальный guild-server.
+const guildApi = process.env.GUILD_SERVER_URL || 'http://127.0.0.1:8000';
+const guildProxy = {
+    '/api': {target: guildApi, changeOrigin: true},
+    '/ws': {target: guildApi, changeOrigin: true, ws: true},
+};
+
 export default defineConfig(({mode}) => ({
     plugins: [
         hmrKeepalive,
@@ -38,6 +47,13 @@ export default defineConfig(({mode}) => ({
         hmr: {
             timeout: 7000,
             overlay: false // Disables the error overlay if you only want console errors
-        }
+        },
+        proxy: guildProxy,
+    },
+    preview: {
+        host: '0.0.0.0',
+        port: 4173,
+        allowedHosts: true,
+        proxy: guildProxy,
     },
 }));

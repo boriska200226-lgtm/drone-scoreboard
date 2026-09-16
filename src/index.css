@@ -278,3 +278,728 @@
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(0, 255, 170, 0.6);
 }
+
+/* ════════════════════════════════════════════════════════════════════
+   ГИЛЬДИЯ — неоновый HUD
+   ════════════════════════════════════════════════════════════════════ */
+.guild-root {
+  --n-cyan: #00e5ff;
+  --n-magenta: #ff2bd6;
+  --n-violet: #a855ff;
+  --n-lime: #39ff88;
+  --n-amber: #ffc53d;
+  --n-rose: #ff3d6e;
+  --n-mist: #8fa3c8;
+  --n-night: #05060f;
+
+  position: relative;
+  isolation: isolate;
+  min-height: 100vh;
+  min-height: 100dvh;
+  color: #e6f0ff;
+  /* Три источника света по углам: плоская заливка выглядит как бланк */
+  background:
+    radial-gradient(90% 55% at 50% -12%, rgba(0, 229, 255, 0.17), transparent 62%),
+    radial-gradient(70% 45% at 100% 8%, rgba(255, 43, 214, 0.13), transparent 58%),
+    radial-gradient(85% 55% at 0% 102%, rgba(168, 85, 255, 0.15), transparent 62%),
+    var(--n-night);
+  background-attachment: fixed;
+}
+
+/* Сетка «терминала» — угасает к краям, чтобы не спорить с контентом */
+.guild-root::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background-image:
+    linear-gradient(rgba(0, 229, 255, 0.055) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0, 229, 255, 0.055) 1px, transparent 1px);
+  background-size: 46px 46px;
+  -webkit-mask-image: radial-gradient(75% 60% at 50% 18%, #000, transparent 88%);
+  mask-image: radial-gradient(75% 60% at 50% 18%, #000, transparent 88%);
+}
+
+/* Развёртка ЭЛТ: еле заметная, но именно она делает «экран», а не «страницу» */
+.guild-root::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  pointer-events: none;
+  opacity: 0.4;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent 0 2px,
+    rgba(0, 0, 0, 0.16) 2px 3px
+  );
+}
+
+/* ── Панели HUD ──────────────────────────────────────────────────────── */
+/* Рамка — градиент толщиной в пиксель: обычный border не умеет переливаться */
+.guild-panel {
+  --ring: rgba(0, 229, 255, 0.7);
+  --ring2: rgba(255, 43, 214, 0.45);
+
+  position: relative;
+  border-radius: 3px;
+  background:
+    linear-gradient(168deg, rgba(16, 22, 48, 0.92), rgba(6, 9, 22, 0.96));
+  box-shadow:
+    0 22px 60px -34px #000,
+    0 0 26px -14px var(--ring),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+.guild-panel::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(145deg, var(--ring), rgba(168, 85, 255, 0.2) 48%, var(--ring2));
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  pointer-events: none;
+}
+
+.guild-panel-flat {
+  position: relative;
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid rgba(143, 163, 200, 0.16);
+  border-radius: 2px;
+}
+
+/* Уголки-кронштейны: дешёвый и безошибочно «игровой» приём */
+.guild-corner {
+  position: absolute;
+  width: 18px;
+  height: 18px;
+  pointer-events: none;
+  border-color: var(--ring, var(--n-cyan));
+  filter: drop-shadow(0 0 5px var(--ring, var(--n-cyan)));
+  opacity: 0.95;
+}
+.guild-corner-tl {
+  top: 5px;
+  left: 5px;
+  border-top: 2px solid;
+  border-left: 2px solid;
+  border-top-left-radius: 2px;
+}
+.guild-corner-tr {
+  top: 5px;
+  right: 5px;
+  border-top: 2px solid;
+  border-right: 2px solid;
+  border-top-right-radius: 2px;
+}
+.guild-corner-bl {
+  bottom: 5px;
+  left: 5px;
+  border-bottom: 2px solid;
+  border-left: 2px solid;
+  border-bottom-left-radius: 2px;
+}
+.guild-corner-br {
+  bottom: 5px;
+  right: 5px;
+  border-bottom: 2px solid;
+  border-right: 2px solid;
+  border-bottom-right-radius: 2px;
+}
+
+/* Бегущий блик по верхней кромке — панель «под током» */
+@keyframes guild-rail {
+  0% {
+    transform: translateX(-60%);
+  }
+  100% {
+    transform: translateX(260%);
+  }
+}
+.guild-rail {
+  position: absolute;
+  top: 0;
+  left: 8%;
+  right: 8%;
+  height: 1px;
+  overflow: hidden;
+  pointer-events: none;
+}
+.guild-rail::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  width: 38%;
+  background: linear-gradient(90deg, transparent, #fff, transparent);
+  opacity: 0.75;
+  animation: guild-rail 4.5s ease-in-out infinite;
+}
+
+/* ── Неоновый текст ──────────────────────────────────────────────────── */
+.neon-num {
+  background: linear-gradient(180deg, #ffffff 8%, var(--neon, #00e5ff) 72%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  filter: drop-shadow(0 0 16px var(--neon, #00e5ff));
+}
+.neon-label {
+  color: var(--neon, #00e5ff);
+  text-shadow: 0 0 12px var(--neon, #00e5ff);
+}
+
+/* ── Кнопки ──────────────────────────────────────────────────────────── */
+.guild-btn {
+  transition:
+    transform 0.14s cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 0.22s ease,
+    filter 0.22s ease;
+}
+.guild-btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+  filter: brightness(1.12);
+}
+.guild-btn:active:not(:disabled) {
+  transform: translateY(1px) scale(0.985);
+}
+
+/* ── Шкалы ───────────────────────────────────────────────────────────── */
+/* Скошенные клетки — как полоса здоровья в игре, а не прогресс-бар в форме */
+.guild-cell {
+  transform: skewX(-15deg);
+  transition:
+    background 0.4s ease,
+    box-shadow 0.4s ease;
+}
+
+@keyframes guild-sheen {
+  from {
+    transform: translateX(-140%) skewX(-15deg);
+  }
+  to {
+    transform: translateX(360%) skewX(-15deg);
+  }
+}
+.guild-sheen::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    100deg,
+    transparent 20%,
+    rgba(255, 255, 255, 0.6) 50%,
+    transparent 80%
+  );
+  animation: guild-sheen 2.4s ease-in-out infinite;
+}
+
+@keyframes guild-cell-pop {
+  0% {
+    transform: skewX(-15deg) scaleY(0.35);
+    opacity: 0.25;
+  }
+  70% {
+    transform: skewX(-15deg) scaleY(1.28);
+  }
+  100% {
+    transform: skewX(-15deg) scaleY(1);
+    opacity: 1;
+  }
+}
+.guild-cell-new {
+  animation: guild-cell-pop 0.45s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+/* Кончик заполненной части дышит — видно, где сейчас «фронт» прогресса */
+@keyframes guild-tip {
+  0%,
+  100% {
+    filter: brightness(1);
+  }
+  50% {
+    filter: brightness(1.75);
+  }
+}
+.guild-tip {
+  animation: guild-tip 1.6s ease-in-out infinite;
+}
+
+/* ── Древо ───────────────────────────────────────────────────────────── */
+@keyframes guild-leaf-twinkle {
+  0%,
+  100% {
+    opacity: 0.3;
+    transform: scale(0.8);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.2);
+  }
+}
+.guild-leaf {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: guild-leaf-twinkle 3.4s ease-in-out infinite;
+}
+
+@keyframes guild-spore-float {
+  0% {
+    opacity: 0;
+    transform: translateY(0) translateX(0);
+  }
+  20% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-88px) translateX(14px);
+  }
+}
+.guild-spore {
+  transform-box: fill-box;
+  animation: guild-spore-float 5.2s ease-out infinite;
+}
+
+/* Мигание в зоне 65–75% — «Фестиваль уже близко» */
+@keyframes guild-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+.guild-blink {
+  animation: guild-blink 1.3s ease-in-out infinite;
+}
+
+/* ── Свисток ─────────────────────────────────────────────────────────── */
+@keyframes guild-flash {
+  0% {
+    opacity: 0;
+  }
+  10% {
+    opacity: 0.92;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+.guild-flash {
+  animation: guild-flash 1.3s ease-out forwards;
+}
+
+@keyframes guild-shock {
+  from {
+    transform: scale(0.15);
+    opacity: 0.9;
+  }
+  to {
+    transform: scale(2.8);
+    opacity: 0;
+  }
+}
+.guild-shock {
+  animation: guild-shock 1.1s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes guild-shake {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0);
+  }
+  20% {
+    transform: translate3d(-7px, 2px, 0);
+  }
+  40% {
+    transform: translate3d(6px, -3px, 0);
+  }
+  60% {
+    transform: translate3d(-4px, 3px, 0);
+  }
+  80% {
+    transform: translate3d(3px, -1px, 0);
+  }
+}
+.guild-shake {
+  animation: guild-shake 0.55s ease-in-out;
+}
+
+/* ── Появление ───────────────────────────────────────────────────────── */
+@keyframes guild-rise {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.guild-rise {
+  animation: guild-rise 0.42s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes guild-slide-in {
+  from {
+    opacity: 0;
+    transform: translateX(26px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+}
+.guild-slide-in {
+  animation: guild-slide-in 0.34s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes guild-pop {
+  0% {
+    transform: scale(0.4) rotate(-8deg);
+    opacity: 0;
+  }
+  65% {
+    transform: scale(1.12) rotate(2deg);
+  }
+  100% {
+    transform: scale(1) rotate(0);
+    opacity: 1;
+  }
+}
+.guild-pop {
+  animation: guild-pop 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+/* Пульс вокруг открытого бонуса */
+@keyframes guild-halo {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(255, 197, 61, 0.5);
+  }
+  50% {
+    box-shadow: 0 0 0 9px rgba(255, 197, 61, 0);
+  }
+}
+.guild-halo {
+  animation: guild-halo 2.4s ease-out infinite;
+}
+
+/* Конфетти на 70% Древа */
+@keyframes guild-fall {
+  from {
+    transform: translateY(-12vh) rotate(0deg);
+    opacity: 1;
+  }
+  to {
+    transform: translateY(108vh) rotate(680deg);
+    opacity: 0;
+  }
+}
+.guild-confetto {
+  position: fixed;
+  top: 0;
+  width: 9px;
+  height: 14px;
+  border-radius: 2px;
+  animation: guild-fall linear forwards;
+  pointer-events: none;
+  z-index: 90;
+}
+
+/* ── Строка Алтаря ───────────────────────────────────────────────────── */
+/* На телефоне — три этажа, на широком экране — строка таблицы. */
+.guild-altar-row {
+  display: grid;
+  align-items: center;
+  gap: 0.4rem 0.85rem;
+  grid-template-columns: auto 1fr auto;
+  grid-template-areas:
+    "face name  shield"
+    "face meta  meta"
+    "bar  bar   bar";
+}
+.guild-altar-face {
+  grid-area: face;
+}
+.guild-altar-name {
+  grid-area: name;
+  min-width: 0;
+}
+.guild-altar-meta {
+  grid-area: meta;
+}
+.guild-altar-bar {
+  grid-area: bar;
+}
+.guild-altar-shield {
+  grid-area: shield;
+  justify-self: end;
+}
+.guild-altar-level {
+  display: none;
+}
+
+/* Шапка таблицы объявлена после .guild-altar-row, иначе её grid
+   пересилил бы скрытие на телефоне. */
+.guild-altar-head {
+  display: none;
+}
+
+@media (min-width: 768px) {
+  .guild-altar-row {
+    grid-template-columns: auto 1.5fr 3.2rem 1fr 2fr 2.6rem;
+    grid-template-areas: "face name level meta bar shield";
+  }
+  .guild-altar-level {
+    display: block;
+    grid-area: level;
+  }
+  .guild-altar-head {
+    display: grid;
+  }
+}
+
+.guild-altar-item {
+  position: relative;
+  transition:
+    background 0.2s ease,
+    box-shadow 0.2s ease;
+}
+.guild-altar-item:hover {
+  background: rgba(0, 229, 255, 0.05);
+  box-shadow: inset 0 0 40px -20px var(--n-cyan);
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   ГИЛЬДИЯ — футуристичный слой: горизонт, голограмма, телеметрия
+   ════════════════════════════════════════════════════════════════════ */
+
+/* Уходящая к горизонту сетка. Даёт сцене глубину: экран перестаёт быть
+   листом бумаги и становится смотровым окном. */
+.hud-horizon {
+  position: fixed;
+  left: -60%;
+  right: -60%;
+  bottom: 0;
+  height: 52vh;
+  z-index: -1;
+  pointer-events: none;
+  perspective: 260px;
+  perspective-origin: 50% 0;
+  opacity: 0.75;
+  -webkit-mask-image: linear-gradient(to top, #000 8%, transparent 78%);
+  mask-image: linear-gradient(to top, #000 8%, transparent 78%);
+}
+.hud-horizon::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: rotateX(74deg);
+  transform-origin: 50% 0;
+  background-image:
+    linear-gradient(rgba(0, 229, 255, 0.4) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(168, 85, 255, 0.28) 1px, transparent 1px);
+  background-size: 68px 68px;
+  animation: hud-horizon-scroll 7s linear infinite;
+}
+@keyframes hud-horizon-scroll {
+  to {
+    background-position: 0 68px;
+  }
+}
+
+/* Луч сканирования: панель один раз «проявляется» сверху вниз.
+   Прозрачность гасим в ноль на последнем кадре — иначе при fill-mode
+   остаётся застывшая светлая полоса поперёк панели. */
+@keyframes hud-scan {
+  0% {
+    background-position: 0 -180%;
+    opacity: 0;
+  }
+  12% {
+    opacity: 0.45;
+  }
+  88% {
+    opacity: 0.35;
+  }
+  100% {
+    background-position: 0 320%;
+    opacity: 0;
+  }
+}
+.hud-scan::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0;
+  background: linear-gradient(
+    180deg,
+    transparent 0%,
+    var(--ring, var(--n-cyan)) 3%,
+    transparent 6%
+  );
+  background-size: 100% 300%;
+  animation: hud-scan 2.6s ease-out 1 forwards;
+}
+
+/* Шестигранник: аватар героя — не «фотка в кружке», а ячейка соты */
+.hud-hex {
+  clip-path: polygon(50% 0%, 93.3% 25%, 93.3% 75%, 50% 100%, 6.7% 75%, 6.7% 25%);
+}
+
+/* Телеметрия: моноширинный служебный текст рядом с игровыми цифрами */
+.hud-data {
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  letter-spacing: 0.1em;
+  font-variant-numeric: tabular-nums;
+}
+
+@keyframes hud-blink {
+  0%,
+  49% {
+    opacity: 1;
+  }
+  50%,
+  100% {
+    opacity: 0;
+  }
+}
+.hud-cursor::after {
+  content: "▌";
+  margin-left: 2px;
+  animation: hud-blink 1.1s steps(1) infinite;
+}
+
+/* Заголовок панели — засечка слева, как метка канала на приборе */
+.hud-title {
+  position: relative;
+  padding-left: 0.65rem;
+}
+.hud-title::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0.1em;
+  bottom: 0.1em;
+  width: 3px;
+  background: var(--ring, var(--n-cyan));
+  box-shadow: 0 0 10px var(--ring, var(--n-cyan));
+}
+
+/* Срез угла у плашки-ярлыка */
+.hud-tab {
+  clip-path: polygon(0 0, 100% 0, calc(100% - 9px) 100%, 0 100%);
+}
+
+/* Глитч на свистке: картинка на мгновение «рассыпается» по каналам */
+@keyframes hud-glitch {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0);
+    filter: none;
+  }
+  15% {
+    transform: translate3d(-4px, 1px, 0);
+    filter: hue-rotate(35deg) saturate(1.5);
+  }
+  30% {
+    transform: translate3d(5px, -2px, 0);
+    filter: hue-rotate(-30deg) saturate(1.6);
+  }
+  45% {
+    transform: translate3d(-3px, 2px, 0);
+    filter: none;
+  }
+  60% {
+    transform: translate3d(2px, -1px, 0);
+    filter: hue-rotate(20deg);
+  }
+}
+.hud-glitch {
+  animation: hud-glitch 0.62s steps(2, end);
+}
+
+/* Голограмма: горизонтальные строки развёртки поверх проекции */
+@keyframes hud-holo-roll {
+  to {
+    background-position: 0 12px;
+  }
+}
+.hud-holo {
+  position: relative;
+}
+.hud-holo::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    0deg,
+    rgba(255, 255, 255, 0.11) 0 1px,
+    transparent 1px 4px
+  );
+  background-size: 100% 12px;
+  animation: hud-holo-roll 1.6s linear infinite;
+  -webkit-mask-image: radial-gradient(60% 55% at 50% 45%, #000 40%, transparent 85%);
+  mask-image: radial-gradient(60% 55% at 50% 45%, #000 40%, transparent 85%);
+}
+
+/* ── Печать карточек доступа ─────────────────────────────────────────── */
+@media print {
+  body {
+    background: #fff !important;
+  }
+  .guild-root::after,
+  .guild-root::before,
+  .guild-no-print {
+    display: none !important;
+  }
+  .guild-print-sheet {
+    display: grid !important;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 8mm;
+    padding: 0;
+  }
+  .guild-print-card {
+    break-inside: avoid;
+    border: 1.5pt solid #1b2450 !important;
+    color: #0d1330 !important;
+    background: #fff !important;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .guild-blink,
+  .guild-flash,
+  .guild-shock,
+  .guild-shake,
+  .guild-rise,
+  .guild-slide-in,
+  .guild-pop,
+  .guild-halo,
+  .guild-confetto,
+  .guild-leaf,
+  .guild-spore,
+  .guild-tip,
+  .guild-sheen::before,
+  .guild-rail::before,
+  .guild-cell-new,
+  .hud-horizon::before,
+  .hud-scan::after,
+  .hud-holo::after,
+  .hud-cursor::after,
+  .hud-glitch {
+    animation: none !important;
+  }
+}
