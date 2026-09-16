@@ -236,17 +236,17 @@ export function TreeMeter({ tree, compact = false }: { tree: TreeState; compact?
   }
 
   return (
-    <section className="guild-panel overflow-hidden" style={ring(tone, NEON_VIOLET)}>
+    <section className="guild-panel hud-scan overflow-hidden" style={ring(tone, NEON_VIOLET)}>
       <span className="guild-rail" aria-hidden />
       <HudCorners />
 
       <div className="relative px-4 sm:px-6 pt-5 pb-4 flex flex-col sm:flex-row sm:items-center gap-4 sm:gap-6">
         {/* Дерево показывает, сколько выросло; кольцо — насколько близка цель */}
         <div className="flex items-center justify-center gap-3 sm:gap-5 shrink-0">
-          <span className="sm:hidden">
+          <span className="hud-holo sm:hidden">
             <TreeArt percent={tree.percent} color={tone} blinks={tree.blinks} height={118} />
           </span>
-          <span className="hidden sm:block">
+          <span className="hud-holo hidden sm:block">
             <TreeArt percent={tree.percent} color={tone} blinks={tree.blinks} height={168} />
           </span>
 
@@ -269,8 +269,13 @@ export function TreeMeter({ tree, compact = false }: { tree: TreeState; compact?
         </div>
 
         <div className="min-w-0 flex-1">
-          <div className="font-orbitron text-[10px] tracking-[0.24em]" style={{ color: "#8fa3c8" }}>
+          <div className="hud-title font-orbitron text-[10px] tracking-[0.24em]"
+               style={{ color: "#8fa3c8" }}>
             ДРЕВО ГИЛЬДИИ
+          </div>
+          {/* Служебная строка прибора: цель и накопленные дебаффы одним взглядом */}
+          <div className="hud-data text-[10px] mt-1.5" style={{ color: "#5d6f96" }}>
+            TARGET {tree.class_target} · ΔDEBUFF {tree.adjust} · NEXT {tree.souls_to_festival}
           </div>
           <p className="font-rajdhani text-sm mt-1" style={{ color: "#a9bcdd" }}>
             <b className="neon-label" style={neon(GUILD_GREEN)}>{tree.total_souls}</b> СЗ собрано гильдией
@@ -386,6 +391,8 @@ export function LoginForm({ onLogin }: { onLogin: (auth: GuildAuth) => void }) {
 
   return (
     <div className="guild-root flex items-center justify-center px-4 py-10 relative overflow-hidden">
+      <div className="hud-horizon" aria-hidden />
+
       {/* Древо на фоне: первый экран должен объяснять, куда ты попал */}
       <div className="absolute inset-0 flex items-end justify-center pointer-events-none"
            style={{ opacity: 0.16 }} aria-hidden>
@@ -404,12 +411,12 @@ export function LoginForm({ onLogin }: { onLogin: (auth: GuildAuth) => void }) {
           }}>
             ГИЛЬДИЯ
           </h1>
-          <p className="font-rajdhani mt-2" style={{ color: "#8fa3c8" }}>
-            Здесь нет имён — только клички
+          <p className="hud-data hud-cursor text-[11px] mt-2" style={{ color: "#5d6f96" }}>
+            SYS//GUILD · ЗДЕСЬ НЕТ ИМЁН, ТОЛЬКО КЛИЧКИ
           </p>
         </div>
 
-        <div className="guild-panel p-6 space-y-4 relative" style={ring(NEON_CYAN, NEON_MAGENTA)}>
+        <div className="guild-panel hud-scan p-6 space-y-4 relative" style={ring(NEON_CYAN, NEON_MAGENTA)}>
           <span className="guild-rail" aria-hidden />
           <HudCorners />
 

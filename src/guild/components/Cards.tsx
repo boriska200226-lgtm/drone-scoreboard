@@ -56,7 +56,7 @@ export function CardsSheet({ token, className }: { token: string; className: str
     <div className="space-y-4">
       <div className="guild-panel p-5 space-y-4 guild-no-print" style={ring(NEON_CYAN, GUILD_GOLD)}>
         <div>
-          <h2 className="font-orbitron text-sm tracking-[0.16em] mb-1">🎟️ КАРТОЧКИ ДОСТУПА</h2>
+          <h2 className="hud-title font-orbitron text-sm tracking-[0.16em] mb-1">КАРТОЧКИ ДОСТУПА</h2>
           <p className="font-rajdhani text-sm" style={{ color: "#a9bcdd" }}>
             Логины по шаблону s_{className}_NN, пароли по 12 символов, клички без повторов.
             Пароли показываются один раз — распечатай сразу.

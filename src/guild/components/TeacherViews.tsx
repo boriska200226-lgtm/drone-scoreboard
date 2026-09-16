@@ -99,11 +99,11 @@ export function AwardPanel({ token, students, rules, onDone }: {
   };
 
   return (
-    <section className="guild-panel p-5 space-y-4 guild-rise relative" style={ring(GUILD_GREEN, NEON_CYAN)}>
+    <section className="guild-panel hud-scan p-5 space-y-4 guild-rise relative" style={ring(GUILD_GREEN, NEON_CYAN)}>
       <span className="guild-rail" aria-hidden />
       <div className="flex items-center gap-2">
         <Icon name="Sparkles" size={16} style={{ color: GUILD_GREEN }} />
-        <h2 className="font-orbitron text-sm tracking-[0.16em]">НАЧИСЛИТЬ СЗ</h2>
+        <h2 className="hud-title font-orbitron text-sm tracking-[0.16em]">НАЧИСЛИТЬ СЗ</h2>
       </div>
 
       <HeroPicker students={students} value={heroId} onChange={setHeroId} />
@@ -198,7 +198,7 @@ export function ControlPanel({ token, students, festivalReady, onDone }: {
         <HudCorners />
         <div className="flex items-center gap-2">
           <Icon name="Megaphone" size={16} style={{ color: GUILD_EMBER }} />
-          <h2 className="font-orbitron text-sm tracking-[0.16em]">СВИСТОК</h2>
+          <h2 className="hud-title font-orbitron text-sm tracking-[0.16em]">СВИСТОК</h2>
         </div>
         <p className="font-rajdhani text-sm" style={{ color: "#8fa3c8" }}>
           Один свист — стоп-игра, два — разбор. Звук и вибрация уходят на все
@@ -247,7 +247,7 @@ export function ControlPanel({ token, students, festivalReady, onDone }: {
       <section className="guild-panel p-5 space-y-3 guild-rise" style={ring(GUILD_EMBER, NEON_VIOLET)}>
         <div className="flex items-center gap-2">
           <Icon name="ShieldOff" size={16} style={{ color: GUILD_EMBER }} />
-          <h2 className="font-orbitron text-sm tracking-[0.16em]">ДЕБАФФ «МАТ»</h2>
+          <h2 className="hud-title font-orbitron text-sm tracking-[0.16em]">ДЕБАФФ «МАТ»</h2>
         </div>
         <p className="font-rajdhani text-sm" style={{ color: "#8fa3c8" }}>
           −10% Древа и дебафф на 24 часа. Герой указывается по желанию: можно
@@ -291,7 +291,7 @@ export function ControlPanel({ token, students, festivalReady, onDone }: {
       <section className="guild-panel p-5 space-y-3 guild-rise" style={ring(GUILD_GOLD, NEON_MAGENTA)}>
         <div className="flex items-center gap-2">
           <Icon name="PartyPopper" size={16} style={{ color: GUILD_GOLD }} />
-          <h2 className="font-orbitron text-sm tracking-[0.16em]">ФЕСТИВАЛЬ</h2>
+          <h2 className="hud-title font-orbitron text-sm tracking-[0.16em]">ФЕСТИВАЛЬ</h2>
         </div>
         <p className="font-rajdhani text-sm" style={{ color: festivalReady ? GUILD_GREEN : GUILD_GOLD }}>
           {festivalReady
@@ -386,7 +386,7 @@ export function AttendancePanel({ token, students, onDone }: {
       <div>
         <div className="flex items-center gap-2 mb-1">
           <Icon name="Shield" size={16} style={{ color: GUILD_GREEN }} />
-          <h2 className="font-orbitron text-sm tracking-[0.16em]">ПОСЕЩАЕМОСТЬ</h2>
+          <h2 className="hud-title font-orbitron text-sm tracking-[0.16em]">ПОСЕЩАЕМОСТЬ</h2>
         </div>
         <p className="font-rajdhani text-sm" style={{ color: "#8fa3c8" }}>
           «Уважительная» не бьёт по Броне. Итог дня система считает сама в 22:00 —
@@ -514,7 +514,7 @@ export function GuildMapView({ token }: { token: string }) {
       <section className="guild-panel p-5 guild-rise">
         <div className="flex items-center gap-2 mb-1">
           <Icon name="Compass" size={16} style={{ color: GUILD_GREEN }} />
-          <h2 className="font-orbitron text-sm tracking-[0.16em]">КАРТА ГИЛЬДИИ</h2>
+          <h2 className="hud-title font-orbitron text-sm tracking-[0.16em]">КАРТА ГИЛЬДИИ</h2>
         </div>
         <p className="font-rajdhani text-xs mb-4" style={{ color: "#6d7fa3" }}>
           Только сводка по веткам: ни одной клички, ни одного имени.
@@ -575,7 +575,7 @@ export function GuildMapView({ token }: { token: string }) {
       <section className="guild-panel p-5 guild-rise">
         <div className="flex items-center gap-2 mb-3">
           <Icon name="Mail" size={16} style={{ color: GUILD_GOLD }} />
-          <h2 className="font-orbitron text-sm tracking-[0.16em]">ТИХАЯ ПОЧТА</h2>
+          <h2 className="hud-title font-orbitron text-sm tracking-[0.16em]">ТИХАЯ ПОЧТА</h2>
         </div>
         {letters.length === 0 ? (
           <p className="font-rajdhani text-sm" style={{ color: "#6d7fa3" }}>Писем пока нет.</p>
@@ -652,7 +652,7 @@ export function RosterPanel({ token, students, onDone }: {
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
             <Icon name="ScrollText" size={16} style={{ color: GUILD_GREEN }} />
-            <h2 className="font-orbitron text-sm tracking-[0.16em]">ГЕРОИ</h2>
+            <h2 className="hud-title font-orbitron text-sm tracking-[0.16em]">ГЕРОИ</h2>
           </div>
           <a href={api.exportUrl()} className="font-rajdhani text-xs flex items-center gap-1.5"
              style={{ color: GUILD_GOLD }}>
@@ -714,7 +714,7 @@ export function RosterPanel({ token, students, onDone }: {
       <section className="guild-panel p-5 space-y-3 guild-rise">
         <div className="flex items-center gap-2">
           <Icon name="KeyRound" size={16} style={{ color: GUILD_GOLD }} />
-          <h2 className="font-orbitron text-sm tracking-[0.16em]">РЕЕСТР</h2>
+          <h2 className="hud-title font-orbitron text-sm tracking-[0.16em]">РЕЕСТР</h2>
         </div>
         <p className="font-rajdhani text-sm" style={{ color: "#8fa3c8" }}>
           Единственное место, где кличка связана с учеником. Запись хранится

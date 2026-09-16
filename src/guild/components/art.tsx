@@ -247,20 +247,30 @@ export function HeroAvatar({ avatar, nickname, branch, size = 44, dimmed = false
   const tone = BRANCH_THEME[branch];
   return (
     <span
-      className="inline-flex items-center justify-center rounded-full shrink-0 select-none"
+      className="hud-hex relative inline-block shrink-0 select-none"
       style={{
         width: size,
         height: size,
-        fontSize: size * 0.5,
-        lineHeight: 1,
-        background: `radial-gradient(circle at 30% 25%, ${tone.soft}, rgba(8,14,11,0.9))`,
-        border: `2px solid ${tone.color}${dimmed ? "44" : "88"}`,
-        boxShadow: dimmed ? "none" : `0 0 14px ${tone.color}33`,
-        filter: dimmed ? "grayscale(0.7)" : undefined,
+        background: dimmed
+          ? "rgba(143,163,200,0.35)"
+          : `linear-gradient(155deg, ${tone.color}, ${tone.color}55 60%, ${tone.color})`,
+        filter: dimmed ? "grayscale(0.7)" : `drop-shadow(0 0 10px ${tone.glow})`,
       }}
       aria-hidden
     >
-      {avatarOf(avatar, nickname)}
+      {/* Внутренняя ячейка отступает на 2px — так «рамка» получается
+          шестигранной; обычный border по гексагону не пройдёт. */}
+      <span
+        className="hud-hex absolute flex items-center justify-center"
+        style={{
+          inset: 2,
+          fontSize: size * 0.46,
+          lineHeight: 1,
+          background: `radial-gradient(circle at 32% 24%, ${tone.soft}, #070b1c 75%)`,
+        }}
+      >
+        {avatarOf(avatar, nickname)}
+      </span>
     </span>
   );
 }
@@ -337,12 +347,26 @@ export function TreeArt({ percent, color, blinks = false, height = 210 }: {
           <stop offset="0%" stopColor="#ffffff" stopOpacity="0.3" />
           <stop offset="62%" stopColor="#ffffff" stopOpacity="0" />
         </radialGradient>
+        {/* Конус проекции: снизу ярко, кверху растворяется */}
+        <linearGradient id={`${id}-cone`} x1="0" y1="1" x2="0" y2="0">
+          <stop offset="0%" stopColor={color} stopOpacity="0.32" />
+          <stop offset="100%" stopColor={color} stopOpacity="0" />
+        </linearGradient>
+        <linearGradient id={`${id}-emit`} x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0%" stopColor={color} stopOpacity="0" />
+          <stop offset="50%" stopColor={color} stopOpacity="1" />
+          <stop offset="100%" stopColor={color} stopOpacity="0" />
+        </linearGradient>
       </defs>
 
       <ellipse cx="100" cy="96" rx="98" ry="102" fill={`url(#${id}-halo)`} />
 
-      {/* Земля */}
-      <ellipse cx="100" cy="214" rx="66" ry="7" fill="rgba(255,255,255,0.06)" />
+      {/* Конус и излучатель: дерево не стоит на земле, а проецируется */}
+      <path d="M74 214 L18 40 L182 40 L126 214 Z" fill={`url(#${id}-cone)`} />
+      <ellipse cx="100" cy="214" rx="62" ry="7" fill="none" stroke={color}
+               strokeOpacity="0.35" strokeWidth="1" />
+      <rect x="38" y="212" width="124" height="4" rx="2" fill={`url(#${id}-emit)`}
+            style={{ filter: `drop-shadow(0 0 8px ${color})` }} />
 
       {/* Призрак взрослого дерева — цель, до которой гильдия ещё не доросла */}
       <g fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.22)" strokeWidth="1.5"

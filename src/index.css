@@ -343,7 +343,7 @@
   --ring2: rgba(255, 43, 214, 0.45);
 
   position: relative;
-  border-radius: 1.1rem;
+  border-radius: 3px;
   background:
     linear-gradient(168deg, rgba(16, 22, 48, 0.92), rgba(6, 9, 22, 0.96));
   box-shadow:
@@ -373,45 +373,46 @@
   position: relative;
   background: rgba(255, 255, 255, 0.035);
   border: 1px solid rgba(143, 163, 200, 0.16);
-  border-radius: 0.85rem;
+  border-radius: 2px;
 }
 
 /* Уголки-кронштейны: дешёвый и безошибочно «игровой» приём */
 .guild-corner {
   position: absolute;
-  width: 14px;
-  height: 14px;
+  width: 18px;
+  height: 18px;
   pointer-events: none;
   border-color: var(--ring, var(--n-cyan));
-  opacity: 0.8;
+  filter: drop-shadow(0 0 5px var(--ring, var(--n-cyan)));
+  opacity: 0.95;
 }
 .guild-corner-tl {
-  top: 7px;
-  left: 7px;
+  top: 5px;
+  left: 5px;
   border-top: 2px solid;
   border-left: 2px solid;
-  border-top-left-radius: 6px;
+  border-top-left-radius: 2px;
 }
 .guild-corner-tr {
-  top: 7px;
-  right: 7px;
+  top: 5px;
+  right: 5px;
   border-top: 2px solid;
   border-right: 2px solid;
-  border-top-right-radius: 6px;
+  border-top-right-radius: 2px;
 }
 .guild-corner-bl {
-  bottom: 7px;
-  left: 7px;
+  bottom: 5px;
+  left: 5px;
   border-bottom: 2px solid;
   border-left: 2px solid;
-  border-bottom-left-radius: 6px;
+  border-bottom-left-radius: 2px;
 }
 .guild-corner-br {
-  bottom: 7px;
-  right: 7px;
+  bottom: 5px;
+  right: 5px;
   border-bottom: 2px solid;
   border-right: 2px solid;
-  border-bottom-right-radius: 6px;
+  border-bottom-right-radius: 2px;
 }
 
 /* Бегущий блик по верхней кромке — панель «под током» */
@@ -779,6 +780,181 @@
   box-shadow: inset 0 0 40px -20px var(--n-cyan);
 }
 
+/* ════════════════════════════════════════════════════════════════════
+   ГИЛЬДИЯ — футуристичный слой: горизонт, голограмма, телеметрия
+   ════════════════════════════════════════════════════════════════════ */
+
+/* Уходящая к горизонту сетка. Даёт сцене глубину: экран перестаёт быть
+   листом бумаги и становится смотровым окном. */
+.hud-horizon {
+  position: fixed;
+  left: -60%;
+  right: -60%;
+  bottom: 0;
+  height: 52vh;
+  z-index: -1;
+  pointer-events: none;
+  perspective: 260px;
+  perspective-origin: 50% 0;
+  opacity: 0.75;
+  -webkit-mask-image: linear-gradient(to top, #000 8%, transparent 78%);
+  mask-image: linear-gradient(to top, #000 8%, transparent 78%);
+}
+.hud-horizon::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: rotateX(74deg);
+  transform-origin: 50% 0;
+  background-image:
+    linear-gradient(rgba(0, 229, 255, 0.4) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(168, 85, 255, 0.28) 1px, transparent 1px);
+  background-size: 68px 68px;
+  animation: hud-horizon-scroll 7s linear infinite;
+}
+@keyframes hud-horizon-scroll {
+  to {
+    background-position: 0 68px;
+  }
+}
+
+/* Луч сканирования: панель один раз «проявляется» сверху вниз.
+   Прозрачность гасим в ноль на последнем кадре — иначе при fill-mode
+   остаётся застывшая светлая полоса поперёк панели. */
+@keyframes hud-scan {
+  0% {
+    background-position: 0 -180%;
+    opacity: 0;
+  }
+  12% {
+    opacity: 0.45;
+  }
+  88% {
+    opacity: 0.35;
+  }
+  100% {
+    background-position: 0 320%;
+    opacity: 0;
+  }
+}
+.hud-scan::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0;
+  background: linear-gradient(
+    180deg,
+    transparent 0%,
+    var(--ring, var(--n-cyan)) 3%,
+    transparent 6%
+  );
+  background-size: 100% 300%;
+  animation: hud-scan 2.6s ease-out 1 forwards;
+}
+
+/* Шестигранник: аватар героя — не «фотка в кружке», а ячейка соты */
+.hud-hex {
+  clip-path: polygon(50% 0%, 93.3% 25%, 93.3% 75%, 50% 100%, 6.7% 75%, 6.7% 25%);
+}
+
+/* Телеметрия: моноширинный служебный текст рядом с игровыми цифрами */
+.hud-data {
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  letter-spacing: 0.1em;
+  font-variant-numeric: tabular-nums;
+}
+
+@keyframes hud-blink {
+  0%,
+  49% {
+    opacity: 1;
+  }
+  50%,
+  100% {
+    opacity: 0;
+  }
+}
+.hud-cursor::after {
+  content: "▌";
+  margin-left: 2px;
+  animation: hud-blink 1.1s steps(1) infinite;
+}
+
+/* Заголовок панели — засечка слева, как метка канала на приборе */
+.hud-title {
+  position: relative;
+  padding-left: 0.65rem;
+}
+.hud-title::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0.1em;
+  bottom: 0.1em;
+  width: 3px;
+  background: var(--ring, var(--n-cyan));
+  box-shadow: 0 0 10px var(--ring, var(--n-cyan));
+}
+
+/* Срез угла у плашки-ярлыка */
+.hud-tab {
+  clip-path: polygon(0 0, 100% 0, calc(100% - 9px) 100%, 0 100%);
+}
+
+/* Глитч на свистке: картинка на мгновение «рассыпается» по каналам */
+@keyframes hud-glitch {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0);
+    filter: none;
+  }
+  15% {
+    transform: translate3d(-4px, 1px, 0);
+    filter: hue-rotate(35deg) saturate(1.5);
+  }
+  30% {
+    transform: translate3d(5px, -2px, 0);
+    filter: hue-rotate(-30deg) saturate(1.6);
+  }
+  45% {
+    transform: translate3d(-3px, 2px, 0);
+    filter: none;
+  }
+  60% {
+    transform: translate3d(2px, -1px, 0);
+    filter: hue-rotate(20deg);
+  }
+}
+.hud-glitch {
+  animation: hud-glitch 0.62s steps(2, end);
+}
+
+/* Голограмма: горизонтальные строки развёртки поверх проекции */
+@keyframes hud-holo-roll {
+  to {
+    background-position: 0 12px;
+  }
+}
+.hud-holo {
+  position: relative;
+}
+.hud-holo::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    0deg,
+    rgba(255, 255, 255, 0.11) 0 1px,
+    transparent 1px 4px
+  );
+  background-size: 100% 12px;
+  animation: hud-holo-roll 1.6s linear infinite;
+  -webkit-mask-image: radial-gradient(60% 55% at 50% 45%, #000 40%, transparent 85%);
+  mask-image: radial-gradient(60% 55% at 50% 45%, #000 40%, transparent 85%);
+}
+
 /* ── Печать карточек доступа ─────────────────────────────────────────── */
 @media print {
   body {
@@ -818,7 +994,12 @@
   .guild-tip,
   .guild-sheen::before,
   .guild-rail::before,
-  .guild-cell-new {
+  .guild-cell-new,
+  .hud-horizon::before,
+  .hud-scan::after,
+  .hud-holo::after,
+  .hud-cursor::after,
+  .hud-glitch {
     animation: none !important;
   }
 }

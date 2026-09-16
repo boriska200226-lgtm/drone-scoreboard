@@ -58,6 +58,7 @@ export default function GuildApp() {
   const [whistle, setWhistle] = useState<string | null>(null);
   const [confetti, setConfetti] = useState(false);
   const [shake, setShake] = useState(false);
+  const [glitch, setGlitch] = useState(false);
   const [card, setCard] = useState<HeroCardData | null>(null);
   const [students, setStudents] = useState<StudentRow[]>([]);
   const [rules, setRules] = useState<GameRules | null>(null);
@@ -95,6 +96,8 @@ export default function GuildApp() {
         alarm(event.payload.sound, event.payload.blasts ?? 1, event.payload.vibrate ?? [100]);
         if (event.payload.kind === "whistle") {
           setWhistle(event.payload.title ?? "СТОП-ИГРА");
+          setGlitch(true);
+          window.setTimeout(() => setGlitch(false), 700);
         } else {
           setShake(true);
           window.setTimeout(() => setShake(false), 600);
@@ -190,8 +193,10 @@ export default function GuildApp() {
   const myPlace = state?.altar.findIndex((row) => row.hero_id === auth.hero_id) ?? -1;
 
   return (
-    <div className={`guild-root ${bottomNav ? "pb-24" : "pb-10"} ${shake ? "guild-shake" : ""}`}
+    <div className={`guild-root ${bottomNav ? "pb-24" : "pb-10"} ${shake ? "guild-shake" : ""}`
+           + `${glitch ? " hud-glitch" : ""}`}
          onPointerDown={unlockAudio}>
+      <div className="hud-horizon guild-no-print" aria-hidden />
       {whistle && <WhistleOverlay title={whistle} onDone={() => setWhistle(null)} />}
       {levelUp !== null && <LevelUpBanner level={levelUp} onDone={() => setLevelUp(null)} />}
       {confetti && <Confetti onDone={() => setConfetti(false)} />}
@@ -242,10 +247,18 @@ export default function GuildApp() {
               ГИЛЬДИЯ{" "}
               <span className="neon-label" style={neon(NEON_CYAN)}>{auth.class_name}</span>
             </div>
-            <div className="font-rajdhani text-[11px] truncate" style={{ color: "#7f93b8" }}>
-              {isTeacher ? "Хранитель Реестра" : auth.nickname}
-              {!isTeacher && myPlace >= 0 && (
-                <span style={{ color: GUILD_GOLD }}> · #{myPlace + 1}</span>
+            <div className="hud-data text-[10px] truncate" style={{ color: "#5d6f96" }}>
+              {isTeacher ? (
+                <>KEEPER · CLS {auth.class_name.toUpperCase()}</>
+              ) : (
+                <>
+                  <span style={{ color: "#a9bcdd" }}>{auth.nickname}</span>
+                  {myPlace >= 0 && (
+                    <span style={{ color: GUILD_GOLD }}>
+                      {" "}· RANK {String(myPlace + 1).padStart(2, "0")}
+                    </span>
+                  )}
+                </>
               )}
             </div>
           </div>
