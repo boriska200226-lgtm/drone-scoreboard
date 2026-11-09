@@ -255,7 +255,7 @@ const CARDS={
 // клетки 1..50: 1 — обычная, 2..49 по шаблону, 50 — финиш
 const PATTERN='HOLSXHLOSXHLSOXHLSXOHLSXHOLSXHLOSXHLSXOHLSXHLSOX';
 const CELLS=['START','O',...PATTERN.split(''),'FIN'];
-const FINISH=50, BANK=30, FINISH_BONUS=2;
+const FINISH=50, BANK=30, PLACE_BONUS=[2,1];
 const PIPS={1:[4],2:[0,8],3:[0,4,8],4:[0,2,6,8],5:[0,2,4,6,8],6:[0,2,3,5,6,8]};
 
 const rnd=n=>{try{const u=new Uint32Array(1);crypto.getRandomValues(u);return u[0]%n}catch(e){return Math.random()*n|0}};
@@ -444,7 +444,7 @@ function gameHTML(){
       <div class="panel"><div class="ptag">Сердечки добра</div>
         <div class="teams">${S.teams.map((tm,i)=>{const ff=fig(tm.fig);return `<div class="team${i===S.cur&&S.phase==='play'?' cur':''}" style="--tc:${ff.c}">
           ${pawnSVG(ff)}
-          <div><div class="n">${esc(tm.name)}</div><div class="p">${tm.pos===0?'на старте':tm.pos===FINISH?'на финише':'клетка '+tm.pos}${tm.skip?' · <em>пропуск хода</em>':''}</div></div>
+          <div><div class="n">${esc(tm.name)}</div><div class="p">${tm.pos===0?'на старте':tm.finished?`на финише · ${tm.place}-е место`:'клетка '+tm.pos}${tm.skip?' · <em>пропуск хода</em>':''}</div></div>
           <div class="hearts"><button class="adj" data-adj="${i}" data-d="-1" aria-label="Забрать сердечко у команды ${esc(tm.name)}">−</button><b>${tm.hearts}</b>${heartSVG}<button class="adj" data-adj="${i}" data-d="1" aria-label="Дать сердечко команде ${esc(tm.name)}">+</button></div>
         </div>`}).join('')}</div>
         <div class="bank"><span>Бумажных сердечек в копилке</span><b>${left} из ${BANK}</b></div>
@@ -464,8 +464,8 @@ function rulesHTML(){
       <li>Команды по очереди бросают кубик и идут на столько клеток, сколько выпало.</li>
       <li>На цветной клетке ведущий открывает карточку её цвета.</li>
       <li>Справились с заданием — команда получает сердечко. Не справились — сердечка нет. Ход переходит следующей команде.</li>
-      <li>На финиш нужно попасть точно: если выпало больше, фигурка стоит на месте.</li>
-      <li>Первая команда на финише получает ещё ${heartsW(FINISH_BONUS)}, и игра заканчивается. Побеждает команда с наибольшим числом сердечек; при равенстве — та, что пришла первой.</li>
+      <li>Если на кубике выпало больше, чем осталось до финиша, команда всё равно финиширует.</li>
+      <li>Первая команда на финише получает 2 сердечка, вторая — 1. Остальные продолжают ходить, пока до финиша не дойдут все. Побеждает команда с наибольшим числом сердечек; при равенстве — та, что пришла раньше.</li>
     </ol></div>
     <div class="panel"><div class="ptag">Виды карточек</div><div class="kinds">
       ${Object.entries(TYPES).map(([k,t])=>`<div class="kind" style="--cs:var(${t.s})">${iconSVG(k)}<div><b>${t.n}</b><small>— ${t.sub}</small></div><span class="cnt">${cnt(k)} кл.</span></div>`).join('')}
@@ -506,14 +506,9 @@ async function roll(){
   d.classList.remove('rolling');S.lastRoll=n;
   const t=S.teams[S.cur];
   log(`<b>${esc(t.name)}</b> выбросили ${n}.`);
-  const need=FINISH-t.pos;
-  if(n>need){
-    log(`До финиша ${cellsW(need)} — нужно точное число. Фигурка остаётся на месте.`);
-    setHint(`Выпало <b>${n}</b>, а до финиша ${cellsW(need)}. Стоим на месте.`);
-    await wait(900);return endTurn();
-  }
-  setHint(`Выпало <b>${n}</b>! Идём…`);
-  for(let s=0;s<n;s++){
+  const need=FINISH-t.pos, steps=Math.min(n,need);
+  setHint(n>=need?`Выпало <b>${n}</b> — хватает до финиша!`:`Выпало <b>${n}</b>! Идём…`);
+  for(let s=0;s<steps;s++){
     t.pos++;
     const el=$('#pc'+S.cur);if(el)el.style.transform=`translate(${piecePos(S.cur,t.pos).join('px,')}px)`;
     await wait(reduced?40:260);
@@ -540,6 +535,7 @@ function endTurn(again){
     for(let k=0;k<n;k++){
       S.cur=(S.cur+1)%n;
       const t=S.teams[S.cur];
+      if(t.finished)continue;
       if(t.skip){t.skip=0;log(`<b>${esc(t.name)}</b> пропускают ход.`);continue}
       break;
     }
@@ -550,9 +546,14 @@ function endTurn(again){
 }
 function finish(){
   const t=S.teams[S.cur];
-  t.hearts+=FINISH_BONUS;t.finished=true;
-  log(`🏆 <b>${esc(t.name)}</b> первыми дошли до финиша и получают ${heartsW(FINISH_BONUS)}!`);
-  S.phase='end';S.finisher=S.cur;S.hint=`<b>${esc(t.name)}</b> на финише! Игра окончена.`;busy=false;save();render();
+  const place=S.teams.filter(x=>x.finished).length+1, bonus=PLACE_BONUS[place-1]||0;
+  t.finished=true;t.place=place;t.hearts+=bonus;
+  log(`🏆 <b>${esc(t.name)}</b> дошли до финиша ${place}-ми${bonus?` и получают ${heartsW(bonus)}`:''}!`);
+  if(S.teams.every(x=>x.finished)){
+    S.phase='end';S.hint='Все команды на финише! Игра окончена.';busy=false;closeModal();save();render();return;
+  }
+  log(`Остальные команды продолжают маршрут.`);
+  endTurn();
 }
 
 /* ---------- карточка ---------- */
@@ -609,8 +610,7 @@ async function applyFx(){
   if(fx==='share'){const others=S.teams.filter(x=>x!==t);const min=Math.min(...others.map(x=>x.hearts));const to=others.find(x=>x.hearts===min);to.hearts++;log(`${nm} сделали доброе дело: <b>${esc(to.name)}</b> получают 1 ❤️`)}
   if(fx==='fwd2'||fx==='fwd3'||fx==='back2'){
     const d=fx==='back2'?-2:+fx.slice(3);
-    if(d>0&&t.pos+d>FINISH){log(`${nm}: до финиша меньше ${cellsW(d)}, фигурка стоит на месте.`)}
-    else{closeModalIfCard();await moveBy(d);log(`${nm} ${d>0?'идут вперёд':'возвращаются назад'} на ${cellsW(Math.abs(d))} — клетка ${t.pos||'«Старт»'}.`);if(t.pos===FINISH){S.open=null;return finish()}}
+    closeModalIfCard();await moveBy(d);log(`${nm} ${d>0?'идут вперёд':'возвращаются назад'} — клетка ${t.pos||'«Старт»'}.`);if(t.pos===FINISH){S.open=null;return finish()}
   }
   endTurn();
   }finally{busyFx=false}
@@ -618,7 +618,7 @@ async function applyFx(){
 
 /* ---------- финал ---------- */
 function showFinal(){
-  const order=S.teams.map((t,i)=>({...t,i})).sort((a,b)=>b.hearts-a.hearts||(b.i===S.finisher)-(a.i===S.finisher));
+  const order=S.teams.map((t,i)=>({...t,i})).sort((a,b)=>b.hearts-a.hearts||(a.place||99)-(b.place||99));
   const w=order[0];
   $('#modal').innerHTML=`<div class="overlay final" role="dialog" aria-modal="true" aria-labelledby="ftitle">
     <div class="card" style="--cc:var(--red);--cs:var(--bg)">
@@ -626,7 +626,7 @@ function showFinal(){
       <div class="card-body">
         <div class="podium">${order.map((t,k)=>`<div class="pod${k===0?' win':''}">
           <div class="big">${pawnSVG(fig(t.fig))}</div>
-          <div><div class="nm">${esc(t.name)}</div><small>${k===0?'Главные волонтёры города · кубок и шоколадки':'Диплом «Добрые сердца»'}${t.i===S.finisher?' · первыми на финише':''}</small></div>
+          <div><div class="nm">${esc(t.name)}</div><small>${k===0?'Главные волонтёры города · кубок и шоколадки':'Диплом «Добрые сердца»'}${t.place?` · ${t.place}-е место на финише`:''}</small></div>
           <b>${t.hearts} ❤️</b></div>`).join('')}</div>
         <div class="card-for">Всего собрано ${heartsW(given())}. Спасибо всем волонтёрам!</div>
         <div class="actions"><button class="btn" id="again">Сыграть ещё раз</button><button class="btn no" id="viewboard">Посмотреть карту</button></div>
@@ -648,7 +648,7 @@ function confetti(){
 function newGame(){
   const st=S.setup;
   S.teams=st.teams.slice(0,st.count).map(t=>({name:t.name.trim()||'Команда',fig:t.fig,pos:0,hearts:0,skip:0}));
-  S.v=2;S.lastCard={};S.phase='play';S.cur=0;S.decks=freshDecks();S.log=['Маршрут начинается! Команды стоят на старте.'];S.open=null;S.finisher=null;
+  S.v=2;S.lastCard={};S.phase='play';S.cur=0;S.decks=freshDecks();S.log=['Маршрут начинается! Команды стоят на старте.'];S.open=null;
   S.hint=`Первыми ходят <b>${esc(S.teams[0].name)}</b>.`;
   save();render();
 }
