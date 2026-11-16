@@ -4,6 +4,21 @@ import Icon from "@/components/ui/icon";
 import { AIRFRAMES, Airframe, getAirframe, hoverMinutes } from "@/sim/airframes";
 import { Command, Hud, SimEngine, SimResult } from "@/sim/engine";
 import { Difficulty, DIFFICULTY, getMission, MissionDef, MISSIONS, SayKind } from "@/sim/missions";
+import type { Quality } from "@/sim/world";
+
+const QUALITY: Record<Quality, { label: string; hint: string }> = {
+  high: { label: "Ультра", hint: "тени 4K, MSAA, bloom" },
+  medium: { label: "Средняя", hint: "тени, bloom" },
+  low: { label: "Низкая", hint: "для слабых устройств" },
+};
+const Q_KEY = "bas-sim-quality";
+function loadQuality(): Quality {
+  try {
+    const q = localStorage.getItem(Q_KEY);
+    if (q === "high" || q === "medium" || q === "low") return q;
+  } catch { /* приватный режим */ }
+  return window.matchMedia("(pointer: coarse)").matches ? "low" : "high";
+}
 
 // ─────────────────────────── хранение рекордов ───────────────────────────
 
@@ -47,10 +62,12 @@ function AirframeIcon({ af, size = 64 }: { af: Airframe; size?: number }) {
 
 // ─────────────────────────── меню ───────────────────────────
 
-function Menu({ onStart }: { onStart: (m: string, a: string, d: Difficulty) => void }) {
+function Menu({ onStart }: { onStart: (m: string, a: string, d: Difficulty, q: Quality) => void }) {
   const [missionId, setMissionId] = useState(MISSIONS[0].id);
   const [afId, setAfId] = useState(MISSIONS[0].recommended[0]);
   const [diff, setDiff] = useState<Difficulty>("pilot");
+  const [quality, setQuality] = useState<Quality>(loadQuality);
+  const pickQuality = (q: Quality) => { setQuality(q); try { localStorage.setItem(Q_KEY, q); } catch { /* приватный режим */ } };
   const [best] = useState(loadBest);
   const mission = getMission(missionId);
   const af = getAirframe(afId);
@@ -158,7 +175,19 @@ function Menu({ onStart }: { onStart: (m: string, a: string, d: Difficulty) => v
             ))}
           </div>
 
-          <button onClick={() => onStart(missionId, afId, diff)}
+          <div className="grid grid-cols-3 gap-2">
+            {(Object.keys(QUALITY) as Quality[]).map((q) => (
+              <button key={q} onClick={() => pickQuality(q)} className="rounded-lg py-2 px-1 transition-all"
+                style={{ background: quality === q ? "#00aaff22" : "rgba(255,255,255,0.03)", border: `1px solid ${quality === q ? "#00aaff" : "rgba(255,255,255,0.08)"}` }}>
+                <div className="font-orbitron text-xs font-bold flex items-center justify-center gap-1" style={{ color: quality === q ? "#00aaff" : "#aaa" }}>
+                  <Icon name="MonitorCog" size={12} />{QUALITY[q].label}
+                </div>
+                <div className="text-[11px] text-muted-foreground leading-tight mt-0.5">{QUALITY[q].hint}</div>
+              </button>
+            ))}
+          </div>
+
+          <button onClick={() => onStart(missionId, afId, diff, quality)}
             className="w-full py-4 rounded-xl font-orbitron font-black text-base tracking-widest transition-transform hover:scale-[1.02] active:scale-[0.98]"
             style={{ background: "#00ffaa", color: "#0a0d16", boxShadow: "0 0 30px #00ffaa55" }}>
             НА ВЗЛЁТ
@@ -201,8 +230,8 @@ interface Toast { id: number; text: string; kind: SayKind }
 const TOAST_COLOR: Record<SayKind, string> = { info: "#00aaff", good: "#00ffaa", warn: "#ff8800" };
 const fmt = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
 
-function Flight({ mission, af, difficulty, onExit, onRestart }: {
-  mission: MissionDef; af: Airframe; difficulty: Difficulty; onExit: () => void; onRestart: () => void;
+function Flight({ mission, af, difficulty, quality, onExit, onRestart }: {
+  mission: MissionDef; af: Airframe; difficulty: Difficulty; quality: Quality; onExit: () => void; onRestart: () => void;
 }) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const map = useRef<HTMLCanvasElement>(null);
@@ -220,7 +249,7 @@ function Flight({ mission, af, difficulty, onExit, onRestart }: {
     let e: SimEngine;
     try {
       e = new SimEngine({
-        canvas: canvas.current!, mapCanvas: map.current!, horizonCanvas: horizon.current!, mission, airframe: af, difficulty,
+        canvas: canvas.current!, mapCanvas: map.current!, horizonCanvas: horizon.current!, mission, airframe: af, difficulty, quality,
         onHud: setHud,
         onSay: (text, kind) => {
           const id = ++toastId.current;
@@ -235,7 +264,7 @@ function Flight({ mission, af, difficulty, onExit, onRestart }: {
     }
     engine.current = e;
     return () => { e.dispose(); engine.current = null; };
-  }, [mission, af, difficulty]);
+  }, [mission, af, difficulty, quality]);
 
   useEffect(() => {
     const onKey = (ev: KeyboardEvent) => { if (ev.code === "Escape") setPaused((p) => !p); };
@@ -414,11 +443,11 @@ function Flight({ mission, af, difficulty, onExit, onRestart }: {
 // ─────────────────────────── страница ───────────────────────────
 
 export default function Simulator() {
-  const [run, setRun] = useState<{ mission: string; af: string; diff: Difficulty; key: number } | null>(null);
+  const [run, setRun] = useState<{ mission: string; af: string; diff: Difficulty; quality: Quality; key: number } | null>(null);
   useEffect(() => { document.title = "БАС Симулятор — миссии беспилотников"; }, []);
-  if (!run) return <Menu onStart={(mission, af, diff) => setRun({ mission, af, diff, key: 1 })} />;
+  if (!run) return <Menu onStart={(mission, af, diff, quality) => setRun({ mission, af, diff, quality, key: 1 })} />;
   return (
-    <Flight key={run.key} mission={getMission(run.mission)} af={getAirframe(run.af)} difficulty={run.diff}
+    <Flight key={run.key} mission={getMission(run.mission)} af={getAirframe(run.af)} difficulty={run.diff} quality={run.quality}
       onExit={() => setRun(null)} onRestart={() => setRun({ ...run, key: run.key + 1 })} />
   );
 }

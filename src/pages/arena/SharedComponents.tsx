@@ -202,6 +202,10 @@ export function LoginPage({ onLogin }: { onLogin: (u: AuthUser) => void }) {
             {loading ? <><Icon name="Loader" size={16} className="animate-spin" />ВХОД...</>
                      : <><Icon name="LogIn" size={16} />ВОЙТИ В АРЕНУ</>}
           </button>
+          <a href="/simulator" className="w-full py-3 rounded-xl font-orbitron text-xs font-bold flex items-center justify-center gap-2 transition-colors"
+            style={{ background: "#00aaff12", border: "1px solid #00aaff44", color: "#00aaff" }}>
+            <Icon name="Plane" size={14} />СИМУЛЯТОР ДРОНОВ — БЕЗ ВХОДА
+          </a>
         </div>
 
         <p className="text-center text-xs text-muted-foreground font-rajdhani">

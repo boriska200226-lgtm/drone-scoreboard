@@ -97,27 +97,32 @@ const fmtTime = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60
 const BASE_FLAT = { x: 0, z: 0, rx: 16, rz: 16 };
 
 const SUMMER: Palette = {
-  groundA: 0x3f6b2e, groundB: 0x5c7f38, shore: 0xb9a877, tree: 0x2f5d34, treeVar: 0x1f4a3a, water: 0x2a5a7a,
-  skyTop: 0x3a7bd5, skyBottom: 0xbfd9ee, fog: 0xbfd9ee, fogDensity: 0.0011,
-  sun: 0xfff2d8, sunIntensity: 2.4, ambient: 0xbcd4ff, ambientIntensity: 1.1, sunDir: [0.4, 0.8, 0.3],
+  groundA: 0x4a5a2a, groundB: 0x6e6b3a, shore: 0x8a7d60, tree: 0x2a4628, treeVar: 0x3d5a2a, water: 0x1d3a4a,
+  skyTop: 0x2f6db5, skyBottom: 0xb4cfe6, fog: 0xa9c3d8, fogDensity: 0.0009,
+  sun: 0xfff1dc, sunIntensity: 3.2, ambient: 0xa8c4e8, ambientIntensity: 0.9, sunDir: [0.45, 0.75, 0.35],
+  clouds: 0.42, exposure: 0.95,
 };
 const HAZE: Palette = {
-  ...SUMMER, skyTop: 0x6d7f96, skyBottom: 0xd9b48a, fog: 0xcfae8a, fogDensity: 0.0021,
-  sun: 0xffc890, sunIntensity: 2.0, ambient: 0xd8c0a8, ambientIntensity: 1.0, sunDir: [-0.5, 0.6, 0.4],
+  ...SUMMER, groundB: 0x7a6a3c, skyTop: 0x7a8aa0, skyBottom: 0xd2a77a, fog: 0xb99a7a, fogDensity: 0.0018,
+  sun: 0xffb070, sunIntensity: 2.8, ambient: 0xc8a888, ambientIntensity: 0.8, sunDir: [-0.55, 0.42, 0.4],
+  clouds: 0.25, exposure: 1.0,
 };
 const DUSK_FOG: Palette = {
-  groundA: 0x2f4a2c, groundB: 0x3d5233, shore: 0x7d7a66, tree: 0x1f3d2c, treeVar: 0x183226, water: 0x1d3442,
-  skyTop: 0x4a5560, skyBottom: 0x848e94, fog: 0x848e94, fogDensity: 0.0072,
-  sun: 0xb0b8c8, sunIntensity: 0.8, ambient: 0x9098a8, ambientIntensity: 1.1, sunDir: [0.6, 0.35, -0.4],
+  groundA: 0x34452a, groundB: 0x464a30, shore: 0x6d6a58, tree: 0x1f3a28, treeVar: 0x2a4028, water: 0x18303c,
+  skyTop: 0x3c4652, skyBottom: 0x7d8790, fog: 0x6f7880, fogDensity: 0.0066,
+  sun: 0xffc89a, sunIntensity: 1.0, ambient: 0x8a96a8, ambientIntensity: 1.0, sunDir: [0.6, 0.14, -0.5],
+  clouds: 0.85, exposure: 1.25,
 };
 const WINTER: Palette = {
-  groundA: 0xe6ecf2, groundB: 0xcfd9e4, shore: 0xaab4c0, tree: 0x2c4a3c, treeVar: 0x24403a, water: 0x1c2f3d,
-  skyTop: 0x8fa3b8, skyBottom: 0xdfe6ee, fog: 0xdfe6ee, fogDensity: 0.0022,
-  sun: 0xffffff, sunIntensity: 1.7, ambient: 0xdde8ff, ambientIntensity: 1.3, sunDir: [0.3, 0.45, 0.6], snow: true,
+  groundA: 0xdfe6ee, groundB: 0xc6d2df, shore: 0x9aa6b2, tree: 0x1f3a2e, treeVar: 0x2a4636, water: 0x16262f,
+  skyTop: 0x6d86a3, skyBottom: 0xd3dde8, fog: 0xc8d3df, fogDensity: 0.0024,
+  sun: 0xfff4e8, sunIntensity: 2.4, ambient: 0xc8d8f0, ambientIntensity: 1.0, sunDir: [0.3, 0.28, 0.65],
+  clouds: 0.7, exposure: 0.82, snow: true,
 };
 const OVERCAST: Palette = {
-  ...SUMMER, skyTop: 0x7d8fa3, skyBottom: 0xc9d2da, fog: 0xc9d2da, fogDensity: 0.0016,
-  sun: 0xf0f0f0, sunIntensity: 1.6, ambient: 0xd0d8e0, ambientIntensity: 1.2, sunDir: [-0.3, 0.8, -0.2],
+  ...SUMMER, skyTop: 0x6f7f90, skyBottom: 0xbcc5ce, fog: 0xb0bac4, fogDensity: 0.0014,
+  sun: 0xf2f2f2, sunIntensity: 2.6, ambient: 0xc0cad6, ambientIntensity: 1.1, sunDir: [-0.3, 0.75, -0.25],
+  clouds: 0.88, exposure: 1.05,
 };
 
 // ───────────────────────────── 1. Учебный полигон ─────────────────────────────
@@ -187,6 +192,7 @@ class FireMission extends Mission {
   private cellTrees: number[][] = [];
   private acc = 0; private heat = 0; private burning = 0; private lost = 0; private dropped = 0;
   private spread: number; private pumpSaid = 0;
+  private glow: THREE.PointLight;
 
   constructor(ctx: Ctx) {
     super(ctx);
@@ -205,6 +211,9 @@ class FireMission extends Mission {
     fuel.sort((p, q) => Math.hypot(this.cx(p) - 40, this.cz(p) + 420) - Math.hypot(this.cx(q) - 40, this.cz(q) + 420));
     for (const c of fuel.slice(0, 6)) this.ignite(c, 0.9);
     this.burning = 6;
+    this.glow = new THREE.PointLight(0xff7a2a, 0, 110, 1.6);
+    this.glow.position.set(40, ctx.world.groundAt(40, -420) + 8, -420);
+    ctx.world.scene.add(this.glow);
     this.capacity = ctx.af.payloadMax;
     this.amount = this.capacity;
 
@@ -242,6 +251,7 @@ class FireMission extends Mission {
       if (this.inten[c] <= 0) {
         this.state[c] = 4; this.inten[c] = 0;
         for (const t of this.cellTrees[c]) this.ctx.world.tintTree(t, 0.6, 0);
+        this.ctx.world.scorch(x, z, this.cs * 0.6, 0.5);
       }
     } else if (this.state[c] === 1) this.wet[c] = Math.min(1.6, this.wet[c] + mass / 2);
   }
@@ -268,6 +278,7 @@ class FireMission extends Mission {
         if (this.age[c] > this.life[c]) {
           this.state[c] = 3; this.inten[c] = 0;
           for (const t of this.cellTrees[c]) world.tintTree(t, 1, 0);
+          world.scorch(this.cx(c), this.cz(c), this.cs * 0.75, 0.85);
           continue;
         }
         if (Math.hypot(this.cx(c) - VILLAGE.x, this.cz(c) - VILLAGE.z) < 64) threat = true;
@@ -293,6 +304,17 @@ class FireMission extends Mission {
       }
     }
 
+    // отсвет пламени: свет в центре горящей кромки, мерцает
+    let gx = 0, gz = 0, gi = 0;
+    for (let c = 0; c < this.state.length; c++) if (this.state[c] === 2) { gx += this.cx(c) * this.inten[c]; gz += this.cz(c) * this.inten[c]; gi += this.inten[c]; }
+    if (gi > 0) {
+      gx /= gi; gz /= gi;
+      this.glow.position.x += (gx - this.glow.position.x) * Math.min(1, dt);
+      this.glow.position.z += (gz - this.glow.position.z) * Math.min(1, dt);
+      this.glow.position.y = world.groundAt(this.glow.position.x, this.glow.position.z) + 9;
+    }
+    this.glow.intensity = Math.min(1, gi / 8) * 120 * (0.85 + 0.15 * Math.sin(this.time * 17) * Math.sin(this.time * 7.3));
+
     // пламя и дым
     for (let c = 0; c < this.state.length; c++) {
       if (this.state[c] !== 2) continue;
@@ -300,12 +322,12 @@ class FireMission extends Mission {
       if (this.ctx.rnd() < I * 13 * dt) {
         const x = this.cx(c) + (this.ctx.rnd() - 0.5) * this.cs, z = this.cz(c) + (this.ctx.rnd() - 0.5) * this.cs;
         const y = world.groundAt(x, z) + this.ctx.rnd() * 9;
-        fx.fire.spawn(x, y, z, wx * 1.5, 3 + this.ctx.rnd() * 4, wz * 1.5, 0.9 + this.ctx.rnd() * 0.7, 5 + this.ctx.rnd() * 5, 1, 0.5 + this.ctx.rnd() * 0.25, 0.1, 0.5);
+        fx.fire.spawn(x, y, z, wx * 1.5, 3 + this.ctx.rnd() * 4, wz * 1.5, 0.8 + this.ctx.rnd() * 0.8, 3.5 + this.ctx.rnd() * 4.5, 1, 1, 1, 0.55);
       }
-      if (this.ctx.rnd() < I * 2.2 * dt) {
+      if (this.ctx.rnd() < I * 2.6 * dt) {
         const x = this.cx(c) + (this.ctx.rnd() - 0.5) * this.cs, z = this.cz(c) + (this.ctx.rnd() - 0.5) * this.cs;
-        const g = 0.12 + this.ctx.rnd() * 0.12;
-        fx.smoke.spawn(x, world.groundAt(x, z) + 10, z, 0, 4.5, 0, 9, 11, g, g, g, 0.32);
+        const g = 0.16 + this.ctx.rnd() * 0.22;
+        fx.smoke.spawn(x, world.groundAt(x, z) + 8, z, 0, 4 + this.ctx.rnd() * 2, 0, 12 + this.ctx.rnd() * 6, 9 + this.ctx.rnd() * 5, g * 1.05, g, g * 0.92, 0.42);
       }
     }
 
@@ -318,7 +340,7 @@ class FireMission extends Mission {
       for (let i = 0; i < k; i++) {
         fx.water.spawn(drone.pos.x + (this.ctx.rnd() - 0.5) * 1.5, drone.pos.y - 0.4, drone.pos.z + (this.ctx.rnd() - 0.5) * 1.5,
           drone.vel.x + (this.ctx.rnd() - 0.5) * 7, drone.vel.y - 2, drone.vel.z + (this.ctx.rnd() - 0.5) * 7,
-          8, 1.4, 0.55, 0.78, 1, 0.75, dm / k);
+          8, 1.2, 0.85, 0.9, 0.95, 0.5, dm / k);
       }
     } else if (action.pressed && this.amount <= 0) this.ctx.say("Бак пуст — заберите воду из реки или сядьте на базу", "warn");
 
@@ -469,9 +491,9 @@ class SearchMission extends Mission {
       else {
         this.amount--;
         const g = new THREE.Group();
-        const boxM = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.3, 0.4), new THREE.MeshLambertMaterial({ color: 0xff7a00 }));
+        const boxM = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.3, 0.4), new THREE.MeshStandardMaterial({ color: 0xff7a00, roughness: 0.6 }));
         const chute = new THREE.Mesh(new THREE.ConeGeometry(0.9, 0.6, 10, 1, true),
-          new THREE.MeshLambertMaterial({ color: 0xffffff, side: THREE.DoubleSide }));
+          new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.8, side: THREE.DoubleSide }));
         chute.position.y = 1.3;
         g.add(boxM, chute);
         g.position.copy(drone.pos).y -= 0.5;
@@ -562,7 +584,8 @@ class AgroMission extends Mission {
     this.tex.colorSpace = THREE.SRGBColorSpace;
     const geo = new THREE.PlaneGeometry(FIELD.hx * 2, FIELD.hz * 2);
     geo.rotateX(-Math.PI / 2);
-    const mesh = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ map: this.tex }));
+    const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ map: this.tex, roughness: 0.95 }));
+    mesh.receiveShadow = true;
     this.place(mesh, FIELD.x, FIELD.z, 0.12);
     ctx.world.addThermal(mesh, 0.14);
     this.capacity = ctx.af.payloadMax; this.amount = this.capacity;
@@ -571,11 +594,13 @@ class AgroMission extends Mission {
 
   private paintCell(ix: number, iz: number) {
     const d = this.dose[iz * this.nx + ix], p = this.px, g = this.g2;
-    g.fillStyle = d === 0 ? "#6f8f2f" : d === 1 ? "#2f9f7f" : "#b0482f";
+    // междурядья — земля, ряды — ботва; обработанная ботва темнее и блестит, передоз — желтеет
+    g.fillStyle = "#4a3a28";
     g.fillRect(ix * p, iz * p, p, p);
-    g.fillStyle = d === 0 ? "#557a22" : d === 1 ? "#237f66" : "#8f3520";
-    g.fillRect(ix * p, iz * p + 1, p, 2);
-    g.fillRect(ix * p, iz * p + 5, p, 2);
+    const leaf = d === 0 ? ["#5d7a2c", "#6f8a34"] : d === 1 ? ["#2f5a2c", "#3f6e38"] : ["#8a7a2c", "#a08c3a"];
+    g.fillStyle = leaf[0]; g.fillRect(ix * p, iz * p + 1, p, 3);
+    g.fillStyle = leaf[1]; g.fillRect(ix * p + ((ix * 7 + iz * 3) % 3), iz * p + 1, 3, 2);
+    g.fillStyle = leaf[0]; g.fillRect(ix * p, iz * p + 5, p, 2);
   }
 
   update(dt: number, action: Action) {

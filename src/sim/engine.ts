@@ -5,7 +5,14 @@ import { Particles } from "./effects";
 import { Action, Ctx, Difficulty, DIFFICULTY, MapDraw, Mission, MissionDef, Objective, SayKind } from "./missions";
 import { clamp, mulberry32 } from "./noise";
 import { DroneSim, Env, FlightMode, MODE_LABEL, Sticks } from "./physics";
-import { makeBaseCamp, THERMAL_LAYER, World } from "./world";
+import { makeBaseCamp, Quality, THERMAL_LAYER, World } from "./world";
+import { buildDrone, DroneModel } from "./droneModel";
+import { GradeShader } from "./shaders";
+import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
+import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
+import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
+import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
+import { ShaderPass } from "three/examples/jsm/postprocessing/ShaderPass.js";
 
 export interface Hud {
   agl: number; speed: number; vs: number; heading: number;
@@ -29,6 +36,7 @@ export interface EngineOpts {
   mission: MissionDef;
   airframe: Airframe;
   difficulty: Difficulty;
+  quality: Quality;
   onHud(h: Hud): void;
   onSay(text: string, kind: SayKind): void;
   onEnd(r: SimResult): void;
@@ -44,59 +52,6 @@ export function layout(w: number) {
   const small = w < 760;
   const mapSize = small ? 108 : 176;
   return { mapSize, pipRect: { right: 12, top: 12 + mapSize + 8, w: small ? 168 : 264, h: small ? 124 : 194 } };
-}
-
-function buildDrone(af: Airframe) {
-  const group = new THREE.Group();
-  const dark = new THREE.MeshLambertMaterial({ color: 0x22262c });
-  const accent = new THREE.MeshLambertMaterial({ color: af.color });
-  const red = new THREE.MeshLambertMaterial({ color: 0xff3333 });
-  const s = af.arm;
-  const body = new THREE.Mesh(new THREE.BoxGeometry(s * 0.6, s * 0.2, s * 0.85), dark);
-  const top = new THREE.Mesh(new THREE.BoxGeometry(s * 0.42, s * 0.12, s * 0.5), accent);
-  top.position.y = s * 0.15;
-  const nose = new THREE.Mesh(new THREE.BoxGeometry(s * 0.2, s * 0.1, s * 0.12), red);
-  nose.position.set(0, 0, -s * 0.46);
-  group.add(body, top, nose);
-  const gearH = 0.16 + af.arm * 0.28;
-  for (const sx of [-1, 1]) {
-    const leg = new THREE.Mesh(new THREE.BoxGeometry(0.03 + s * 0.03, gearH, 0.03 + s * 0.03), dark);
-    leg.position.set(sx * s * 0.3, -gearH / 2, 0);
-    const skid = new THREE.Mesh(new THREE.BoxGeometry(0.03 + s * 0.03, 0.03, s * 0.9), dark);
-    skid.position.set(sx * s * 0.3, -gearH + 0.015, 0);
-    group.add(leg, skid);
-  }
-  const tank = new THREE.Mesh(new THREE.BoxGeometry(s * 0.5, gearH * 0.55, s * 0.6),
-    new THREE.MeshLambertMaterial({ color: 0xdfe8f0, transparent: true, opacity: 0.85 }));
-  tank.position.y = -gearH * 0.45;
-  group.add(tank);
-
-  const props: THREE.Group[] = [];
-  const discMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.16, side: THREE.DoubleSide, depthWrite: false });
-  const seen = new Set<string>();
-  af.motors.forEach((m) => {
-    const key = `${m.x.toFixed(2)},${m.z.toFixed(2)}`;
-    if (!seen.has(key)) {
-      seen.add(key);
-      const len = Math.hypot(m.x, m.z);
-      const arm = new THREE.Mesh(new THREE.BoxGeometry(0.025 + s * 0.04, 0.025 + s * 0.04, len), m.z < 0 ? red : dark);
-      arm.position.set(m.x / 2, 0, m.z / 2);
-      arm.rotation.y = Math.atan2(m.x, m.z);
-      group.add(arm);
-    }
-    const mot = new THREE.Mesh(new THREE.CylinderGeometry(af.propR * 0.2, af.propR * 0.2, 0.07, 10), dark);
-    mot.position.set(m.x, m.y * 1.2, m.z);
-    group.add(mot);
-    const prop = new THREE.Group();
-    const disc = new THREE.Mesh(new THREE.CircleGeometry(af.propR, 18), discMat);
-    disc.rotation.x = -Math.PI / 2;
-    const blade = new THREE.Mesh(new THREE.BoxGeometry(af.propR * 2, 0.012, af.propR * 0.16), dark);
-    prop.add(disc, blade);
-    prop.position.set(m.x, m.y * 1.2 + (m.y < 0 ? -0.05 : 0.05), m.z);
-    group.add(prop);
-    props.push(prop);
-  });
-  return { group, props, tank };
 }
 
 class Audio {
@@ -143,7 +98,10 @@ export class SimEngine {
   private renderer: THREE.WebGLRenderer;
   private cam = new THREE.PerspectiveCamera(62, 1, 0.15, 5000);
   private pipCam = new THREE.PerspectiveCamera(50, 1.36, 0.3, 3000);
-  private model: ReturnType<typeof buildDrone>;
+  private model!: DroneModel;
+  private composer: EffectComposer | null = null;
+  private grade: ShaderPass | null = null;
+  private bloom: UnrealBloomPass | null = null;
   private shadow: THREE.Mesh;
   private fx: Ctx["fx"];
   private audio: Audio;
@@ -174,13 +132,20 @@ export class SimEngine {
 
   constructor(o: EngineOpts) {
     this.o = o;
-    this.world = new World(o.mission.world);
+    this.world = new World(o.mission.world, o.quality);
     this.drone = new DroneSim(o.airframe);
     this.pip = o.mission.pip;
     this.gimbalPitch = o.mission.gimbalPitch;
 
-    this.renderer = new THREE.WebGLRenderer({ canvas: o.canvas, antialias: true, powerPreference: "high-performance" });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    this.renderer = new THREE.WebGLRenderer({ canvas: o.canvas, antialias: o.quality !== "high", powerPreference: "high-performance" });
+    const maxPr = o.quality === "high" ? 2 : o.quality === "medium" ? 1.5 : 1;
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, maxPr));
+    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    this.renderer.toneMappingExposure = o.mission.world.palette.exposure;
+    this.renderer.shadowMap.enabled = o.quality !== "low";
+    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.renderer.shadowMap.autoUpdate = false;
+    this.world.bakeEnvironment(this.renderer);
     this.pipCam.layers.set(0);
 
     const scene = this.world.scene;
@@ -190,18 +155,21 @@ export class SimEngine {
     this.world.addThermal(camp, 0.3);
     this.windsock = camp.getObjectByName("windsock") ?? null;
 
-    this.model = buildDrone(o.airframe);
-    scene.add(this.model.group);
     this.shadow = new THREE.Mesh(new THREE.CircleGeometry(1, 20),
       new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.4, depthWrite: false }));
     this.shadow.rotation.x = -Math.PI / 2;
+    this.shadow.visible = o.quality === "low";
     scene.add(this.shadow);
 
+    const fog = scene.fog as THREE.FogExp2;
+    const pal = o.mission.world.palette;
+    const lightTint = new THREE.Color(pal.ambient).multiplyScalar(pal.ambientIntensity * 0.45)
+      .add(new THREE.Color(pal.sun).multiplyScalar(pal.sunIntensity * (1 - pal.clouds * 0.6) * 0.32));
     const ground = (x: number, z: number) => Math.max(this.world.groundAt(x, z), this.world.waterLevel ?? -1e9);
     this.fx = {
-      fire: new Particles(scene, { max: 3200, additive: true, thermal: true }),
-      smoke: new Particles(scene, { max: 1800, drag: 0.5, grow: 2.6 }),
-      water: new Particles(scene, { max: 1400, gravity: 9.81, drag: 0.35, ground, onHit: (x, z, m) => this.mission.onWaterHit(x, z, m) }),
+      fire: new Particles(scene, { max: 3600, additive: true, thermal: true, fireRamp: true, fog }),
+      smoke: new Particles(scene, { max: 2600, drag: 0.45, grow: 3.2, fog, tint: lightTint }),
+      water: new Particles(scene, { max: 1600, gravity: 9.81, drag: 0.35, fog, tint: lightTint, ground, onHit: (x, z, m) => this.mission.onWaterHit(x, z, m) }),
     };
 
     this.env = {
@@ -219,6 +187,23 @@ export class SimEngine {
       camDir: () => this.camDirV,
     };
     this.mission = o.mission.create(ctx);
+    this.model = buildDrone(o.airframe, {
+      tank: o.mission.payloadUnit === "л",
+      boom: o.mission.id === "agro" ? Math.min(o.airframe.sprayWidth * 0.35, o.airframe.arm * 2.6) : 0,
+    });
+    scene.add(this.model.group);
+
+    if (o.quality !== "low") {
+      const size = new THREE.Vector2(o.canvas.clientWidth || window.innerWidth, o.canvas.clientHeight || window.innerHeight);
+      const rt = new THREE.WebGLRenderTarget(size.x, size.y, { type: THREE.HalfFloatType, samples: o.quality === "high" ? 4 : 0 });
+      this.composer = new EffectComposer(this.renderer, rt);
+      this.composer.addPass(new RenderPass(scene, this.cam));
+      this.bloom = new UnrealBloomPass(size.clone().multiplyScalar(0.5), 0.32, 0.55, 1.1);
+      this.composer.addPass(this.bloom);
+      this.composer.addPass(new OutputPass());
+      this.grade = new ShaderPass(GradeShader);
+      this.composer.addPass(this.grade);
+    }
     this.failAt = o.difficulty === "ace" ? 45 + this.rnd() * 60 : Infinity;
     this.audio = new Audio(150 / (0.6 + o.airframe.propR * 3));
 
@@ -439,14 +424,8 @@ export class SimEngine {
     g.position.copy(d.pos);
     g.quaternion.copy(d.quat);
     if (d.crashed) g.rotation.z += 0.9;
-    this.model.props.forEach((p, i) => {
-      const k = d.thrust[i] / d.af.motorThrust;
-      p.rotation.y += d.af.motors[i].dir * (d.motorOk[i] ? 18 + 70 * k : 0) * dt;
-      p.children[0].visible = d.motorOk[i] && k > 0.02;
-    });
     const frac = this.mission.capacity > 0 ? this.mission.amount / this.mission.capacity : 0;
-    this.model.tank.visible = this.mission.capacity > 1;
-    this.model.tank.scale.y = 0.25 + 0.75 * frac;
+    this.model.update(dt, d, frac, d.time);
 
     const gh = Math.max(this.world.groundAt(d.pos.x, d.pos.z), this.world.waterLevel ?? -1e9);
     const agl = d.pos.y - gh;
@@ -484,7 +463,7 @@ export class SimEngine {
       cam.lookAt(d.pos);
     }
     cam.updateProjectionMatrix();
-    this.world.sky.position.copy(cam.position);
+    this.world.update(dt, d.pos, cam.position);
 
     this.pipCam.position.set(d.pos.x, d.pos.y - d.gear * 0.5, d.pos.z);
     this.pipCam.rotation.set((this.gimbalPitch * Math.PI) / 180, d.yaw, 0, "YXZ");
@@ -497,6 +476,10 @@ export class SimEngine {
     this.renderer.setSize(w, h, false);
     this.cam.aspect = w / h;
     this.cam.updateProjectionMatrix();
+    if (this.composer) {
+      this.composer.setPixelRatio(this.renderer.getPixelRatio());
+      this.composer.setSize(w, h);
+    }
   };
 
   private render() {
@@ -511,7 +494,11 @@ export class SimEngine {
     r.setScissorTest(false);
     r.setViewport(0, 0, w, h);
     setScale(scale(this.cam, h));
-    r.render(scene, this.cam);
+    r.shadowMap.needsUpdate = true;
+    if (this.composer) {
+      this.grade!.uniforms.uTime.value = (this.grade!.uniforms.uTime.value + 0.017) % 100;
+      this.composer.render();
+    } else r.render(scene, this.cam);
 
     if (this.pip) {
       const { pipRect: p } = layout(w);
@@ -535,7 +522,7 @@ export class SimEngine {
       r.setScissorTest(false);
       if (this.thermal) { scene.fog = this.fogSaved; scene.background = bg; }
       this.model.group.visible = true;
-      this.shadow.visible = true;
+      this.shadow.visible = this.o.quality === "low";
     }
     this.drawMap();
     this.drawHorizon();
@@ -656,6 +643,8 @@ export class SimEngine {
     this.mission.dispose();
     this.fx.fire.dispose(); this.fx.smoke.dispose(); this.fx.water.dispose();
     this.world.dispose();
+    this.composer?.dispose();
+    this.bloom?.dispose();
     this.renderer.dispose();
     const w = window as unknown as { __sim?: SimEngine };
     if (w.__sim === this) delete w.__sim;

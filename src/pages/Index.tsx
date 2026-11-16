@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import { Link } from "react-router-dom";
 import Icon from "@/components/ui/icon";
 import { LoginPage, XPPopup } from "./arena/SharedComponents";
 import { StudentDashboard, AchievementsPage, SessionsPage, LeaderboardPage, StudentProfile } from "./arena/StudentViews";
@@ -87,6 +88,10 @@ function Shell({ user, onLogout }: { user: AuthUser; onLogout: () => void }) {
 
           {/* Right pill */}
           <div className="hidden md:flex items-center gap-2">
+            <Link to="/simulator" className="flex items-center gap-1.5 px-3 py-1.5 rounded-full font-orbitron text-xs transition-colors"
+              style={{ background: "#00aaff15", border: "1px solid #00aaff44", color: "#00aaff" }}>
+              <Icon name="Plane" size={13} />СИМУЛЯТОР
+            </Link>
             {!isTeacher && <div className="flex items-center gap-2 px-3 py-1.5 rounded-full"
               style={{ background: `${lvl.color}15`, border: `1px solid ${lvl.color}33` }}>
               <span className="text-lg">{getAvatarEmoji(profile?.avatar_id ?? "boy_1")}</span>
@@ -117,6 +122,9 @@ function Shell({ user, onLogout }: { user: AuthUser; onLogout: () => void }) {
                 </button>
               ))}
             </div>
+            <Link to="/simulator" className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-rajdhani text-sky-400 hover:bg-sky-400/10 transition-colors">
+              <Icon name="Plane" size={14} />Симулятор дронов
+            </Link>
             <button onClick={onLogout} className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-rajdhani text-red-400 hover:bg-red-400/10 transition-colors">
               <Icon name="LogOut" size={14} />Выйти
             </button>
