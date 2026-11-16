@@ -118,6 +118,9 @@ export class Particles {
 
   setScale(s: number) { this.mat.uniforms.uScale.value = s; }
 
+  /** Освещённость системы: чтобы получить «белый» в кадре, цвет частицы делят на неё. */
+  get tint(): THREE.Color { return this.mat.uniforms.uTint.value; }
+
   spawn(x: number, y: number, z: number, vx: number, vy: number, vz: number,
         life: number, size: number, r: number, g: number, b: number, a: number, data = 0) {
     const i = this.head;

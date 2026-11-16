@@ -1,20 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Link } from "react-router-dom";
 import Icon from "@/components/ui/icon";
-import { AIRFRAMES, Airframe, getAirframe, hoverMinutes } from "@/sim/airframes";
-import { Command, Hud, SimEngine, SimResult } from "@/sim/engine";
-import { Difficulty, DIFFICULTY, getMission, MissionDef, MISSIONS, SayKind } from "@/sim/missions";
+import { Airframe, getAirframe } from "@/sim/airframes";
+import { CAM_LABEL, CamMode, CAMS, Command, Hud, MODES, SimEngine, SimResult } from "@/sim/engine";
+import { InputConfig, loadInput } from "@/sim/input";
+import { FlightMode, MODE_HINT, MODE_LABEL } from "@/sim/physics";
+import { Difficulty, DIFFICULTY, getMission, MissionDef, SayKind } from "@/sim/missions";
 import type { Quality } from "@/sim/world";
+import Launcher, { Best, LaunchSettings, Stars } from "./sim/Launcher";
 
-const QUALITY: Record<Quality, { label: string; hint: string }> = {
-  high: { label: "Ультра", hint: "тени 4K, MSAA, bloom" },
-  medium: { label: "Средняя", hint: "тени, bloom" },
-  low: { label: "Низкая", hint: "для слабых устройств" },
-};
-const Q_KEY = "bas-sim-quality";
 function loadQuality(): Quality {
   try {
-    const q = localStorage.getItem(Q_KEY);
+    const q = localStorage.getItem("bas-sim-quality");
     if (q === "high" || q === "medium" || q === "low") return q;
   } catch { /* приватный режим */ }
   return window.matchMedia("(pointer: coarse)").matches ? "low" : "high";
@@ -22,7 +18,6 @@ function loadQuality(): Quality {
 
 // ─────────────────────────── хранение рекордов ───────────────────────────
 
-type Best = Record<string, { score: number; stars: number }>;
 const BEST_KEY = "bas-sim-best";
 function loadBest(): Best {
   try { return JSON.parse(localStorage.getItem(BEST_KEY) || "{}"); } catch { return {}; }
@@ -36,170 +31,6 @@ function saveBest(id: string, r: SimResult) {
 }
 
 const panel = { background: "rgba(8,12,20,0.78)", border: "1px solid rgba(255,255,255,0.09)", backdropFilter: "blur(6px)" };
-const Stars = ({ n, size = 14 }: { n: number; size?: number }) => (
-  <span className="inline-flex gap-0.5">
-    {[0, 1, 2].map((i) => <Icon key={i} name="Star" size={size} style={{ color: i < n ? "#ffd700" : "#333", fill: i < n ? "#ffd700" : "none" }} />)}
-  </span>
-);
-
-// ─────────────────────────── схема аппарата (вид сверху) ───────────────────────────
-
-function AirframeIcon({ af, size = 64 }: { af: Airframe; size?: number }) {
-  const k = 34 / (af.arm + af.propR);
-  const color = `#${af.color.toString(16).padStart(6, "0")}`;
-  return (
-    <svg width={size} height={size} viewBox="-40 -40 80 80">
-      {af.motors.map((m, i) => <line key={`l${i}`} x1={0} y1={0} x2={m.x * k} y2={m.z * k} stroke="#667" strokeWidth={2.5} />)}
-      {af.motors.map((m, i) => (
-        <circle key={i} cx={m.x * k} cy={m.z * k} r={af.propR * k} fill={`${color}22`} stroke={color} strokeWidth={m.y < 0 ? 0.6 : 1.4}
-          strokeDasharray={m.y < 0 ? "2 2" : undefined} />
-      ))}
-      <rect x={-6} y={-8} width={12} height={16} rx={3} fill={color} />
-      <path d="M0 -15 L4 -9 L-4 -9 Z" fill="#ff4444" />
-    </svg>
-  );
-}
-
-// ─────────────────────────── меню ───────────────────────────
-
-function Menu({ onStart }: { onStart: (m: string, a: string, d: Difficulty, q: Quality) => void }) {
-  const [missionId, setMissionId] = useState(MISSIONS[0].id);
-  const [afId, setAfId] = useState(MISSIONS[0].recommended[0]);
-  const [diff, setDiff] = useState<Difficulty>("pilot");
-  const [quality, setQuality] = useState<Quality>(loadQuality);
-  const pickQuality = (q: Quality) => { setQuality(q); try { localStorage.setItem(Q_KEY, q); } catch { /* приватный режим */ } };
-  const [best] = useState(loadBest);
-  const mission = getMission(missionId);
-  const af = getAirframe(afId);
-
-  const pick = (m: MissionDef) => { setMissionId(m.id); setAfId(m.recommended[0]); };
-  const stat = (label: string, value: string) => (
-    <div className="flex justify-between gap-3 text-sm"><span className="text-muted-foreground">{label}</span><span className="text-white font-semibold">{value}</span></div>
-  );
-
-  return (
-    <div className="min-h-screen bg-background grid-bg">
-      <header className="border-b border-white/5" style={{ background: "rgba(10,13,22,0.92)" }}>
-        <div className="max-w-7xl mx-auto px-4 h-14 flex items-center justify-between">
-          <span className="font-orbitron text-sm font-bold text-white flex items-center gap-2" style={{ letterSpacing: "0.1em" }}>
-            <Icon name="Plane" size={16} style={{ color: "#00ffaa" }} />БАС<span style={{ color: "#00ffaa" }}>_</span>СИМУЛЯТОР
-          </span>
-          {!import.meta.env.VITE_STANDALONE && (
-            <Link to="/" className="flex items-center gap-2 text-xs font-orbitron text-muted-foreground hover:text-white transition-colors">
-              <Icon name="ArrowLeft" size={14} />БАС_АРЕНА
-            </Link>
-          )}
-        </div>
-      </header>
-
-      <main className="max-w-7xl mx-auto px-4 py-6 grid lg:grid-cols-[1fr_380px] gap-6">
-        <section>
-          <h1 className="font-orbitron text-xl font-black text-white mb-1">ВЫБОР МИССИИ</h1>
-          <p className="text-muted-foreground mb-4">Реальные задачи беспилотной авиации в Республике Коми. Физика каждого мотора, ветер, батарея и отказы — как в жизни.</p>
-          <div className="grid sm:grid-cols-2 xl:grid-cols-3 gap-3">
-            {MISSIONS.map((m) => {
-              const on = m.id === missionId;
-              return (
-                <button key={m.id} onClick={() => pick(m)} className="text-left rounded-xl p-4 transition-all duration-200"
-                  style={{ background: on ? `${m.color}14` : "rgba(255,255,255,0.03)", border: `1px solid ${on ? m.color : "rgba(255,255,255,0.08)"}`, boxShadow: on ? `0 0 24px ${m.color}22` : "none" }}>
-                  <div className="flex items-start justify-between mb-3">
-                    <div className="w-10 h-10 rounded-lg flex items-center justify-center" style={{ background: `${m.color}20`, border: `1px solid ${m.color}44` }}>
-                      <Icon name={m.icon} size={20} style={{ color: m.color }} />
-                    </div>
-                    {best[m.id] && <div className="text-right"><Stars n={best[m.id].stars} /><div className="text-xs text-muted-foreground">{best[m.id].score} очк.</div></div>}
-                  </div>
-                  <div className="font-orbitron text-sm font-bold text-white">{m.title}</div>
-                  <div className="text-sm mt-1" style={{ color: m.color }}>{m.tagline}</div>
-                  <div className="text-xs text-muted-foreground mt-2 flex items-center gap-1"><Icon name="MapPin" size={11} />{m.place}</div>
-                </button>
-              );
-            })}
-          </div>
-
-          <h2 className="font-orbitron text-base font-bold text-white mt-7 mb-3">АППАРАТ</h2>
-          <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
-            {AIRFRAMES.map((a) => {
-              const on = a.id === afId, rec = mission.recommended.includes(a.id);
-              const color = `#${a.color.toString(16).padStart(6, "0")}`;
-              return (
-                <button key={a.id} onClick={() => setAfId(a.id)} className="rounded-xl p-3 text-center transition-all duration-200 relative"
-                  style={{ background: on ? `${color}14` : "rgba(255,255,255,0.03)", border: `1px solid ${on ? color : "rgba(255,255,255,0.08)"}` }}>
-                  {rec && <span className="absolute top-2 right-2 text-[10px] font-orbitron px-1.5 py-0.5 rounded" style={{ background: "#00ffaa22", color: "#00ffaa" }}>СОВЕТ</span>}
-                  <div className="flex justify-center"><AirframeIcon af={a} /></div>
-                  <div className="font-orbitron text-sm font-bold text-white mt-1">{a.name}</div>
-                  <div className="text-xs text-muted-foreground">{a.scheme}</div>
-                </button>
-              );
-            })}
-          </div>
-
-          <div className="rounded-xl p-4 mt-6 text-sm" style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)" }}>
-            <div className="font-orbitron text-xs font-bold text-white mb-3">УПРАВЛЕНИЕ</div>
-            <div className="grid sm:grid-cols-2 gap-x-8 gap-y-1.5 text-muted-foreground">
-              {[["W / S", "вверх / вниз"], ["A / D", "поворот (рыскание)"], ["Стрелки", "вперёд, назад, влево, вправо"], ["Пробел", "целевая нагрузка (сброс, снимок)"],
-                ["C", "камера: сзади / FPV / сверху"], ["T", "тепловизор"], ["V / G", "окно камеры / наклон подвеса"], ["M", "режим полёта"],
-                ["H", "автовозврат на базу"], ["Esc", "пауза"]].map(([k, v]) => (
-                <div key={k} className="flex gap-3"><kbd className="px-1.5 rounded text-white text-xs font-mono shrink-0" style={{ background: "#ffffff14", minWidth: 62, textAlign: "center", lineHeight: "20px" }}>{k}</kbd><span>{v}</span></div>
-              ))}
-            </div>
-            <p className="text-xs text-muted-foreground mt-3">Поддерживаются геймпад и сенсорные стики на телефоне (левый — газ и рыскание, правый — крен и тангаж).</p>
-          </div>
-        </section>
-
-        <aside className="space-y-4 lg:sticky lg:top-4 self-start">
-          <div className="rounded-xl p-5" style={{ background: `${mission.color}0d`, border: `1px solid ${mission.color}44` }}>
-            <div className="font-orbitron text-xs mb-1" style={{ color: mission.color }}>БРИФИНГ</div>
-            <div className="font-orbitron text-lg font-black text-white">{mission.title}</div>
-            <div className="text-xs text-muted-foreground mb-3">{mission.place}</div>
-            <div className="space-y-2 text-[15px] leading-snug text-gray-300">{mission.briefing.map((b) => <p key={b}>{b}</p>)}</div>
-          </div>
-
-          <div className="rounded-xl p-5" style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)" }}>
-            <div className="font-orbitron text-sm font-bold text-white">{af.name} <span className="text-muted-foreground font-normal">· {af.scheme}</span></div>
-            <p className="text-sm text-muted-foreground mt-1 mb-3">{af.description}</p>
-            <div className="space-y-1">
-              {stat("Взлётная масса", `${af.mass} кг + ${af.payloadMax} кг груза`)}
-              {stat("Моторов", String(af.motors.length))}
-              {stat("Тяговооружённость", `${((af.motorThrust * af.motors.length) / ((af.mass + af.payloadMax) * 9.81)).toFixed(1)} с грузом`)}
-              {stat("Скорость", `до ${af.maxSpeed} м/с`)}
-              {stat("Висение", `${hoverMinutes(af, af.payloadMax).toFixed(0)}–${hoverMinutes(af, 0).toFixed(0)} мин`)}
-              {stat("Резерв при отказе", af.redundancy)}
-            </div>
-          </div>
-
-          <div className="grid grid-cols-3 gap-2">
-            {(Object.keys(DIFFICULTY) as Difficulty[]).map((d) => (
-              <button key={d} onClick={() => setDiff(d)} className="rounded-lg py-2 px-1 transition-all"
-                style={{ background: diff === d ? "#bf5fff22" : "rgba(255,255,255,0.03)", border: `1px solid ${diff === d ? "#bf5fff" : "rgba(255,255,255,0.08)"}` }}>
-                <div className="font-orbitron text-xs font-bold" style={{ color: diff === d ? "#bf5fff" : "#aaa" }}>{DIFFICULTY[d].label}</div>
-                <div className="text-[11px] text-muted-foreground leading-tight mt-0.5">{DIFFICULTY[d].hint}</div>
-              </button>
-            ))}
-          </div>
-
-          <div className="grid grid-cols-3 gap-2">
-            {(Object.keys(QUALITY) as Quality[]).map((q) => (
-              <button key={q} onClick={() => pickQuality(q)} className="rounded-lg py-2 px-1 transition-all"
-                style={{ background: quality === q ? "#00aaff22" : "rgba(255,255,255,0.03)", border: `1px solid ${quality === q ? "#00aaff" : "rgba(255,255,255,0.08)"}` }}>
-                <div className="font-orbitron text-xs font-bold flex items-center justify-center gap-1" style={{ color: quality === q ? "#00aaff" : "#aaa" }}>
-                  <Icon name="MonitorCog" size={12} />{QUALITY[q].label}
-                </div>
-                <div className="text-[11px] text-muted-foreground leading-tight mt-0.5">{QUALITY[q].hint}</div>
-              </button>
-            ))}
-          </div>
-
-          <button onClick={() => onStart(missionId, afId, diff, quality)}
-            className="w-full py-4 rounded-xl font-orbitron font-black text-base tracking-widest transition-transform hover:scale-[1.02] active:scale-[0.98]"
-            style={{ background: "#00ffaa", color: "#0a0d16", boxShadow: "0 0 30px #00ffaa55" }}>
-            НА ВЗЛЁТ
-          </button>
-        </aside>
-      </main>
-    </div>
-  );
-}
-
 // ─────────────────────────── сенсорный стик ───────────────────────────
 
 function Stick({ side, onMove }: { side: "left" | "right"; onMove: (x: number, y: number) => void }) {
@@ -228,12 +59,88 @@ function Stick({ side, onMove }: { side: "left" | "right"; onMove: (x: number, y
 
 // ─────────────────────────── полёт ───────────────────────────
 
+function Segmented({ label, keyHint, items, value, color, onPick }: {
+  label: string; keyHint: string; items: [string, string][]; value: string; color: string; onPick: (v: string) => void;
+}) {
+  return (
+    <div>
+      <div className="text-[10px] font-orbitron tracking-wider text-gray-400 mb-1">{label} <span className="opacity-60">· {keyHint}</span></div>
+      <div className="grid gap-1" style={{ gridTemplateColumns: `repeat(${items.length}, minmax(0, 1fr))` }}>
+        {items.map(([id, text]) => (
+          <button key={id} onClick={() => onPick(id)} className="pointer-events-auto rounded py-1 text-[11px] font-orbitron font-bold truncate transition-colors"
+            style={{ background: value === id ? `${color}26` : "#ffffff0d", color: value === id ? color : "#aaa", border: `1px solid ${value === id ? `${color}99` : "transparent"}` }}>
+            {text}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** Экранное меню FPV-очков в стиле полётного контроллера. */
+function FpvOsd({ hud }: { hud: Hud }) {
+  const o = hud.osd;
+  const t = (text: string, style: React.CSSProperties) => (
+    <div className="absolute font-mono text-[15px] font-bold text-white whitespace-nowrap" style={{ textShadow: "0 0 2px #000, 0 0 4px #000", ...style }}>{text}</div>
+  );
+  const lowV = o.volts / o.cells < 3.6;
+  return (
+    <div className="absolute inset-0 overflow-hidden">
+      {o.horizon && (
+        <div className="absolute flex items-center gap-[18vw]" style={{ left: o.horizon.x, top: o.horizon.y, transform: `translate(-50%, -50%) rotate(${o.horizon.angle}deg)` }}>
+          <div className="h-[2px] w-[16vw] bg-white" style={{ boxShadow: "0 0 3px #000" }} />
+          <div className="h-[2px] w-[16vw] bg-white" style={{ boxShadow: "0 0 3px #000" }} />
+        </div>
+      )}
+      <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 flex items-center gap-1">
+        <div className="w-5 h-[2px] bg-white" style={{ boxShadow: "0 0 3px #000" }} />
+        <div className="w-1.5 h-1.5 rounded-full border-2 border-white" />
+        <div className="w-5 h-[2px] bg-white" style={{ boxShadow: "0 0 3px #000" }} />
+      </div>
+      {t(`${hud.agl.toFixed(1)}m`, { left: "62%", top: "50%", transform: "translateY(-50%)" })}
+      {t(`${(hud.speed * 3.6).toFixed(0)}km/h`, { right: "62%", top: "50%", transform: "translateY(-50%)" })}
+      {t(o.armed ? (hud.rth ? "RTH" : hud.modeId === "POS" ? "GPS" : hud.modeId) : "DISARMED", { left: "50%", top: "22%", transform: "translateX(-50%)", color: o.armed ? "#fff" : "#ff5555" })}
+      {t(`${o.volts.toFixed(1)}V`, { left: "18%", bottom: "16%", color: lowV ? "#ff5555" : "#fff" })}
+      {t(`THR ${Math.round(o.throttle * 100)}%`, { right: "18%", bottom: "16%" })}
+      {t(fmt(hud.time), { right: "18%", bottom: "11%" })}
+      {t(`H ${hud.distHome.toFixed(0)}m`, { left: "18%", bottom: "11%" })}
+      {t(`${Math.round(hud.heading)}°`, { left: "50%", top: "17%", transform: "translateX(-50%)" })}
+      {hud.payloadText !== "—" && t(`${hud.payloadLabel.toUpperCase()} ${hud.payloadText}`, { left: "50%", bottom: "11%", transform: "translateX(-50%)" })}
+    </div>
+  );
+}
+
 interface Toast { id: number; text: string; kind: SayKind }
 const TOAST_COLOR: Record<SayKind, string> = { info: "#00aaff", good: "#00ffaa", warn: "#ff8800" };
 const fmt = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
 
-function Flight({ mission, af, difficulty, quality, onExit, onRestart }: {
-  mission: MissionDef; af: Airframe; difficulty: Difficulty; quality: Quality; onExit: () => void; onRestart: () => void;
+const TIPS = [
+  "Над очагом пожара мощные восходящие потоки: заходите на сброс с наветренной стороны на высоте от 15 м.",
+  "В режиме Acro аппарат не выравнивается сам — сначала потренируйтесь в Angle на полигоне.",
+  "Пульт EdgeTX подключите по USB и выберите «USB Joystick (HID)», затем пройдите калибровку во вкладке «Управление».",
+  "Тепловизор видит людей сквозь туман и дым на 100 м, глазом — только на 30 м.",
+  "При отказе мотора у гексакоптера пропадает управление рысканием, но он долетит до базы на автовозврате (H).",
+  "Обратный путь против ветра съедает заметно больше батареи — держите запас не меньше 30%.",
+  "Камера «С земли» — так пилотируют в визуальной видимости: научитесь понимать ориентацию аппарата издалека.",
+];
+
+function Loading({ mission }: { mission: MissionDef }) {
+  const [tip] = useState(() => TIPS[Math.floor(Math.random() * TIPS.length)]);
+  return (
+    <div className="absolute inset-0 z-40 flex flex-col items-center justify-center gap-6 p-6 text-center" style={{ background: "radial-gradient(ellipse at 50% 40%, #142030, #07090e 70%)" }}>
+      <div className="font-orbitron text-xs tracking-[0.3em]" style={{ color: mission.color }}>{mission.place.toUpperCase()}</div>
+      <div className="font-orbitron text-3xl font-black text-white">{mission.title}</div>
+      <div className="w-64 h-1 rounded-full bg-white/10 overflow-hidden"><div className="h-1 w-1/3 rounded-full animate-[loadbar_1.2s_ease-in-out_infinite]" style={{ background: mission.color }} /></div>
+      <div className="text-sm text-gray-400">Генерация местности, леса и погоды…</div>
+      <div className="max-w-md text-[15px] text-gray-300 leading-snug"><span className="font-orbitron text-[11px] mr-2" style={{ color: mission.color }}>СОВЕТ</span>{tip}</div>
+      <style>{"@keyframes loadbar{0%{transform:translateX(-100%)}100%{transform:translateX(300%)}}"}</style>
+    </div>
+  );
+}
+
+function Flight({ mission, af, difficulty, quality, flightMode, camMode, input, onExit, onRestart }: {
+  mission: MissionDef; af: Airframe; difficulty: Difficulty; quality: Quality; flightMode: FlightMode; camMode: CamMode; input: InputConfig;
+  onExit: () => void; onRestart: () => void;
 }) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const map = useRef<HTMLCanvasElement>(null);
@@ -244,14 +151,18 @@ function Flight({ mission, af, difficulty, quality, onExit, onRestart }: {
   const [result, setResult] = useState<SimResult | null>(null);
   const [paused, setPaused] = useState(false);
   const [error, setError] = useState("");
+  const [loading, setLoading] = useState(true);
   const [touch] = useState(() => window.matchMedia("(pointer: coarse)").matches);
   const toastId = useRef(0);
 
   useEffect(() => {
-    let e: SimEngine;
-    try {
+    let e: SimEngine | null = null, alive = true;
+    // даём экрану загрузки отрисоваться, потом строим мир (это занимает пару секунд)
+    const timer = setTimeout(() => {
+     if (!alive) return;
+     try {
       e = new SimEngine({
-        canvas: canvas.current!, mapCanvas: map.current!, horizonCanvas: horizon.current!, mission, airframe: af, difficulty, quality,
+        canvas: canvas.current!, mapCanvas: map.current!, horizonCanvas: horizon.current!, mission, airframe: af, difficulty, quality, flightMode, camMode, input,
         onHud: setHud,
         onSay: (text, kind) => {
           const id = ++toastId.current;
@@ -260,12 +171,17 @@ function Flight({ mission, af, difficulty, quality, onExit, onRestart }: {
         },
         onEnd: (r) => { if (r.success) saveBest(mission.id, r); setResult(r); },
       });
-    } catch (err) {
+     } catch (err) {
       setError(err instanceof Error ? err.message : "WebGL недоступен");
+      setLoading(false);
       return;
-    }
-    engine.current = e;
-    return () => { e.dispose(); engine.current = null; };
+     }
+     engine.current = e;
+     setLoading(false);
+    }, 80);
+    return () => { alive = false; clearTimeout(timer); e?.dispose(); engine.current = null; };
+    // режим и камера нужны только при старте, дальше ими управляет движок
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mission, af, difficulty, quality]);
 
   useEffect(() => {
@@ -293,6 +209,7 @@ function Flight({ mission, af, difficulty, quality, onExit, onRestart }: {
   return (
     <div className="fixed inset-0 bg-black overflow-hidden select-none" style={{ touchAction: "none" }}>
       <canvas ref={canvas} className="absolute inset-0 w-full h-full block" />
+      {loading && <Loading mission={mission} />}
       {error && <div className="absolute inset-0 flex items-center justify-center text-center p-6 text-white">Не удалось запустить 3D-графику: {error}.<br />Обновите браузер или включите аппаратное ускорение.</div>}
 
       <div className="absolute inset-0 pointer-events-none font-rajdhani">
@@ -317,6 +234,18 @@ function Flight({ mission, af, difficulty, quality, onExit, onRestart }: {
             </button>
             <span className="text-xs text-gray-400 self-center ml-1">{af.name} · {DIFFICULTY[difficulty].label}</span>
           </div>
+          {hud && (
+            <div className="mt-3 pt-3 space-y-2 border-t border-white/10">
+              <Segmented label="КАМЕРА" keyHint="C" items={CAMS.map((c) => [c, CAM_LABEL[c]])} value={hud.camId} color="#00ffaa"
+                onPick={(c) => engine.current?.setCam(c as CamMode)} />
+              <Segmented label="РЕЖИМ" keyHint="M" items={MODES.map((m) => [m, MODE_LABEL[m]])} value={hud.rth ? "" : hud.modeId} color="#ffd700"
+                onPick={(m) => engine.current?.setMode(m as FlightMode)} />
+              <div className="text-[11px] leading-tight text-gray-400">
+                {hud.rth ? "Автовозврат: ручки отменяют" : MODE_HINT[hud.modeId]}
+                {hud.manual && !hud.rth && <span className="block text-[#ffd700]">Газ ручной: W/S, отпустил — тяга висения</span>}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* сообщения */}
@@ -344,16 +273,16 @@ function Flight({ mission, af, difficulty, quality, onExit, onRestart }: {
 
         {/* кнопки */}
         <div className="absolute flex gap-1.5" style={touch ? { bottom: 158, right: 12, flexDirection: "column" } : { bottom: 12, right: 12 }}>
-          {btn("Камера (C)", "Video", "cam")}
           {btn("Тепловизор (T)", "Thermometer", "thermal", hud?.thermal)}
           {btn("Окно камеры (V)", "PictureInPicture2", "pip", hud?.pip)}
-          {btn("Режим полёта (M)", "SlidersHorizontal", "mode")}
           {btn("Автовозврат (H)", "Home", "rth", hud?.rth)}
           {btn("Звук (N)", "Volume2", "mute")}
         </div>
 
+        {hud?.camId === "fpv" && <FpvOsd hud={hud} />}
+
         {/* телеметрия */}
-        <div className="absolute left-1/2 -translate-x-1/2 rounded-xl flex items-center py-1.5 px-2 max-w-[calc(100vw-16px)]"
+        <div className={`absolute left-1/2${hud?.camId === "fpv" ? " hidden" : ""} -translate-x-1/2 rounded-xl flex items-center py-1.5 px-2 max-w-[calc(100vw-16px)]`}
           style={{ ...panel, bottom: touch ? 158 : 12, transform: `translateX(-50%) scale(${touch ? 0.82 : 1})`, transformOrigin: "bottom center" }}>
           <canvas ref={horizon} style={{ width: 58, height: 58 }} className="shrink-0 mr-1" />
           {hud && <>
@@ -445,11 +374,16 @@ function Flight({ mission, af, difficulty, quality, onExit, onRestart }: {
 // ─────────────────────────── страница ───────────────────────────
 
 export default function Simulator() {
-  const [run, setRun] = useState<{ mission: string; af: string; diff: Difficulty; quality: Quality; key: number } | null>(null);
+  const [settings, setSettings] = useState<LaunchSettings>(() => ({
+    mission: "training", af: "quad", diff: "pilot", quality: loadQuality(), fmode: "POS", cam: "chase", input: loadInput(),
+  }));
+  const [run, setRun] = useState(0);
+  const [best, setBest] = useState<Best>(loadBest);
   useEffect(() => { document.title = "БАС Симулятор — миссии беспилотников"; }, []);
-  if (!run) return <Menu onStart={(mission, af, diff, quality) => setRun({ mission, af, diff, quality, key: 1 })} />;
+  if (!run) return <Launcher initial={settings} best={best} onStart={(st) => { setSettings(st); setRun(1); }} />;
   return (
-    <Flight key={run.key} mission={getMission(run.mission)} af={getAirframe(run.af)} difficulty={run.diff} quality={run.quality}
-      onExit={() => setRun(null)} onRestart={() => setRun({ ...run, key: run.key + 1 })} />
+    <Flight key={run} mission={getMission(settings.mission)} af={getAirframe(settings.af)} difficulty={settings.diff} quality={settings.quality}
+      flightMode={settings.fmode} camMode={settings.cam} input={settings.input}
+      onExit={() => { setBest(loadBest()); setRun(0); }} onRestart={() => setRun(run + 1)} />
   );
 }

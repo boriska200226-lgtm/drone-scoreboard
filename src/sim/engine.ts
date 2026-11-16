@@ -4,10 +4,11 @@ import { Airframe } from "./airframes";
 import { Particles } from "./effects";
 import { Action, Ctx, Difficulty, DIFFICULTY, MapDraw, Mission, MissionDef, Objective, SayKind } from "./missions";
 import { clamp, mulberry32 } from "./noise";
-import { DroneSim, Env, FlightMode, MODE_LABEL, Sticks } from "./physics";
+import { DroneSim, Env, FlightMode, MANUAL_THROTTLE, MODE_LABEL, Sticks } from "./physics";
 import { makeBaseCamp, Quality, THERMAL_LAYER, World } from "./world";
 import { buildDrone, DroneModel } from "./droneModel";
 import { GradeShader } from "./shaders";
+import { DEFAULT_INPUT, firstPad, InputConfig, readAxis, switchPos } from "./input";
 import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
 import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
@@ -23,6 +24,7 @@ export interface Hud {
   distHome: number; time: number;
   objectives: Objective[]; motors: boolean[]; warnings: string[];
   pipRect: { right: number; top: number; w: number; h: number }; mapSize: number;
+  modeId: FlightMode; camId: CamMode; manual: boolean; osd: Osd;
 }
 
 export interface SimResult {
@@ -37,15 +39,26 @@ export interface EngineOpts {
   airframe: Airframe;
   difficulty: Difficulty;
   quality: Quality;
+  flightMode?: FlightMode;
+  input?: InputConfig;
+  camMode?: CamMode;
   onHud(h: Hud): void;
   onSay(text: string, kind: SayKind): void;
   onEnd(r: SimResult): void;
 }
 
 export type Command = "cam" | "thermal" | "pip" | "gimbal" | "mode" | "rth" | "mute";
-const CAMS = ["chase", "fpv", "top"] as const;
-const CAM_LABEL = { chase: "Сзади", fpv: "FPV", top: "Сверху" };
-const MODES: FlightMode[] = ["POS", "ANGLE", "ACRO"];
+export const CAMS = ["chase", "fpv", "los", "top"] as const;
+export type CamMode = (typeof CAMS)[number];
+export const CAM_LABEL: Record<CamMode, string> = { chase: "Сзади", fpv: "FPV", los: "С земли", top: "Сверху" };
+export const MODES: FlightMode[] = ["POS", "ATTI", "ANGLE", "ACRO"];
+/** Наклон FPV-камеры вверх, рад: для быстрого полёта камеру ставят круче. */
+const FPV_TILT: Record<FlightMode, number> = { POS: 0.12, ATTI: 0.14, ANGLE: 0.3, ACRO: 0.47 };
+
+export interface Osd {
+  roll: number; pitch: number; throttle: number; volts: number; cells: number; armed: boolean;
+  horizon: { x: number; y: number; angle: number } | null;
+}
 const STEP = 1 / 240;
 
 export function layout(w: number) {
@@ -107,13 +120,17 @@ export class SimEngine {
   private audio: Audio;
   private keys = new Set<string>();
   private sticks: Sticks = { roll: 0, pitch: 0, yaw: 0, throttle: 0 };
-  private camMode: (typeof CAMS)[number] = "chase";
+  private camMode: CamMode = "chase";
+  private input: InputConfig = DEFAULT_INPUT;
+  private switchPrev = -1;
+  padName = "";
   private thermal = false;
   private pip: boolean;
   private gimbalPitch: number;
   private rth = false;
   private actionPressed = false;
   private padPrev: boolean[] = [];
+  private actionAxisPrev = false;
   private raf = 0;
   private last = 0;
   private acc = 0;
@@ -169,7 +186,7 @@ export class SimEngine {
     this.fx = {
       fire: new Particles(scene, { max: 3600, additive: true, thermal: true, fireRamp: true, fog }),
       smoke: new Particles(scene, { max: 2600, drag: 0.45, grow: 3.2, fog, tint: lightTint }),
-      water: new Particles(scene, { max: 1600, gravity: 9.81, drag: 0.35, fog, tint: lightTint, ground, onHit: (x, z, m) => this.mission.onWaterHit(x, z, m) }),
+      water: new Particles(scene, { max: 4000, gravity: 9.81, drag: 0.35, fog, tint: lightTint, ground, onHit: (x, z, m) => this.mission.onWaterHit(x, z, m) }),
     };
 
     this.env = {
@@ -187,6 +204,10 @@ export class SimEngine {
       camDir: () => this.camDirV,
     };
     this.mission = o.mission.create(ctx);
+    if (o.flightMode) this.drone.mode = o.flightMode;
+    this.input = o.input ?? DEFAULT_INPUT;
+    this.drone.rates = this.input.rates;
+    if (o.camMode) this.camMode = o.camMode;
     this.model = buildDrone(o.airframe, {
       tank: o.mission.payloadUnit === "л",
       boom: o.mission.id === "agro" ? Math.min(o.airframe.sprayWidth * 0.35, o.airframe.arm * 2.6) : 0,
@@ -239,11 +260,8 @@ export class SimEngine {
     else if (c === "pip") this.pip = !this.pip;
     else if (c === "gimbal") this.gimbalPitch = this.gimbalPitch < -45 ? -6 : -90;
     else if (c === "mute") this.audio.muted = !this.audio.muted;
-    else if (c === "mode") {
-      this.drone.mode = MODES[(MODES.indexOf(this.drone.mode) + 1) % MODES.length];
-      this.rth = false;
-      say(`Режим: ${MODE_LABEL[this.drone.mode]}`, "info");
-    } else if (c === "rth") {
+    else if (c === "mode") this.setMode(MODES[(MODES.indexOf(this.drone.mode) + 1) % MODES.length]);
+    else if (c === "rth") {
       this.rth = !this.rth;
       if (this.rth) this.drone.mode = "POS";
       say(this.rth ? "Автовозврат на базу включён" : "Автовозврат отменён", "info");
@@ -251,6 +269,19 @@ export class SimEngine {
   }
 
   pressAction() { this.actionPressed = true; }
+
+  setMode(m: FlightMode) {
+    if (this.ended || this.drone.mode === m) return;
+    this.drone.mode = m;
+    this.rth = false;
+    this.o.onSay(`Режим ${MODE_LABEL[m]}${MANUAL_THROTTLE[m] ? " — газ ручной: центр ≈ висение" : ""}`, "info");
+    this.pushHud();
+  }
+
+  setCam(c: CamMode) {
+    this.camMode = c;
+    this.pushHud();
+  }
 
   private readSticks(dt: number): { st: Sticks; held: boolean } {
     const k = this.keys;
@@ -270,19 +301,42 @@ export class SimEngine {
     };
     let held = k.has("Space") || this.touchAction;
 
-    const pad = navigator.getGamepads ? Array.from(navigator.getGamepads()).find((g) => g && g.connected && g.axes.length >= 4) : null;
+    const pad = firstPad();
+    this.padName = pad ? pad.id : "";
     if (pad) {
-      const dz = (v: number) => (Math.abs(v) < 0.12 ? 0 : v);
-      const g = { yaw: dz(pad.axes[0]), throttle: -dz(pad.axes[1]), roll: dz(pad.axes[2]), pitch: -dz(pad.axes[3]) };
-      (Object.keys(g) as (keyof Sticks)[]).forEach((a) => { if (g[a] !== 0) out[a] = g[a]; });
+      const c = this.input;
+      const usePad = c.device === "gamepad";
+      if (usePad) {
+        // пульт/геймпад полностью заменяет клавиатуру по стикам, если клавиши не нажаты
+        const g = {
+          roll: readAxis(pad, c.axes.roll, c.deadband), pitch: readAxis(pad, c.axes.pitch, c.deadband),
+          yaw: readAxis(pad, c.axes.yaw, c.deadband), throttle: readAxis(pad, c.axes.throttle, c.deadband),
+        };
+        (Object.keys(g) as (keyof Sticks)[]).forEach((a) => { if (target[a] === 0 && this.touch[a] === 0) out[a] = g[a]; });
+        if (c.modeAxis && !this.rth) {
+          const pos = switchPos(pad, c.modeAxis);
+          if (pos !== this.switchPrev) {
+            if (this.switchPrev !== -1 || this.drone.mode !== c.modeMap[pos]) this.setMode(c.modeMap[pos]);
+            this.switchPrev = pos;
+          }
+        }
+        if (c.actionAxis !== null && (pad.axes[c.actionAxis] ?? -1) > 0.5) {
+          if (!this.actionAxisPrev) this.actionPressed = true;
+          held = true;
+          this.actionAxisPrev = true;
+        } else this.actionAxisPrev = false;
+      }
       const b = pad.buttons.map((x) => x.pressed);
       const edge = (i: number) => b[i] && !this.padPrev[i];
-      if (edge(0)) this.actionPressed = true;
-      if (edge(1)) this.command("cam");
-      if (edge(2)) this.command("thermal");
-      if (edge(3)) this.command("mode");
-      if (edge(9)) this.command("rth");
-      held = held || !!b[0];
+      const act = c.actionButton ?? -1;
+      if (act >= 0 && edge(act)) this.actionPressed = true;
+      if (act >= 0 && b[act]) held = true;
+      if (c.preset === "gamepad" || c.device === "keyboard") {
+        if (edge(1)) this.command("cam");
+        if (edge(2)) this.command("thermal");
+        if (edge(3)) this.command("mode");
+        if (edge(9)) this.command("rth");
+      }
       this.padPrev = b;
     }
     return { st: out, held };
@@ -453,9 +507,18 @@ export class SimEngine {
       cam.fov = 62;
       cam.lookAt(d.pos.x + fx * 3, d.pos.y + 0.2, d.pos.z + fz * 3);
     } else if (this.camMode === "fpv") {
-      cam.position.copy(d.pos);
-      cam.quaternion.copy(d.quat).multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), 0.14));
-      cam.fov = 95;
+      // камера жёстко закреплена на раме и наклонена вверх, как на гоночном дроне
+      cam.position.copy(d.pos).addScaledVector(new THREE.Vector3(0, 0.06, -d.af.arm * 0.4).applyQuaternion(d.quat), 1);
+      cam.quaternion.copy(d.quat).multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), this.fpvTilt()));
+      cam.up.set(0, 1, 0);
+      cam.fov = this.input.fpvFov;
+    } else if (this.camMode === "los") {
+      // пилот стоит у машины на базе и смотрит на аппарат глазами, с лёгким «зумом» вдали
+      cam.position.set(-5, this.world.groundAt(-5, 6) + 1.7, 6);
+      cam.up.set(0, 1, 0);
+      const dist = cam.position.distanceTo(d.pos);
+      cam.fov = clamp((2 * Math.atan(9 / Math.max(1, dist)) * 180) / Math.PI, 10, 65);
+      cam.lookAt(d.pos);
     } else {
       cam.position.set(d.pos.x, d.pos.y + 75, d.pos.z + 0.01);
       cam.up.set(0, 0, -1);
@@ -496,7 +559,10 @@ export class SimEngine {
     setScale(scale(this.cam, h));
     r.shadowMap.needsUpdate = true;
     if (this.composer) {
-      this.grade!.uniforms.uTime.value = (this.grade!.uniforms.uTime.value + 0.017) % 100;
+      const u = this.grade!.uniforms, fpv = this.camMode === "fpv";
+      u.uTime.value = (u.uTime.value + 0.017) % 100;
+      u.uGrain.value = fpv ? 0.075 : 0.035;
+      u.uVignette.value = fpv ? 0.55 : 0.32;
       this.composer.render();
     } else r.render(scene, this.cam);
 
@@ -608,6 +674,40 @@ export class SimEngine {
     g.beginPath(); g.arc(S / 2, S / 2, S / 2 - 1, 0, 6.3); g.stroke();
   }
 
+  private fpvTilt(): number {
+    return this.input.fpvTilt === null ? FPV_TILT[this.drone.mode] : (this.input.fpvTilt * Math.PI) / 180;
+  }
+
+  /** Линия горизонта в кадре FPV: проекция двух далёких точек на уровне камеры. */
+  private horizonLine(): Osd["horizon"] {
+    if (this.camMode !== "fpv") return null;
+    const c = this.cam, w = this.o.canvas.clientWidth, h = this.o.canvas.clientHeight;
+    const f = new THREE.Vector3(0, 0, -1).applyQuaternion(c.quaternion);
+    const az = Math.atan2(f.x, f.z);
+    const pts = [-0.25, 0.25].map((da) => new THREE.Vector3(Math.sin(az + da), 0, Math.cos(az + da)).multiplyScalar(4000).add(c.position).project(c));
+    if (pts.some((p) => p.z > 1)) return null;
+    const [a, b] = pts.map((p) => ({ x: (p.x * 0.5 + 0.5) * w, y: (-p.y * 0.5 + 0.5) * h }));
+    // точка горизонта, ближайшая к центру кадра
+    const dx = b.x - a.x, dy = b.y - a.y, L = Math.hypot(dx, dy) || 1;
+    const t = ((w / 2 - a.x) * dx + (h / 2 - a.y) * dy) / (L * L);
+    return { x: a.x + dx * t, y: a.y + dy * t, angle: (Math.atan2(dy, dx) * 180) / Math.PI };
+  }
+
+  private osd(): Osd {
+    const d = this.drone;
+    const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(d.quat);
+    const right = new THREE.Vector3(1, 0, 0).applyQuaternion(d.quat);
+    const up = new THREE.Vector3(0, 1, 0).applyQuaternion(d.quat);
+    const pitch = Math.asin(clamp(fwd.y, -1, 1)), roll = Math.atan2(-right.y, up.y);
+    let thr = 0;
+    for (let i = 0; i < d.n; i++) thr += d.thrust[i];
+    const cells = d.af.batteryWh < 120 ? 4 : d.af.batteryWh < 500 ? 6 : 12;
+    return {
+      roll: (roll * 180) / Math.PI, pitch: (pitch * 180) / Math.PI,
+      throttle: thr / (d.af.motorThrust * d.n), volts: cells * (3.45 + 0.75 * d.soc), cells, horizon: this.horizonLine(), armed: !d.landed || thr > 0.1 * d.mass * 9.81,
+    };
+  }
+
   private pushHud() {
     const d = this.drone, m = this.mission, def = this.o.mission;
     const gh = Math.max(this.world.groundAt(d.pos.x, d.pos.z), this.world.waterLevel ?? -1e9);
@@ -627,6 +727,7 @@ export class SimEngine {
       payloadFrac: m.capacity > 0 ? m.amount / m.capacity : 0,
       wind: d.windNow.length(), windFrom,
       mode: this.rth ? "Автовозврат" : MODE_LABEL[d.mode], cam: CAM_LABEL[this.camMode],
+      modeId: d.mode, camId: this.camMode, manual: MANUAL_THROTTLE[d.mode], osd: this.osd(),
       thermal: this.thermal, pip: this.pip, rth: this.rth,
       distHome: Math.hypot(d.pos.x, d.pos.z), time: m.time, objectives, motors: [...d.motorOk], warnings,
       ...layout(w),

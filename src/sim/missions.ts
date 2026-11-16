@@ -193,10 +193,15 @@ class FireMission extends Mission {
   private acc = 0; private heat = 0; private burning = 0; private lost = 0; private dropped = 0;
   private spread: number; private pumpSaid = 0;
   private glow: THREE.PointLight;
+  private curtain: THREE.Mesh;
+  private curtainTex: THREE.CanvasTexture;
+  private smolder: Float32Array;
+  private hitMass = 0; private hitSaid = -10; private outSaid = -10;
 
   constructor(ctx: Ctx) {
     super(ctx);
     const n = this.nx * this.nz;
+    this.smolder = new Float32Array(n);
     this.state = new Uint8Array(n); this.inten = new Float32Array(n); this.age = new Float32Array(n);
     this.life = new Float32Array(n); this.wet = new Float32Array(n);
     for (let i = 0; i < n; i++) this.cellTrees.push([]);
@@ -211,6 +216,29 @@ class FireMission extends Mission {
     fuel.sort((p, q) => Math.hypot(this.cx(p) - 40, this.cz(p) + 420) - Math.hypot(this.cx(q) - 40, this.cz(q) + 420));
     for (const c of fuel.slice(0, 6)) this.ignite(c, 0.9);
     this.burning = 6;
+    // завеса падающей воды: конус с бегущими вниз струями
+    const cv = document.createElement("canvas");
+    cv.width = 128; cv.height = 256;
+    const g2 = cv.getContext("2d")!;
+    const r2 = mulberry32(5);
+    for (let i = 0; i < 140; i++) {
+      const x = r2() * 128, y = r2() * 256, len = 20 + r2() * 70;
+      const gr = g2.createLinearGradient(0, y, 0, y + len);
+      gr.addColorStop(0, "rgba(255,255,255,0)"); gr.addColorStop(0.5, `rgba(235,245,255,${0.35 + r2() * 0.5})`); gr.addColorStop(1, "rgba(255,255,255,0)");
+      g2.fillStyle = gr; g2.fillRect(x, y, 1 + r2() * 2.5, len);
+      if (y + len > 256) g2.fillRect(x, y - 256, 1.5, len);
+    }
+    this.curtainTex = ctx.world.track(new THREE.CanvasTexture(cv));
+    this.curtainTex.wrapS = this.curtainTex.wrapT = THREE.RepeatWrapping;
+    this.curtainTex.repeat.set(3, 1);
+    const cg = new THREE.CylinderGeometry(0.22, 1, 1, 24, 1, true);
+    cg.translate(0, -0.5, 0);
+    this.curtain = new THREE.Mesh(cg, new THREE.MeshBasicMaterial({
+      map: this.curtainTex, transparent: true, depthWrite: false, side: THREE.DoubleSide, color: 0xdfeeff, opacity: 0.9,
+    }));
+    this.curtain.visible = false;
+    this.curtain.renderOrder = 4;
+    ctx.world.scene.add(this.curtain);
     this.glow = new THREE.PointLight(0xff7a2a, 0, 110, 1.6);
     this.glow.position.set(40, ctx.world.groundAt(40, -420) + 8, -420);
     ctx.world.scene.add(this.glow);
@@ -242,18 +270,48 @@ class FireMission extends Mission {
     for (const t of this.cellTrees[c]) this.ctx.world.tintTree(t, 0.35, 1);
   }
 
+  /** Белый пар/брызги: цвет делится на освещённость системы частиц, иначе в закатном свете он рыжий. */
+  private white(p: Particles, k: number): [number, number, number] {
+    const t = p.tint;
+    return [k / Math.max(0.25, t.r), k / Math.max(0.25, t.g), k / Math.max(0.25, t.b)];
+  }
+
+  private steam(x: number, z: number, n: number, big: number) {
+    const { fx, world, rnd } = this.ctx;
+    const [r, g, b] = this.white(fx.smoke, 0.92);
+    const y = world.groundAt(x, z);
+    for (let i = 0; i < n; i++) {
+      fx.smoke.spawn(x + (rnd() - 0.5) * 6, y + 1 + rnd() * 3, z + (rnd() - 0.5) * 6,
+        (rnd() - 0.5) * 2.5, 4 + rnd() * 5 * big, (rnd() - 0.5) * 2.5, 2.5 + rnd() * 3 * big, (2.5 + rnd() * 3) * big, r, g, b, 0.6);
+    }
+  }
+
   private splash(x: number, z: number, mass: number) {
     const c = this.cellAt(x, z);
-    if (c < 0) return;
-    if (this.state[c] === 2) {
+    const { fx, world, rnd } = this.ctx;
+    if (c >= 0 && this.state[c] === 2) {
+      // вода на огне: шипящий пар, пламя слабеет
       this.inten[c] -= mass / 2.2;
-      if (this.ctx.rnd() < 0.3) this.ctx.fx.smoke.spawn(x, this.ctx.world.groundAt(x, z) + 1, z, 0, 3, 0, 2.5, 5, 0.9, 0.9, 0.9, 0.35);
+      this.hitMass += mass;
+      if (rnd() < 0.55) this.steam(x, z, 1, 1);
+      if (this.time - this.hitSaid > 5) { this.hitSaid = this.time; this.ctx.say("Попадание! Пламя сбивается", "good"); }
       if (this.inten[c] <= 0) {
-        this.state[c] = 4; this.inten[c] = 0;
-        for (const t of this.cellTrees[c]) this.ctx.world.tintTree(t, 0.6, 0);
-        this.ctx.world.scorch(x, z, this.cs * 0.6, 0.5);
+        this.state[c] = 4; this.inten[c] = 0; this.smolder[c] = 30;
+        for (const t of this.cellTrees[c]) world.tintTree(t, 0.6, 0);
+        world.scorch(this.cx(c), this.cz(c), this.cs * 0.6, 0.5);
+        this.steam(this.cx(c), this.cz(c), 14, 1.6);
+        const left = this.state.reduce((a, v) => a + (v === 2 ? 1 : 0), 0);
+        if (left > 0 && this.time - this.outSaid > 3) { this.outSaid = this.time; this.ctx.say(`Квадрат потушен, горит ещё ${left}`, "good"); }
       }
-    } else if (this.state[c] === 1) this.wet[c] = Math.min(1.6, this.wet[c] + mass / 2);
+      return;
+    }
+    if (c >= 0 && this.state[c] === 1) this.wet[c] = Math.min(1.6, this.wet[c] + mass / 2);
+    // брызги о землю/кроны
+    if (rnd() < 0.3) {
+      const [r, g, b] = this.white(fx.water, 0.95);
+      const y = Math.max(world.groundAt(x, z), world.waterLevel ?? -1e9);
+      for (let i = 0; i < 3; i++) fx.water.spawn(x, y + 0.3, z, (rnd() - 0.5) * 5, 2 + rnd() * 3, (rnd() - 0.5) * 5, 0.7, 0.6 + rnd() * 0.6, r, g, b, 0.55);
+    }
   }
 
   update(dt: number, action: Action) {
@@ -321,8 +379,9 @@ class FireMission extends Mission {
       const I = this.inten[c];
       if (this.ctx.rnd() < I * 13 * dt) {
         const x = this.cx(c) + (this.ctx.rnd() - 0.5) * this.cs, z = this.cz(c) + (this.ctx.rnd() - 0.5) * this.cs;
-        const y = world.groundAt(x, z) + this.ctx.rnd() * 9;
-        fx.fire.spawn(x, y, z, wx * 1.5, 3 + this.ctx.rnd() * 4, wz * 1.5, 0.8 + this.ctx.rnd() * 0.8, 3.5 + this.ctx.rnd() * 4.5, 1, 1, 1, 0.55);
+        // размер языков пламени зависит от силы горения: под водой огонь заметно «садится»
+        fx.fire.spawn(x, world.groundAt(x, z) + this.ctx.rnd() * 9 * I, z, wx * 1.5, (3 + this.ctx.rnd() * 4) * (0.5 + 0.5 * I), wz * 1.5,
+          0.8 + this.ctx.rnd() * 0.8, (3.5 + this.ctx.rnd() * 4.5) * (0.3 + 0.7 * I), 1, 1, 1, 0.55);
       }
       if (this.ctx.rnd() < I * 2.6 * dt) {
         const x = this.cx(c) + (this.ctx.rnd() - 0.5) * this.cs, z = this.cz(c) + (this.ctx.rnd() - 0.5) * this.cs;
@@ -331,22 +390,57 @@ class FireMission extends Mission {
       }
     }
 
+    // тлеющие потушенные квадраты: тонкий светлый дымок
+    for (let c = 0; c < this.state.length; c++) {
+      if (this.smolder[c] <= 0) continue;
+      this.smolder[c] -= dt;
+      if (this.ctx.rnd() < 1.2 * dt * (this.smolder[c] / 30)) {
+        const x = this.cx(c) + (this.ctx.rnd() - 0.5) * this.cs, z = this.cz(c) + (this.ctx.rnd() - 0.5) * this.cs;
+        const g = 0.45 + this.ctx.rnd() * 0.2;
+        fx.smoke.spawn(x, world.groundAt(x, z) + 1, z, 0, 1.5 + this.ctx.rnd(), 0, 8, 2.5, g, g, g, 0.3);
+      }
+    }
+
     // сброс и забор воды
-    if (action.held && this.amount > 0 && !drone.landed) {
+    const dropping = action.held && this.amount > 0 && !drone.landed;
+    this.curtain.visible = dropping;
+    if (dropping) {
+      const top = drone.pos.y - drone.gear * 0.7;
+      const len = Math.max(1, top - Math.max(world.groundAt(drone.pos.x, drone.pos.z), world.waterLevel ?? -1e9));
+      // конус расширяется книзу и сносится скоростью аппарата и ветром
+      const tilt = new THREE.Vector3(drone.vel.x * 0.5 + drone.windNow.x * 0.3, -len, drone.vel.z * 0.5 + drone.windNow.z * 0.3);
+      this.curtain.position.set(drone.pos.x, top, drone.pos.z);
+      this.curtain.quaternion.setFromUnitVectors(new THREE.Vector3(0, -1, 0), tilt.clone().normalize());
+      const spread = 0.35 + af.arm * 0.5;
+      this.curtain.scale.set(spread * 2 + len * 0.1, tilt.length(), spread * 2 + len * 0.1);
+      this.curtainTex.offset.y = (this.curtainTex.offset.y + dt * 2.2) % 1;
+    }
+    if (dropping) {
       const rate = af.pumpRate * 1.2;
       const dm = Math.min(this.amount, rate * dt);
       this.amount -= dm; this.dropped += dm;
-      const k = Math.max(1, Math.round(45 * dt));
+      // плотная струя из сливного клапана, которая ниже рассыпается на капли
+      const k = Math.max(3, Math.round(260 * dt));
+      const [r, g, b] = this.white(fx.water, 0.9);
+      const spread = 0.6 + af.arm * 0.6;
       for (let i = 0; i < k; i++) {
-        fx.water.spawn(drone.pos.x + (this.ctx.rnd() - 0.5) * 1.5, drone.pos.y - 0.4, drone.pos.z + (this.ctx.rnd() - 0.5) * 1.5,
-          drone.vel.x + (this.ctx.rnd() - 0.5) * 7, drone.vel.y - 2, drone.vel.z + (this.ctx.rnd() - 0.5) * 7,
-          8, 1.2, 0.85, 0.9, 0.95, 0.5, dm / k);
+        const a = this.ctx.rnd() * 6.283, rr = Math.sqrt(this.ctx.rnd()) * spread;
+        fx.water.spawn(drone.pos.x + Math.cos(a) * rr * 0.4, drone.pos.y - drone.gear * 0.7, drone.pos.z + Math.sin(a) * rr * 0.4,
+          drone.vel.x + Math.cos(a) * rr * 2.2, drone.vel.y - 3 - this.ctx.rnd() * 2, drone.vel.z + Math.sin(a) * rr * 2.2,
+          10, 0.8 + this.ctx.rnd() * 1.0, r, g, b, 0.9, dm / k);
       }
     } else if (action.pressed && this.amount <= 0) this.ctx.say("Бак пуст — заберите воду из реки или сядьте на базу", "warn");
 
     if (world.isWater(drone.pos.x, drone.pos.z) && this.agl() < 5.5 && this.hSpeed() < 4 && this.amount < this.capacity) {
       this.amount = Math.min(this.capacity, this.amount + af.pumpRate * dt);
       if (this.time - this.pumpSaid > 6) { this.ctx.say("Забор воды…", "info"); this.pumpSaid = this.time; }
+      // бурун от заборного шланга
+      const [r, g, b] = this.white(fx.water, 0.95);
+      const wl = world.waterLevel ?? 0;
+      for (let i = 0; i < Math.round(40 * dt) + 1; i++) {
+        const a = this.ctx.rnd() * 6.283;
+        fx.water.spawn(drone.pos.x, wl + 0.2, drone.pos.z, Math.cos(a) * 3, 1.5 + this.ctx.rnd() * 2, Math.sin(a) * 3, 0.6, 0.5 + this.ctx.rnd() * 0.5, r, g, b, 0.6);
+      }
       if (this.amount >= this.capacity) this.ctx.say("Бак полон", "good");
     }
     drone.payload = this.amount;
@@ -360,7 +454,8 @@ class FireMission extends Mission {
     } else this.heat = Math.max(0, this.heat - dt * 2);
   }
 
-  onWaterHit(x: number, z: number, mass: number) { this.splash(x, z, mass); }
+  // брызги и пар несут нулевую массу — они не тушат и не порождают новых брызг
+  onWaterHit(x: number, z: number, mass: number) { if (mass > 0) this.splash(x, z, mass); }
 
   extraWind(p: THREE.Vector3, out: THREE.Vector3) {
     const c = this.cellAt(p.x, p.z);
@@ -384,7 +479,8 @@ class FireMission extends Mission {
     return {
       score: clamp(100 - Math.max(0, this.lost - 8) * 0.75 - Math.max(0, this.time - 300) / 15, 10, 100),
       rows: [
-        ["Пройдено огнём", `${ha.toFixed(1)} га`], ["Сброшено воды", `${this.dropped.toFixed(0)} л`], ["Время", fmtTime(this.time)],
+        ["Пройдено огнём", `${ha.toFixed(1)} га`], ["Сброшено воды", `${this.dropped.toFixed(0)} л`],
+        ["Попаданий по огню", `${this.dropped > 0 ? Math.min(100, Math.round((this.hitMass / this.dropped) * 100)) : 0}%`], ["Время", fmtTime(this.time)],
       ] as [string, string][],
     };
   }

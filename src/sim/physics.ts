@@ -3,13 +3,23 @@
 import * as THREE from "three";
 import { Airframe } from "./airframes";
 import { clamp } from "./noise";
+import { bfRate, Rates } from "./input";
 
-export type FlightMode = "POS" | "ANGLE" | "ACRO";
+export type FlightMode = "POS" | "ATTI" | "ANGLE" | "ACRO";
 export const MODE_LABEL: Record<FlightMode, string> = {
-  POS: "GPS-удержание",
-  ANGLE: "Стабилизация",
-  ACRO: "Акро",
+  POS: "GPS",
+  ATTI: "ATTI",
+  ANGLE: "Angle",
+  ACRO: "Acro",
 };
+export const MODE_HINT: Record<FlightMode, string> = {
+  POS: "держит точку и высоту, отпустил ручки — завис",
+  ATTI: "держит только высоту, ветер сносит",
+  ANGLE: "выравнивает горизонт, газ ручной",
+  ACRO: "ручки задают скорость вращения, без выравнивания — флипы и роллы",
+};
+/** Режимы с ручным газом: ручка задаёт тягу, центр ≈ висение. */
+export const MANUAL_THROTTLE: Record<FlightMode, boolean> = { POS: false, ATTI: false, ANGLE: true, ACRO: true };
 
 export interface Sticks { roll: number; pitch: number; yaw: number; throttle: number }
 
@@ -78,6 +88,7 @@ export class DroneSim {
   yaw = 0;
   windNow = new THREE.Vector3();
   gear: number;
+  rates: Rates = { rc: 1, superRate: 0.7, expo: 0 };
   speedLimit = Infinity; // м/с, ограничение автопилота (например, при опрыскивании)
   radius: number;
 
@@ -194,30 +205,43 @@ export class DroneSim {
     const inertiaM = af.mass + this.payload * 0.3;
     const Ixz = inertiaM * (0.38 * af.arm) ** 2 + 0.01;
     const Iy = inertiaM * (0.52 * af.arm) ** 2 + 0.015;
-    const idle = this.landed && st.throttle <= 0.05 && this.mode !== "ACRO";
+    const idle = this.landed && st.throttle <= 0.05;
     const dead = this.battery <= 0;
 
     let T = 0, tx = 0, ty = 0, tz = 0;
     if (!idle && !dead) {
       let wx = 0, wy = 0, wz = 0;
+      const manual = MANUAL_THROTTLE[this.mode];
+      if (manual) {
+        // ручной газ без компенсации наклона: накренился — теряешь высоту, как на настоящем FPV
+        const hover = m * G, top = fMax * this.effN * 0.94;
+        const t = st.throttle, curve = 0.3 * t + 0.7 * t * t * t; // экспо газа: точнее у висения
+        T = t >= 0 ? hover + curve * (top - hover) : hover * (1 + curve * 0.85);
+        this.altSp = this.pos.y; this.iZ = 0;
+      }
       if (this.mode === "ACRO") {
-        wx = -st.pitch * 3.6; wy = -st.yaw * af.yawRate * 1.3; wz = -st.roll * 3.6;
-        T = ((st.throttle + 1) / 2) * fMax * this.n * 0.92;
-        this.altSp = this.pos.y; this.yawSp = yaw; this.hold = null;
+        // рейты с экспо: мягко в центре, до ~400°/с у квадрокоптера на краю
+        // рейты Betaflight; крупную раму инерция всё равно не даст раскрутить быстрее, чем позволяют моторы
+        const k = (Math.PI / 180) * Math.min(1, Math.sqrt(0.3 / af.arm));
+        wx = -bfRate(st.pitch, this.rates) * k; wy = -bfRate(st.yaw, this.rates) * k * 0.8; wz = -bfRate(st.roll, this.rates) * k;
+        this.yawSp = yaw; this.hold = null;
       } else {
         // вертикальный канал: ручка задаёт скороподъёмность, в нейтрали — удержание высоты
-        let vzDes: number;
-        if (Math.abs(st.throttle) > 0.05) {
+        let vzDes = 0;
+        if (manual) { /* тяга уже задана ручкой */ }
+        else if (Math.abs(st.throttle) > 0.05) {
           vzDes = st.throttle > 0 ? st.throttle * af.climb : st.throttle * af.climb * 0.75;
           // помощь при посадке: у земли автопилот гасит вертикальную скорость
           const aglNow = this.pos.y - this.gear - env.groundAt(this.pos.x, this.pos.z);
           vzDes = Math.max(vzDes, -Math.max(0.7, aglNow * 0.7));
           this.altSp = this.pos.y + this.vel.y * 0.35;
         } else vzDes = clamp(1.6 * (this.altSp - this.pos.y), -af.climb * 0.75, af.climb);
-        const ez = vzDes - this.vel.y;
-        this.iZ = clamp(this.iZ + ez * dt * 1.2, -3, 3);
-        const ay = clamp(4.5 * ez + this.iZ, -6, 9);
-        T = (m * (G + ay)) / Math.max(0.5, _up.y);
+        if (!manual) {
+          const ez = vzDes - this.vel.y;
+          this.iZ = clamp(this.iZ + ez * dt * 1.2, -3, 3);
+          const ay = clamp(4.5 * ez + this.iZ, -6, 9);
+          T = (m * (G + ay)) / Math.max(0.5, _up.y);
+        }
 
         // горизонтальный канал
         // после отказа автопилот переходит в щадящий режим
