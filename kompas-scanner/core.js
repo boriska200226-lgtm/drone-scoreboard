@@ -939,17 +939,19 @@ const f6 = (v) => (Math.abs(v) < 5e-7 ? 0 : v).toFixed(6);
  * DXF R12 (AC1009) — максимально совместимый с КОМПАС-3D формат. Единицы — мм, масштаб 1:1.
  * Начало координат — левый нижний угол габарита; ось Y вверх.
  */
-export function toDXF(shapes, { origin = 'bbox' } = {}) {
+export function toDXF(shapes, { origin = 'bbox', yUp = false } = {}) {
   const bb = shapesBBox(shapes);
-  const ox = origin === 'bbox' ? bb.x0 : 0, oy = origin === 'bbox' ? bb.y1 : 0;
-  const T = (p) => [p[0] - ox, oy - p[1]]; // Y вниз → Y вверх
+  // yUp=false: координаты фото (Y вниз) — переворачиваем; yUp=true: координаты модели, без переворота
+  const ox = origin === 'bbox' ? bb.x0 : 0, oy = origin === 'bbox' ? (yUp ? bb.y0 : bb.y1) : 0;
+  const T = yUp ? (p) => [p[0] - ox, p[1] - oy] : (p) => [p[0] - ox, oy - p[1]];
   const L = [];
   const g = (code, val) => L.push(String(code), String(val));
   g(0, 'SECTION'); g(2, 'HEADER');
   g(9, '$ACADVER'); g(1, 'AC1009');
   g(9, '$INSBASE'); g(10, f6(0)); g(20, f6(0)); g(30, f6(0));
-  g(9, '$EXTMIN'); g(10, f6(0)); g(20, f6(0)); g(30, f6(0));
-  g(9, '$EXTMAX'); g(10, f6(bb.w)); g(20, f6(bb.h)); g(30, f6(0));
+  const e0 = T([bb.x0, yUp ? bb.y0 : bb.y1]), e1 = T([bb.x1, yUp ? bb.y1 : bb.y0]);
+  g(9, '$EXTMIN'); g(10, f6(e0[0])); g(20, f6(e0[1])); g(30, f6(0));
+  g(9, '$EXTMAX'); g(10, f6(e1[0])); g(20, f6(e1[1])); g(30, f6(0));
   g(9, '$LIMMIN'); g(10, f6(0)); g(20, f6(0));
   g(9, '$LIMMAX'); g(10, f6(bb.w)); g(20, f6(bb.h));
   g(0, 'ENDSEC');
@@ -978,7 +980,7 @@ export function toDXF(shapes, { origin = 'bbox' } = {}) {
         const angA = Math.atan2(a[1] - c[1], a[0] - c[0]) * 180 / Math.PI;
         const angB = Math.atan2(b[1] - c[1], b[0] - c[0]) * 180 / Math.PI;
         // В экранных координатах (Y вниз) «ccwScreen» = по часовой в DXF (Y вверх)
-        const [s0, s1] = e.ccwScreen ? [angB, angA] : [angA, angB];
+        const [s0, s1] = (e.ccwScreen !== yUp) ? [angB, angA] : [angA, angB];
         const norm = (v) => ((v % 360) + 360) % 360;
         g(0, 'ARC'); g(8, layer); g(10, f6(c[0])); g(20, f6(c[1])); g(30, f6(0)); g(40, f6(e.r));
         g(50, f6(norm(s0))); g(51, f6(norm(s1)));

@@ -1,0 +1,488 @@
+<title>3D-скан в КОМПАС</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/*STYLE*/
+.chips { display: flex; flex-wrap: wrap; gap: 6px }
+.chip { font: 13.5px var(--font-num); font-variant-numeric: tabular-nums; border: 1px solid var(--line); background: var(--bg); color: var(--ink); border-radius: 7px; padding: 4px 9px; cursor: pointer }
+.chip:hover, .chip.on { border-color: var(--accent); color: var(--accent) }
+.sec { border: 1px solid var(--line); border-radius: 10px; padding: 10px; display: flex; flex-direction: column; gap: 8px; min-width: 0 }
+.sec header { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; justify-content: space-between }
+.sec header b { font: 500 14px var(--font-num) }
+.sec canvas { width: 100%; height: 170px; background: var(--bg); border-radius: 8px; display: block }
+.swatch { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; vertical-align: 0 }
+.seclist { display: flex; flex-direction: column; gap: 10px }
+</style>
+
+<header class="bar"><div class="in">
+  <h1>3D-скан → КОМПАС-3D<small>сечения в DXF, мм</small></h1>
+  <nav class="steps" id="steps">
+    <button data-go="1" class="on"><b>1</b>Скан</button>
+    <button data-go="2" disabled><b>2</b>Масштаб</button>
+    <button data-go="3" disabled><b>3</b>Сечения</button>
+    <button data-go="4" disabled><b>4</b>Экспорт</button>
+  </nav>
+</div></header>
+
+<main class="wrap">
+  <div class="stage" id="stage" hidden><canvas id="gl"></canvas>
+    <div class="tools"><button data-v="fit" aria-label="Показать целиком">⤢</button><button data-v="top" aria-label="Вид сверху">↧</button><button data-v="iso" aria-label="Изометрия">◇</button></div>
+    <div class="hint" id="hint">Один палец вращает, два пальца масштабируют и сдвигают.</div>
+  </div>
+
+  <!-- ШАГ 1 -->
+  <section data-step="1">
+    <div class="card">
+      <h2>1. Отсканируйте деталь на телефоне</h2>
+      <ol class="howto">
+        <li>Установите бесплатное приложение для 3D-сканирования по фото: <b>KIRI Engine</b> или <b>RealityScan</b> (есть в Google Play). Они показывают охват и строят модель, пока вы обходите деталь с телефоном.</li>
+        <li>Поставьте деталь на газету или другую пёструю поверхность. Блестящий металл слегка припудрите тальком или сухим шампунем: блики дают ошибки.</li>
+        <li>Обойдите деталь 2–3 кругами на разной высоте, 60–120 снимков, с перекрытием. Затем переверните деталь и снимите низ.</li>
+        <li>Экспортируйте модель в <b>OBJ</b>, <b>STL</b>, <b>PLY</b> или <b>GLB</b>.</li>
+      </ol>
+    </div>
+    <div class="row">
+      <label class="btn primary big" for="file">Открыть 3D-скан</label>
+      <input type="file" id="file" accept=".stl,.obj,.ply,.glb,model/*,application/octet-stream" hidden>
+    </div>
+    <button class="btn" id="demo">Попробовать на примере (синтетический скан с шумом)</button>
+    <div class="card">
+      <h2>Что получится</h2>
+      <p style="margin:0">Сканер выдаёт сетку из треугольников, её нельзя редактировать параметрически. Здесь вы зададите точный масштаб по размеру со штангенциркуля, и деталь будет разрезана на сечения. Каждое сечение — это DXF из отрезков, дуг и окружностей. В КОМПАС из сечений строится обычная редактируемая деталь: выдавливанием слоёв или операцией по сечениям.</p>
+    </div>
+  </section>
+
+  <!-- ШАГ 2 -->
+  <section data-step="2" hidden>
+    <div class="card">
+      <h2>Ориентация</h2>
+      <div class="row">
+        <button class="btn" id="pickBase">Указать основание</button>
+        <button class="btn" id="autoAxes">Авто по осям</button>
+        <button class="btn" id="undo" disabled>Отменить</button>
+      </div>
+      <div class="row">
+        <button class="btn" data-rot="x">Повернуть X 90°</button>
+        <button class="btn" data-rot="y">Y 90°</button>
+        <button class="btn" data-rot="z">Z 90°</button>
+      </div>
+      <p class="muted" style="margin:0">Нажмите «Указать основание» и коснитесь грани, на которой деталь стоит (или будет стоять в КОМПАС). Деталь ляжет этой гранью на плоскость XY.</p>
+    </div>
+    <div class="card">
+      <h2>Масштаб</h2>
+      <div class="stats" id="dims"></div>
+      <div class="row">
+        <label class="f">Что измерено штангенциркулем
+          <select id="calWhat"><option value="0">Габарит по X</option><option value="1">Габарит по Y</option><option value="2">Габарит по Z (высота)</option><option value="pts">Расстояние между 2 точками</option></select>
+        </label>
+        <label class="f">Значение, мм<input type="number" id="calVal" step="0.01" min="0"></label>
+      </div>
+      <div class="row">
+        <button class="btn" id="measPts">Отметить 2 точки</button>
+        <span class="pill" id="ptsV">—</span>
+        <button class="btn primary" id="calApply">Применить масштаб</button>
+      </div>
+      <p class="muted" id="scaleNote" style="margin:0"></p>
+    </div>
+    <button class="btn primary big" id="toSections">Далее: сечения</button>
+  </section>
+
+  <!-- ШАГ 3 -->
+  <section data-step="3" hidden>
+    <div class="card">
+      <h2>Как резать</h2>
+      <div class="row">
+        <label class="f">Способ
+          <select id="mode">
+            <option value="layers" selected>Слои между уступами (ступенчатая деталь)</option>
+            <option value="step">Сечения с шагом по высоте</option>
+            <option value="manual">Высоты вручную</option>
+          </select>
+        </label>
+        <label class="f" id="stepF" hidden>Шаг, мм<input type="number" id="stepMm" value="5" step="0.5" min="0.2"></label>
+        <label class="f" id="manF" hidden>Высоты Z, мм, через «;»<input type="text" id="manZ" placeholder="5; 12.5; 20"></label>
+      </div>
+      <div class="row">
+        <label class="f">Допуск линий/дуг: <span class="v" id="tolV">0.20</span> мм
+          <input type="range" id="tol" min="0.05" max="1" step="0.05" value="0.2">
+        </label>
+        <label class="f">Округлять Ø окружностей
+          <select id="snap"><option value="0" selected>Нет</option><option value="0.1">до 0.1 мм</option><option value="0.5">до 0.5 мм</option></select>
+        </label>
+      </div>
+      <p class="muted" id="levelsInfo" style="margin:0"></p>
+    </div>
+    <div class="card">
+      <h2>Сечения</h2>
+      <p class="muted" style="margin:0">Чтобы уточнить масштаб, нажмите размер, который измерили штангенциркулем, и введите реальное значение. Модель пересчитается целиком.</p>
+      <div class="row" id="calRow" hidden>
+        <label class="f"><span id="calLbl"></span><input type="number" id="calReal" step="0.01"></label>
+        <button class="btn primary" id="calSec">Уточнить масштаб</button>
+      </div>
+      <div class="seclist" id="seclist"></div>
+    </div>
+    <button class="btn primary big" id="toExport">Далее: экспорт</button>
+  </section>
+
+  <!-- ШАГ 4 -->
+  <section data-step="4" hidden>
+    <div class="card">
+      <h2>Файлы</h2>
+      <div class="row"><label class="f">Имя детали<input type="text" id="fname" value="detal"></label></div>
+      <p style="margin:0" id="expSummary"></p>
+      <button class="btn primary big" id="dlZip">Скачать архив (DXF сечений + STL + план)</button>
+      <p class="muted" id="dlNote" style="margin:0"></p>
+    </div>
+    <div class="card">
+      <h2>Сборка в КОМПАС-3D v24</h2>
+      <ol class="howto" id="howto"></ol>
+      <p class="muted" style="margin:0">Все DXF лежат в общей системе координат детали: начало (0, 0) — центр габарита в плане, Z отсчитывается от основания. Вставляйте каждое сечение в точку 0, 0, и слои совпадут.</p>
+    </div>
+  </section>
+</main>
+<div class="busy" id="busy" hidden><div id="busyT">Обработка…</div></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+/*CORE*/
+</script>
+<script>
+(() => {
+const K = window.KCore, $ = (id) => document.getElementById(id);
+const S = { m: null, scaled: false, mode: null, pts: [], sections: [], cal: null };
+const COLORS = ['#ff2fb4', '#00b8f0', '#f2a516', '#2fbf71', '#9b6bff', '#ff6a3d', '#14c4b0', '#e94f8a'];
+
+// ─── шаги ───
+function go(n) {
+  document.querySelectorAll('section[data-step]').forEach(s => s.hidden = s.dataset.step != n);
+  document.querySelectorAll('#steps button').forEach(b => b.classList.toggle('on', b.dataset.go == n));
+  $('stage').hidden = n == 1 || n == 4;
+  setMode(null);
+  if (n == 3) busy('Режу сечения…', buildSections);
+  if (n == 4) prepExport();
+  if (!$('stage').hidden) { V.resize(); V.render(); }
+  window.scrollTo(0, 0);
+}
+function enable(n) { document.querySelectorAll('#steps button').forEach(b => { if (+b.dataset.go <= n) b.disabled = false; }); }
+document.querySelectorAll('#steps button').forEach(b => b.onclick = () => !b.disabled && go(+b.dataset.go));
+const busy = async (t, fn) => {
+  $('busyT').textContent = t; $('busy').hidden = false;
+  await new Promise(r => setTimeout(r, 40));
+  try { return await fn(); } catch (e) { console.error(e); $('busyT').textContent = 'Ошибка: ' + (e.message || e); await new Promise(r => setTimeout(r, 2600)); } finally { $('busy').hidden = true; }
+};
+
+// ─── 3D-просмотр (three.js, свой орбитальный контроль) ───
+const V = (() => {
+  if (!window.THREE) return null;
+  const T = THREE, cv = $('gl'), el = $('stage');
+  const renderer = new T.WebGLRenderer({ canvas: cv, antialias: true, alpha: true });
+  const scene = new T.Scene(), cam = new T.PerspectiveCamera(35, 1, 0.1, 1e6);
+  cam.up.set(0, 0, 1);
+  scene.add(new T.HemisphereLight(0xffffff, 0x445566, 0.75));
+  const dl = new T.DirectionalLight(0xffffff, 0.7); scene.add(dl);
+  const grp = new T.Group(); scene.add(grp);
+  let mesh = null, grid = null, secs = new T.Group(), marks = new T.Group(); scene.add(secs); scene.add(marks);
+  const o = { target: new T.Vector3(), r: 300, th: -0.9, ph: 1.05 };
+  function place() {
+    const s = Math.sin(o.ph);
+    cam.position.set(o.target.x + o.r * s * Math.cos(o.th), o.target.y + o.r * s * Math.sin(o.th), o.target.z + o.r * Math.cos(o.ph));
+    cam.lookAt(o.target); dl.position.copy(cam.position).add(new T.Vector3(50, 80, 120));
+    cam.near = o.r / 200; cam.far = o.r * 50; cam.updateProjectionMatrix();
+  }
+  function resize() {
+    const r = el.getBoundingClientRect(); if (!r.width) return;
+    renderer.setPixelRatio(window.devicePixelRatio || 1); renderer.setSize(r.width, r.height, false);
+    cam.aspect = r.width / r.height; cam.updateProjectionMatrix(); render();
+  }
+  new ResizeObserver(resize).observe(el);
+  function render() { place(); renderer.render(scene, cam); }
+  function setMesh(m) {
+    if (mesh) { grp.remove(mesh); mesh.geometry.dispose(); }
+    const g = new T.BufferGeometry();
+    g.setAttribute('position', new T.BufferAttribute(Float32Array.from(m.pos), 3));
+    g.setIndex(new T.BufferAttribute(m.idx.length < 65536 * 3 && m.pos.length / 3 < 65536 ? Uint16Array.from(m.idx) : Uint32Array.from(m.idx), 1));
+    g.computeVertexNormals();
+    mesh = new T.Mesh(g, new T.MeshStandardMaterial({ color: 0xb9c2cc, roughness: 0.75, metalness: 0.05, side: T.DoubleSide, transparent: true, opacity: 1 }));
+    grp.add(mesh);
+    const b = K.bounds(m), sz = Math.max(...b.size);
+    if (grid) scene.remove(grid);
+    const step = niceStep(sz / 6);
+    grid = new T.GridHelper(step * 12, 12, 0x6b7785, 0x3a434d); grid.rotation.x = Math.PI / 2; grid.position.z = b.min[2]; scene.add(grid);
+    render();
+  }
+  function niceStep(v) { const p = 10 ** Math.floor(Math.log10(v)); return [1, 2, 5, 10].map(k => k * p).find(k => k >= v); }
+  function fit(view) {
+    if (!S.m) return;
+    const b = K.bounds(S.m), sz = Math.max(...b.size);
+    o.target.set((b.min[0] + b.max[0]) / 2, (b.min[1] + b.max[1]) / 2, (b.min[2] + b.max[2]) / 2);
+    o.r = sz * 2.4;
+    if (view === 'top') { o.ph = 0.0001; o.th = -Math.PI / 2; }
+    else if (view === 'iso') { o.ph = 1.05; o.th = -0.9; }
+    render();
+  }
+  function setSections(list) {
+    secs.clear();
+    list.forEach((s, i) => {
+      const col = new T.Color(COLORS[i % COLORS.length]);
+      for (const sh of s.shapes) {
+        const pts = [];
+        for (const e of sh.ents) {
+          const ps = e.type === 'line' ? [e.a, e.b] : e.type === 'arc' ? K.arcSample(e, 20) : Array.from({ length: 65 }, (_, k) => [e.c[0] + e.r * Math.cos(k * Math.PI / 32), e.c[1] + e.r * Math.sin(k * Math.PI / 32)]);
+          for (const p of ps) pts.push(new T.Vector3(p[0], p[1], s.z));
+        }
+        const g = new T.BufferGeometry().setFromPoints(pts);
+        secs.add(new T.Line(g, new T.LineBasicMaterial({ color: col, depthTest: false })));
+      }
+    });
+    if (mesh) mesh.material.opacity = list.length ? 0.45 : 1;
+    render();
+  }
+  function setMarks(points) {
+    marks.clear();
+    const sz = S.m ? Math.max(...K.bounds(S.m).size) : 100;
+    for (const p of points) { const s = new T.Mesh(new T.SphereGeometry(sz * 0.012, 12, 8), new T.MeshBasicMaterial({ color: 0xff2fb4, depthTest: false })); s.position.set(...p); marks.add(s); }
+    if (points.length === 2) marks.add(new T.Line(new T.BufferGeometry().setFromPoints(points.map(p => new T.Vector3(...p))), new T.LineBasicMaterial({ color: 0xff2fb4, depthTest: false })));
+    render();
+  }
+  const ray = new T.Raycaster();
+  function pick(x, y) {
+    if (!mesh) return null;
+    const r = cv.getBoundingClientRect();
+    ray.setFromCamera(new T.Vector2((x / r.width) * 2 - 1, -(y / r.height) * 2 + 1), cam);
+    const h = ray.intersectObject(mesh)[0];
+    return h ? { p: [h.point.x, h.point.y, h.point.z], face: h.faceIndex } : null;
+  }
+  // жесты
+  const ptr = new Map(); let drag = null, pinch = null;
+  const pos = (e) => { const r = cv.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
+  el.addEventListener('pointerdown', e => {
+    if (e.target.closest('.tools')) return;
+    el.setPointerCapture(e.pointerId); ptr.set(e.pointerId, pos(e));
+    if (ptr.size === 1) drag = { s: pos(e), l: pos(e), t: Date.now(), moved: false }; else { drag = null; pinch = pst(); }
+  });
+  const pst = () => { const [a, b] = [...ptr.values()]; return { d: Math.hypot(a[0] - b[0], a[1] - b[1]), m: [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2] }; };
+  el.addEventListener('pointermove', e => {
+    if (!ptr.has(e.pointerId)) return; ptr.set(e.pointerId, pos(e));
+    if (ptr.size === 2 && pinch) {
+      const n = pst(); o.r *= pinch.d / (n.d || 1);
+      pan(n.m[0] - pinch.m[0], n.m[1] - pinch.m[1]); pinch = n; render(); return;
+    }
+    if (!drag) return;
+    const p = pos(e), dx = p[0] - drag.l[0], dy = p[1] - drag.l[1]; drag.l = p;
+    if (Math.hypot(p[0] - drag.s[0], p[1] - drag.s[1]) > 6) drag.moved = true;
+    o.th -= dx * 0.008; o.ph = Math.min(Math.PI - 0.01, Math.max(0.0001, o.ph - dy * 0.008)); render();
+  });
+  function pan(dx, dy) {
+    const k = o.r * 0.0016, right = new T.Vector3().setFromMatrixColumn(cam.matrix, 0), up = new T.Vector3().setFromMatrixColumn(cam.matrix, 1);
+    o.target.addScaledVector(right, -dx * k).addScaledVector(up, dy * k);
+  }
+  const end = e => {
+    ptr.delete(e.pointerId); if (ptr.size < 2) pinch = null;
+    if (drag && ptr.size === 0) { if (!drag.moved && Date.now() - drag.t < 500 && onTap) onTap(...drag.s); drag = null; }
+  };
+  el.addEventListener('pointerup', end); el.addEventListener('pointercancel', end);
+  el.addEventListener('wheel', e => { e.preventDefault(); o.r *= Math.exp(e.deltaY * 0.0012); render(); }, { passive: false });
+  el.querySelectorAll('[data-v]').forEach(b => b.onclick = () => fit(b.dataset.v));
+  let onTap = null;
+  return { setMesh, fit, render, resize, setSections, setMarks, pick, set onTap(f) { onTap = f; } };
+})();
+
+// ─── загрузка ───
+async function loadMesh(m, label) {
+  S.m = m; S.scaled = false; S.pts = []; S.sections = []; hist.length = 0; $('undo').disabled = true;
+  K.alignPCA(S.m);
+  enable(2); go(2);
+  if (V) { V.setMesh(S.m); V.setSections([]); V.setMarks([]); V.fit('iso'); }
+  updDims();
+  $('scaleNote').textContent = `${label}: ${(S.m.idx.length / 3).toLocaleString('ru')} треугольников. Масштаб пока не задан: в файлах фотограмметрии единицы условные.`;
+}
+$('file').onchange = async (e) => {
+  const f = e.target.files[0]; e.target.value = '';
+  if (!f) return;
+  await busy('Читаю модель…', async () => loadMesh(K.parseMesh(await f.arrayBuffer(), f.name), f.name));
+};
+$('demo').onclick = () => busy('Создаю пример…', async () => { await loadMesh(demoMesh(), 'Пример'); });
+
+// ─── ориентация ───
+const hist = [];
+function snap() { hist.push({ pos: S.m.pos.slice(), idx: S.m.idx.slice(), scaled: S.scaled }); if (hist.length > 10) hist.shift(); $('undo').disabled = false; }
+$('undo').onclick = () => { const h = hist.pop(); if (!h) return; S.m.pos = h.pos; S.m.idx = h.idx; S.scaled = h.scaled; $('undo').disabled = !hist.length; refresh(); };
+function refresh() { if (V) { V.setMesh(S.m); V.setMarks([]); V.fit(); } S.pts = []; $('ptsV').textContent = '—'; updDims(); }
+$('autoAxes').onclick = () => busy('Выравниваю…', () => { snap(); K.alignPCA(S.m); refresh(); });
+document.querySelectorAll('[data-rot]').forEach(b => b.onclick = () => { snap(); K.rotate90(S.m, b.dataset.rot); refresh(); });
+function setMode(md) {
+  S.mode = md;
+  $('pickBase').classList.toggle('on', md === 'base'); $('measPts').classList.toggle('on', md === 'pts');
+  $('hint').textContent = md === 'base' ? 'Коснитесь грани-основания.' : md === 'pts' ? 'Коснитесь двух точек на модели.' : 'Один палец вращает, два пальца масштабируют и сдвигают.';
+}
+$('pickBase').onclick = () => setMode(S.mode === 'base' ? null : 'base');
+$('measPts').onclick = () => { S.pts = []; if (V) V.setMarks([]); $('calWhat').value = 'pts'; setMode(S.mode === 'pts' ? null : 'pts'); };
+if (V) V.onTap = (x, y) => {
+  if (!S.mode) return;
+  const h = V.pick(x, y); if (!h) return;
+  if (S.mode === 'base') {
+    busy('Кладу на основание…', () => { snap(); K.alignBase(S.m, K.regionNormal(S.m, h.face), h.face); setMode(null); refresh(); });
+  } else if (S.mode === 'pts') {
+    if (S.pts.length >= 2) S.pts = [];
+    S.pts.push(h.p); V.setMarks(S.pts);
+    if (S.pts.length === 2) { const d = Math.hypot(...S.pts[0].map((v, k) => v - S.pts[1][k])); S.ptsD = d; $('ptsV').textContent = `${d.toFixed(3)} ${S.scaled ? 'мм' : 'ед.'}`; }
+    else $('ptsV').textContent = 'Вторая точка…';
+  }
+};
+
+// ─── масштаб ───
+function updDims() {
+  const b = K.bounds(S.m), u = S.scaled ? 'мм' : 'ед.';
+  $('dims').innerHTML = ['X', 'Y', 'Z'].map((a, i) => `<div class="stat"><span class="k">Габарит ${a}, ${u}</span><span class="n">${b.size[i].toFixed(S.scaled ? 2 : 4)}</span></div>`).join('');
+}
+$('calApply').onclick = () => {
+  const real = parseFloat($('calVal').value), w = $('calWhat').value;
+  if (!(real > 0)) { $('scaleNote').textContent = 'Введите измеренное значение в мм.'; return; }
+  const cur = w === 'pts' ? S.ptsD : K.bounds(S.m).size[+w];
+  if (!cur) { $('scaleNote').textContent = 'Сначала отметьте две точки на модели.'; return; }
+  applyScale(real / cur);
+  $('scaleNote').textContent = `Масштаб задан (×${(real / cur).toPrecision(6)}). Точнее всего уточнить его на шаге 3 по размеру сечения: там шум сглажен.`;
+};
+function applyScale(f) { snap(); K.scaleMesh(S.m, f); S.scaled = true; enable(4); refresh(); }
+$('toSections').onclick = () => { if (!S.scaled) { $('scaleNote').textContent = 'Сначала задайте масштаб по измеренному размеру.'; return; } go(3); };
+
+// ─── сечения ───
+$('mode').onchange = () => { $('stepF').hidden = $('mode').value !== 'step'; $('manF').hidden = $('mode').value !== 'manual'; busy('Режу сечения…', buildSections); };
+['stepMm', 'manZ', 'snap'].forEach(id => $(id).onchange = () => busy('Режу сечения…', buildSections));
+$('tol').oninput = () => { $('tolV').textContent = (+$('tol').value).toFixed(2); };
+$('tol').onchange = () => busy('Режу сечения…', buildSections);
+function buildSections() {
+  const m = S.m, b = K.bounds(m), mode = $('mode').value, tol = +$('tol').value, snapDia = +$('snap').value;
+  const lv = K.detectLevels(m);
+  S.levels = lv;
+  $('levelsInfo').textContent = lv.length ? `Найдены плоские уступы на высотах: ${lv.map(l => l.z.toFixed(2)).join('; ')} мм.` : 'Плоских уступов не найдено. Для такой детали подходят сечения с шагом и операция «по сечениям».';
+  let items = [];
+  if (mode === 'layers') items = K.layerPlan(m, lv).map(L => ({ z: L.zc, z0: L.z0, z1: L.z1 }));
+  else if (mode === 'step') {
+    const st = Math.max(0.2, +$('stepMm').value || 5);
+    for (let z = b.min[2] + st / 2; z < b.max[2]; z += st) items.push({ z });
+  } else {
+    items = ($('manZ').value || '').split(/[;\s]+/).map(v => parseFloat(v.replace(',', '.'))).filter(v => v > b.min[2] && v < b.max[2]).map(z => ({ z }));
+  }
+  const base = mode === 'layers' && items.length ? items[0].z0 : b.min[2];
+  S.base = base;
+  S.sections = items.map((it, i) => {
+    const r = K.sliceZ(m, it.z);
+    const shapes = K.sectionShapes(r.loops, { tol, snapDia });
+    return { ...it, i, shapes, open: r.openCount };
+  });
+  if (V) V.setSections(S.sections);
+  renderSections();
+}
+function renderSections() {
+  const L = $('seclist'); L.innerHTML = '';
+  if (!S.sections.length) { L.innerHTML = '<p class="muted">Нет сечений: задайте высоты внутри детали.</p>'; return; }
+  for (const s of S.sections) {
+    const div = document.createElement('div'); div.className = 'sec';
+    const outer = s.shapes.filter(x => !x.hole), bb = outer.length ? K.shapesBBox(outer) : null;
+    const cnt = { line: 0, arc: 0, circle: 0 }; s.shapes.forEach(x => x.ents.forEach(e => cnt[e.type]++));
+    const range = s.z1 != null ? `слой Z ${(s.z0 - S.base).toFixed(2)}…${(s.z1 - S.base).toFixed(2)}, толщина <b>${(s.z1 - s.z0).toFixed(2)}</b>` : `Z = <b>${(s.z - S.base).toFixed(2)}</b>`;
+    div.innerHTML = `<header><span><i class="swatch" style="background:${COLORS[s.i % COLORS.length]}"></i>Сечение ${s.i + 1}: ${range}</span><span class="muted">${cnt.line} отр. · ${cnt.arc} дуг · ${cnt.circle} окр.</span></header><canvas></canvas><div class="chips"></div>${s.open ? `<div class="note">В сетке есть дыры: ${s.open} незамкнутых участков на этой высоте. Сдвиньте сечение или залатайте сетку в приложении сканирования.</div>` : ''}`;
+    const chips = div.querySelector('.chips');
+    const add = (label, val) => { const c = document.createElement('button'); c.className = 'chip'; c.textContent = label; c.onclick = () => startCal(label, val, c); chips.appendChild(c); };
+    if (bb) { add(`X ${bb.w.toFixed(2)}`, bb.w); add(`Y ${bb.h.toFixed(2)}`, bb.h); }
+    s.shapes.forEach(x => x.ents.forEach(e => { if (e.type === 'circle') add(`Ø${(2 * e.r).toFixed(2)}`, 2 * e.r); }));
+    [...new Set(s.shapes.flatMap(x => x.ents.filter(e => e.type === 'arc').map(e => e.r.toFixed(2))))].slice(0, 8).forEach(r => { const c = document.createElement('span'); c.className = 'chip'; c.style.cursor = 'default'; c.textContent = 'R' + r; chips.appendChild(c); });
+    L.appendChild(div);
+    drawSection(div.querySelector('canvas'), s);
+  }
+}
+function drawSection(cv, s) {
+  const r = cv.getBoundingClientRect(), d = window.devicePixelRatio || 1;
+  cv.width = r.width * d; cv.height = r.height * d;
+  const c = cv.getContext('2d'); c.scale(d, d);
+  const all = s.shapes; if (!all.length) return;
+  const bb = K.shapesBBox(all), pad = 12, k = Math.min((r.width - 2 * pad) / (bb.w || 1), (r.height - 2 * pad) / (bb.h || 1));
+  const X = (p) => [pad + (p[0] - bb.x0) * k + (r.width - 2 * pad - bb.w * k) / 2, r.height - pad - (p[1] - bb.y0) * k - (r.height - 2 * pad - bb.h * k) / 2];
+  for (const sh of all) {
+    c.strokeStyle = sh.hole ? '#00b8f0' : COLORS[s.i % COLORS.length]; c.lineWidth = 1.6; c.beginPath();
+    sh.ents.forEach((e, j) => {
+      const ps = e.type === 'line' ? [e.a, e.b] : e.type === 'arc' ? K.arcSample(e, 20) : Array.from({ length: 65 }, (_, q) => [e.c[0] + e.r * Math.cos(q * Math.PI / 32), e.c[1] + e.r * Math.sin(q * Math.PI / 32)]);
+      ps.map(X).forEach((q, i) => (i === 0 && (j === 0 || e.type === 'circle')) ? c.moveTo(...q) : c.lineTo(...q));
+    });
+    c.stroke();
+  }
+}
+function startCal(label, val, chip) {
+  document.querySelectorAll('.chip.on').forEach(c => c.classList.remove('on')); chip.classList.add('on');
+  S.cal = val; $('calRow').hidden = false; $('calLbl').textContent = `Реальное значение для «${label}», мм`; $('calReal').value = ''; $('calReal').focus();
+}
+$('calSec').onclick = () => {
+  const real = parseFloat($('calReal').value);
+  if (!(real > 0) || !S.cal) return;
+  const f = real / S.cal;
+  busy('Пересчитываю масштаб…', () => { K.scaleMesh(S.m, f); if (V) { V.setMesh(S.m); V.fit(); } updDims(); $('calRow').hidden = true; S.cal = null; buildSections(); });
+};
+$('toExport').onclick = () => go(4);
+
+// ─── экспорт ───
+const fname = () => ($('fname').value.trim() || 'detal').replace(/[\\/:*?"<>|]+/g, '_');
+function prepExport() {
+  if (!S.sections.length) buildSections();
+  const layers = S.sections[0] && S.sections[0].z1 != null;
+  $('expSummary').innerHTML = `${S.sections.length} сечений · габарит ${K.bounds(S.m).size.map(v => v.toFixed(2)).join(' × ')} мм`;
+  const steps = layers ? [
+    'Создайте <b>Деталь</b>. Для каждого слоя по порядку:',
+    ...S.sections.map(s => `Слой ${s.i + 1}: на плоскости XY${s.z0 - S.base > 0.005 ? `, смещённой на <b>${(s.z0 - S.base).toFixed(2)} мм</b>` : ''}, создайте эскиз и вставьте <b>${fname()}_${s.i + 1}.dxf</b> в точку 0, 0 (откройте DXF, <kbd>Ctrl</kbd>+<kbd>A</kbd>, <kbd>Ctrl</kbd>+<kbd>C</kbd>, затем в эскизе <kbd>Ctrl</kbd>+<kbd>V</kbd>). Сделайте <b>Элемент выдавливания</b> вверх на <b>${(s.z1 - s.z0).toFixed(2)} мм</b>.`),
+    'Скруглите рёбра и снимите фаски по скану (STL из архива можно открыть рядом для сравнения).',
+    'Теперь проставьте размеры и ограничения в эскизах, округлите значения до чертёжных. Модель перестраивается.',
+  ] : [
+    'Создайте <b>Деталь</b>. Для каждого сечения создайте плоскость, смещённую от XY на его высоту Z (указана в имени файла и в plan.txt).',
+    'В каждой плоскости создайте эскиз и вставьте соответствующий DXF в точку 0, 0.',
+    'Постройте тело <b>Операцией по сечениям</b> через эскизы по порядку (или выдавливанием, если форма постоянна по высоте).',
+    'Проставьте размеры и ограничения в эскизах: модель станет параметрической.',
+  ];
+  $('howto').innerHTML = steps.map(t => `<li>${t}</li>`).join('');
+}
+let dl = null;
+const inViewer = !!(window.claude && window.claude.use);
+if (inViewer) window.claude.use('downloads').then(d => { dl = d; $('dlNote').textContent = d ? 'Архив .zip: распакуйте его в «Файлах» Android или на компьютере.' : 'Скачивание здесь недоступно. Откройте самостоятельную версию страницы (index3d.html).'; });
+$('dlZip').onclick = async () => {
+  prepExport();
+  const n = fname(), files = [], plan = [`Деталь: ${n}`, `Габарит, мм: ${K.bounds(S.m).size.map(v => v.toFixed(3)).join(' x ')}`, 'Единицы: мм. Начало координат XY: центр габарита в плане. Z — от основания.', ''];
+  for (const s of S.sections) {
+    const name = `${n}_${s.i + 1}.dxf`;
+    files.push([name, K.toDXF(s.shapes, { origin: 'none', yUp: true })]);
+    plan.push(s.z1 != null ? `${name}: слой Z ${(s.z0 - S.base).toFixed(3)} … ${(s.z1 - S.base).toFixed(3)}, выдавить на ${(s.z1 - s.z0).toFixed(3)} мм` : `${name}: сечение на Z = ${(s.z - S.base).toFixed(3)} мм`);
+  }
+  files.push([`${n}_scan_mm.stl`, K.toSTL(S.m)]);
+  files.push(['plan.txt', plan.join('\r\n') + '\r\n']);
+  const zip = K.makeZip(files);
+  if (dl) { try { await dl.save({ filename: n + '.zip', data: zip }); } catch (e) { if (e && e.code !== 'declined') $('dlNote').textContent = 'Не удалось сохранить: ' + (e.message || e.code); } return; }
+  const url = URL.createObjectURL(new Blob([zip], { type: 'application/zip' }));
+  const a = document.createElement('a'); a.href = url; a.download = n + '.zip'; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+};
+
+// ─── пример: пластина 100×60×10 R8 с отверстием Ø20 и трубка Ø40 до высоты 35; повёрнута, масштаб «в метрах», шум 0.05 мм ───
+function demoMesh() {
+  const N = 240, pos = [], idx = [];
+  const rr = (t) => { const dx = Math.cos(t), dy = Math.sin(t); let lo = 0, hi = 200; const ins = (x, y) => { const ax = Math.abs(x) - 42, ay = Math.abs(y) - 22; if (ax <= 0 || ay <= 0) return Math.abs(x) <= 50 && Math.abs(y) <= 30; return ax * ax + ay * ay <= 64; }; for (let i = 0; i < 50; i++) { const m = (lo + hi) / 2; if (ins(m * dx, m * dy)) lo = m; else hi = m; } return [lo * dx, lo * dy]; };
+  const circ = (r) => (t) => [r * Math.cos(t), r * Math.sin(t)];
+  const ring = (f, z) => { const b = pos.length / 3; for (let i = 0; i < N; i++) { const [x, y] = f(i / N * 2 * Math.PI); pos.push(x, y, z); } return b; };
+  const strip = (a, b, flip) => { for (let i = 0; i < N; i++) { const j = (i + 1) % N; if (flip) idx.push(a + i, b + j, b + i, a + i, a + j, b + j); else idx.push(a + i, b + i, b + j, a + i, b + j, a + j); } };
+  const O = [0, 5, 10].map(z => ring(rr, z)); strip(O[0], O[1]); strip(O[1], O[2]);
+  const TZ = [10, 17.5, 25, 35], TO = TZ.map(z => ring(circ(20), z)); for (let k = 0; k < 3; k++) strip(TO[k], TO[k + 1]);
+  const HZ = [0, 10, 20, 35], H = HZ.map(z => ring(circ(10), z)); for (let k = 0; k < 3; k++) strip(H[k], H[k + 1], true);
+  strip(O[0], H[0]); strip(TO[0], O[2], true); strip(H[3], TO[3], true);
+  const a = 0.7, b = -0.4, c = 1.9, s = 0.0123, cs = Math.cos, sn = Math.sin;
+  const R = [cs(c) * cs(b), cs(c) * sn(b) * sn(a) - sn(c) * cs(a), cs(c) * sn(b) * cs(a) + sn(c) * sn(a), sn(c) * cs(b), sn(c) * sn(b) * sn(a) + cs(c) * cs(a), sn(c) * sn(b) * cs(a) - cs(c) * sn(a), -sn(b), cs(b) * sn(a), cs(b) * cs(a)];
+  let seed = 5; const rnd = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
+  const ga = () => Math.sqrt(-2 * Math.log(rnd() + 1e-12)) * Math.cos(2 * Math.PI * rnd()) * 0.05;
+  const P = new Float64Array(pos.length);
+  for (let i = 0; i < pos.length; i += 3) {
+    const x = pos[i] + ga(), y = pos[i + 1] + ga(), z = pos[i + 2] + ga();
+    P[i] = s * (R[0] * x + R[1] * y + R[2] * z); P[i + 1] = s * (R[3] * x + R[4] * y + R[5] * z); P[i + 2] = s * (R[6] * x + R[7] * y + R[8] * z);
+  }
+  return { pos: P, idx: Uint32Array.from(idx) };
+}
+
+if (!V) $('scaleNote').textContent = 'Не загрузилась библиотека 3D-просмотра: проверьте интернет. Расчёт работает и без неё.';
+})();
+</script>
