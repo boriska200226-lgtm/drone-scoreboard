@@ -251,7 +251,7 @@ export class World {
     if (this.waterLevel !== null) {
       const wg = this.own(new THREE.PlaneGeometry(size * 2.5, size * 2.5));
       wg.rotateX(-Math.PI / 2);
-      const normals = this.own(new THREE.TextureLoader().load("/sim/waternormals.jpg"));
+      const normals = this.own(new THREE.TextureLoader().load(`${import.meta.env.BASE_URL}sim/waternormals.jpg`));
       normals.wrapS = normals.wrapT = THREE.RepeatWrapping;
       const wm = this.own(makeWaterMaterial(this.skyParams, new THREE.Color(pal.water).multiplyScalar(0.55), normals, this.scene.fog as THREE.FogExp2, this.time));
       const water = new THREE.Mesh(wg, wm);

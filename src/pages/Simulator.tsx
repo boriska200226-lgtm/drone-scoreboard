@@ -84,9 +84,11 @@ function Menu({ onStart }: { onStart: (m: string, a: string, d: Difficulty, q: Q
           <span className="font-orbitron text-sm font-bold text-white flex items-center gap-2" style={{ letterSpacing: "0.1em" }}>
             <Icon name="Plane" size={16} style={{ color: "#00ffaa" }} />БАС<span style={{ color: "#00ffaa" }}>_</span>СИМУЛЯТОР
           </span>
-          <Link to="/" className="flex items-center gap-2 text-xs font-orbitron text-muted-foreground hover:text-white transition-colors">
-            <Icon name="ArrowLeft" size={14} />БАС_АРЕНА
-          </Link>
+          {!import.meta.env.VITE_STANDALONE && (
+            <Link to="/" className="flex items-center gap-2 text-xs font-orbitron text-muted-foreground hover:text-white transition-colors">
+              <Icon name="ArrowLeft" size={14} />БАС_АРЕНА
+            </Link>
+          )}
         </div>
       </header>
 
