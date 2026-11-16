@@ -203,7 +203,7 @@ export class World {
     const hdr = this.cfg.palette.hdr;
     if (hdr && this.quality !== "low") {
       // настоящая панорама неба и леса даёт фотографичное рассеянное освещение и отражения
-      new RGBELoader(this.loader).load(ASSET(hdr), (eq) => {
+      const apply = (eq: THREE.DataTexture) => {
         const pm2 = new THREE.PMREMGenerator(renderer);
         this.envRT = pm2.fromEquirectangular(eq);
         this.own(this.envRT);
@@ -212,7 +212,18 @@ export class World {
         this.scene.environmentIntensity = 0.75;
         this.scene.environmentRotation.y = Math.atan2(this.skyParams.sunDir.x, this.skyParams.sunDir.z);
         this.hemi.intensity *= 0.45;
-      });
+      };
+      if (import.meta.env.VITE_STANDALONE) {
+        // хостинг страницы не отдаёт .hdr — в автономной сборке панорама лежит рядом в base64
+        this.loader.itemStart(hdr);
+        fetch(ASSET(`${hdr}.txt`)).then((r) => r.text()).then((b64) => {
+          const bin = atob(b64.trim()), bytes = new Uint8Array(bin.length);
+          for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+          const url = URL.createObjectURL(new Blob([bytes]));
+          new RGBELoader().load(url, (eq) => { apply(eq); URL.revokeObjectURL(url); this.loader.itemEnd(hdr); },
+            undefined, () => this.loader.itemEnd(hdr));
+        }).catch(() => this.loader.itemEnd(hdr));
+      } else new RGBELoader(this.loader).load(ASSET(hdr), apply);
     }
     pm.dispose();
   }
