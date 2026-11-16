@@ -1,0 +1,693 @@
+<title>Скан контура для КОМПАС</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Макет: одна колонка «как приложение» — шаги сверху, рабочее поле, панель параметров под ним. */
+:root {
+  --bg: #eef1f4; --panel: #ffffff; --ink: #18202b; --muted: #5d6877; --line: #d5dbe2;
+  --accent: #1d5fd1; --accent-ink: #ffffff; --stage: #2a3038; --ok: #1f8a4c; --warn: #b5650d; --bad: #c0392b;
+  --contour: #ff2fb4; --hole: #00c2ff; --sheet: #ffd22e;
+  --font-ui: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-num: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #12161b; --panel: #1b2128; --ink: #e6ebf1; --muted: #98a3b1; --line: #2d353f;
+  --accent: #5b93f0; --accent-ink: #0c1420; --stage: #0b0e12; --ok: #4cc283; --warn: #e3a04f; --bad: #ef6f61; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #12161b; --panel: #1b2128; --ink: #e6ebf1; --muted: #98a3b1; --line: #2d353f;
+  --accent: #5b93f0; --accent-ink: #0c1420; --stage: #0b0e12; --ok: #4cc283; --warn: #e3a04f; --bad: #ef6f61; color-scheme: dark }
+* { box-sizing: border-box }
+body { background: var(--bg); color: var(--ink); font: 15px/1.45 var(--font-ui); margin: 0 }
+body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 10; background: var(--panel) }
+.wrap { max-width: 760px; margin: 0 auto; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 0 40px; display: flex; flex-direction: column; gap: 14px }
+header.bar { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5; background: var(--panel); border-bottom: 1px solid var(--line) }
+header .in { max-width: 760px; margin: 0 auto; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 10px; display: flex; flex-direction: column; gap: 8px }
+h1 { font-size: 17px; font-weight: 600; margin: 0; letter-spacing: .01em }
+h1 small { font-weight: 400; color: var(--muted); font-size: 13px; margin-left: 6px }
+.steps { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px }
+.steps button { border: 1px solid var(--line); background: transparent; color: var(--muted); border-radius: 8px; padding: 6px 4px; font: 500 12.5px var(--font-ui); cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis }
+.steps button b { font-family: var(--font-num); font-weight: 500; margin-right: 4px }
+.steps button.on { background: var(--accent); border-color: var(--accent); color: var(--accent-ink) }
+.steps button:disabled { opacity: .45; cursor: default }
+section[data-step] { display: flex; flex-direction: column; gap: 14px }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px; display: flex; flex-direction: column; gap: 12px; min-width: 0 }
+.card h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); margin: 0; font-weight: 600 }
+.row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center }
+.row > * { min-width: 0 }
+label.f { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); flex: 1 1 140px }
+label.f span.v { font-family: var(--font-num); color: var(--ink) }
+input[type=number], input[type=text], select { font: 15px var(--font-num); padding: 9px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); width: 100% }
+select { font-family: var(--font-ui) }
+input[type=range] { width: 100%; accent-color: var(--accent) }
+.btn { appearance: none; border: 1px solid var(--line); background: var(--panel); color: var(--ink); border-radius: 10px; padding: 11px 14px; font: 500 15px var(--font-ui); cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 8px; text-align: center }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink) }
+.btn.big { padding: 15px 16px; font-size: 16px }
+.row .btn.big { flex: 1 1 200px }
+.btn.on { outline: 2px solid var(--accent); outline-offset: 1px }
+.btn:focus-visible, .steps button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px }
+.btn:disabled { opacity: .5; cursor: default }
+.stage { position: relative; background: var(--stage); border-radius: 12px; overflow: hidden; height: min(62vh, 560px); touch-action: none; user-select: none; -webkit-user-select: none }
+.stage canvas { position: absolute; inset: 0; width: 100%; height: 100% }
+.stage .hint { position: absolute; left: 10px; bottom: 10px; right: 10px; color: #fff; background: rgba(0,0,0,.55); font-size: 12.5px; padding: 6px 9px; border-radius: 8px; pointer-events: none }
+.stage .tools { position: absolute; right: 8px; top: 8px; display: flex; flex-direction: column; gap: 6px }
+.stage .tools button { width: 40px; height: 40px; border-radius: 10px; border: 0; background: rgba(0,0,0,.55); color: #fff; font: 600 18px var(--font-ui); cursor: pointer }
+.tips { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 6px; color: var(--ink) }
+.tips li::marker { color: var(--accent) }
+.muted { color: var(--muted); font-size: 13px }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px }
+.stat { border: 1px solid var(--line); border-radius: 10px; padding: 9px 11px; display: flex; flex-direction: column; gap: 2px; min-width: 0 }
+.stat .k { font-size: 12px; color: var(--muted) }
+.stat .n { font: 500 17px var(--font-num); font-variant-numeric: tabular-nums; overflow-wrap: anywhere }
+.list { font: 13.5px var(--font-num); font-variant-numeric: tabular-nums; display: flex; flex-wrap: wrap; gap: 6px }
+.list span { border: 1px solid var(--line); border-radius: 6px; padding: 2px 7px }
+.pill { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--line) }
+.pill::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: currentColor }
+.pill.ok { color: var(--ok) } .pill.warn { color: var(--warn) } .pill.bad { color: var(--bad) }
+.note { border-left: 3px solid var(--warn); padding: 6px 10px; font-size: 13.5px; background: var(--bg); border-radius: 0 8px 8px 0 }
+.note.ok { border-color: var(--ok) }
+details summary { cursor: pointer; font-weight: 500 }
+details[open] summary { margin-bottom: 10px }
+ol.howto { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 8px }
+ol.howto b { font-weight: 600 }
+kbd { font: 12.5px var(--font-num); border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 5px; padding: 0 5px; background: var(--bg) }
+.busy { position: fixed; inset: 0; background: rgba(10,14,20,.55); display: flex; align-items: center; justify-content: center; z-index: 50; color: #fff; font-size: 16px }
+.busy div { background: rgba(0,0,0,.6); padding: 14px 18px; border-radius: 12px }
+.legend { display: flex; flex-wrap: wrap; gap: 12px; font-size: 12.5px; color: var(--muted) }
+.legend i { display: inline-block; width: 14px; height: 3px; border-radius: 2px; vertical-align: middle; margin-right: 5px }
+textarea { width: 100%; min-height: 120px; font: 12px var(--font-num); border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); padding: 8px }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important } }
+</style>
+
+<header class="bar"><div class="in">
+  <h1>Скан контура → КОМПАС-3D<small>DXF 1:1, мм</small></h1>
+  <nav class="steps" id="steps">
+    <button data-go="1" class="on"><b>1</b>Фото</button>
+    <button data-go="2" disabled><b>2</b>Лист</button>
+    <button data-go="3" disabled><b>3</b>Контур</button>
+    <button data-go="4" disabled><b>4</b>Экспорт</button>
+  </nav>
+</div></header>
+
+<main class="wrap">
+  <!-- ШАГ 1 -->
+  <section data-step="1">
+    <div class="card">
+      <h2>Опорный лист</h2>
+      <div class="row">
+        <label class="f">Формат
+          <select id="fmt">
+            <option value="210x297" selected>A4 — 210 × 297</option>
+            <option value="297x420">A3 — 297 × 420</option>
+            <option value="148x210">A5 — 148 × 210</option>
+            <option value="215.9x279.4">Letter — 215.9 × 279.4</option>
+            <option value="custom">Свой размер</option>
+          </select>
+        </label>
+        <label class="f">Ширина листа, мм<input type="number" id="sheetA" step="0.1" value="210"></label>
+        <label class="f">Длина листа, мм<input type="number" id="sheetB" step="0.1" value="297"></label>
+      </div>
+      <p class="muted" style="margin:0">Лист задаёт масштаб. Бумага бывает неточной до ±1 мм. Для точного результата измерьте свой лист линейкой и впишите фактические размеры.</p>
+    </div>
+    <div class="row">
+      <label class="btn primary big" for="cam">Сфотографировать</label>
+      <label class="btn big" for="gal">Выбрать фото</label>
+      <input type="file" id="cam" accept="image/*" capture="environment" hidden>
+      <input type="file" id="gal" accept="image/*" hidden>
+    </div>
+    <button class="btn" id="demo">Попробовать на примере (сгенерированное фото)</button>
+    <div class="card">
+      <h2>Как снимать для точности</h2>
+      <ul class="tips">
+        <li>Положите деталь на белый лист, а лист — на <b>тёмный</b> стол. Все 4 угла и края листа должны быть видны и не перекрыты.</li>
+        <li>Снимайте <b>сверху, над центром детали</b>, основной камерой (1× или 2×), не широкоугольной. Расстояние 35–60 см.</li>
+        <li>Свет рассеянный, без резких теней: тень прибавится к размеру. Хорошо подходят пасмурный день у окна или две лампы с боков.</li>
+        <li>Деталь толще 2–3 мм: на шаге 3 укажите её высоту, программа уберёт перспективное увеличение.</li>
+        <li>Вспышку не используйте, фокус — на деталь.</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- ШАГ 2 -->
+  <section data-step="2" hidden>
+    <div class="stage" id="stage1"><canvas></canvas>
+      <div class="tools"><button data-zoom="in" aria-label="Увеличить">+</button><button data-zoom="out" aria-label="Уменьшить">−</button><button data-zoom="fit" aria-label="Вписать">⤢</button></div>
+      <div class="hint">Перетащите жёлтые углы точно на углы листа. Двумя пальцами — масштаб.</div>
+    </div>
+    <div class="row">
+      <button class="btn" id="autoDetect">Найти лист заново</button>
+      <button class="btn" id="refine">Уточнить по краям</button>
+      <span id="cornerQ" class="pill"></span>
+    </div>
+    <button class="btn primary big" id="toContour">Далее: выделить контур</button>
+  </section>
+
+  <!-- ШАГ 3 -->
+  <section data-step="3" hidden>
+    <div class="stage" id="stage2"><canvas></canvas>
+      <div class="tools"><button data-zoom="in" aria-label="Увеличить">+</button><button data-zoom="out" aria-label="Уменьшить">−</button><button data-zoom="fit" aria-label="Вписать">⤢</button></div>
+      <div class="hint" id="hint2">Розовый — внешний контур, голубой — отверстия. Двумя пальцами — масштаб.</div>
+    </div>
+    <div class="legend"><span><i style="background:var(--contour)"></i>контур</span><span><i style="background:var(--hole)"></i>отверстия</span><span><i style="background:var(--sheet)"></i>точки стыков</span><span>✕ — точка под камерой</span></div>
+
+    <div class="card">
+      <h2>Результат</h2>
+      <div class="stats" id="stats"></div>
+      <div id="holes" class="list"></div>
+      <div id="warnings" style="display:flex;flex-direction:column;gap:8px"></div>
+    </div>
+
+    <div class="card">
+      <h2>Распознавание</h2>
+      <div class="row">
+        <label class="f">Деталь
+          <select id="polarity"><option value="dark" selected>Темнее листа</option><option value="light">Светлее фона (тёмный лист)</option></select>
+        </label>
+        <label class="f">Порог яркости: <span class="v" id="thrV"></span>
+          <input type="range" id="thr" min="5" max="250" step="1">
+        </label>
+      </div>
+      <div class="row">
+        <button class="btn" id="thrAuto">Порог автоматически</button>
+      </div>
+      <div class="row">
+        <label class="f">Высота контура над листом, мм<input type="number" id="hgt" value="0" step="0.1" min="0"></label>
+        <label class="f">Допуск линий/дуг: <span class="v" id="tolV"></span> мм
+          <input type="range" id="tol" min="0.03" max="0.5" step="0.01" value="0.10">
+        </label>
+      </div>
+      <p class="muted" style="margin:0">Высота: для пластины — её толщина, для детали с вертикальными стенками — её высота. Тогда считывается верхняя кромка без перспективного увеличения. Для этого камера должна быть над деталью: крестик ✕ внутри контура.</p>
+      <details>
+        <summary>Дополнительно</summary>
+        <div class="row">
+          <label class="f">Не учитывать у края листа, мм<input type="number" id="margin" value="4" step="0.5" min="0"></label>
+          <label class="f">Мин. отверстие, мм²<input type="number" id="minHole" value="0.8" step="0.1" min="0"></label>
+          <label class="f">Округлять Ø окружностей
+            <select id="snap"><option value="0" selected>Нет</option><option value="0.05">до 0.05 мм</option><option value="0.1">до 0.1 мм</option><option value="0.5">до 0.5 мм</option></select>
+          </label>
+          <label class="f">Фокусное (экв. 35 мм)<input type="number" id="f35" step="1" min="10" placeholder="авто"></label>
+        </div>
+        <p class="muted" id="camInfo" style="margin:0"></p>
+      </details>
+    </div>
+
+    <div class="card">
+      <h2>Проверка и калибровка</h2>
+      <p class="muted" style="margin:0">Включите «Измерить» и коснитесь двух точек: они притягиваются к стыкам и центрам отверстий. Если штангенциркуль показывает другое значение, введите его, и все размеры пересчитаются.</p>
+      <div class="row">
+        <button class="btn" id="measure">Измерить</button>
+        <span class="pill" id="measV">—</span>
+      </div>
+      <div class="row">
+        <label class="f">Реальное значение, мм<input type="number" id="realLen" step="0.01"></label>
+        <button class="btn" id="calib" disabled>Калибровать</button>
+        <button class="btn" id="calibReset">Сбросить</button>
+      </div>
+      <p class="muted" id="calibV" style="margin:0"></p>
+    </div>
+    <button class="btn primary big" id="toExport">Далее: экспорт</button>
+  </section>
+
+  <!-- ШАГ 4 -->
+  <section data-step="4" hidden>
+    <div class="card">
+      <h2>Файл</h2>
+      <div class="row"><label class="f">Имя детали<input type="text" id="fname" value="detal"></label></div>
+      <div class="stats" id="stats2"></div>
+      <div class="row">
+        <button class="btn primary big" id="dlDxf">Скачать DXF</button>
+        <button class="btn big" id="dlSvg">Скачать SVG</button>
+      </div>
+      <p class="muted" id="dlNote" style="margin:0"></p>
+      <details>
+        <summary>Текст DXF (скопировать вручную)</summary>
+        <div class="row" style="margin-bottom:8px"><button class="btn" id="copyDxf">Копировать DXF</button></div>
+        <textarea id="dxfText" readonly></textarea>
+      </details>
+    </div>
+    <div class="card">
+      <h2>Открыть в КОМПАС-3D v24</h2>
+      <ol class="howto">
+        <li><b>Файл → Открыть</b>, тип файла <b>DXF (*.dxf)</b>, выберите файл. В окне параметров импорта укажите единицы <b>миллиметры</b> и масштаб <b>1:1</b>. Откроется фрагмент или чертёж.</li>
+        <li>Проверьте размер командой <b>Измерить расстояние</b>: габарит должен совпасть с указанным выше.</li>
+        <li>Выделите всё (<kbd>Ctrl</kbd>+<kbd>A</kbd>) и скопируйте (<kbd>Ctrl</kbd>+<kbd>C</kbd>). Базовая точка — <b>0, 0</b>, это левый нижний угол габарита.</li>
+        <li>Создайте <b>Деталь</b>, выберите плоскость XY, создайте <b>Эскиз</b> и вставьте (<kbd>Ctrl</kbd>+<kbd>V</kbd>) в точку 0, 0.</li>
+        <li><b>Элемент выдавливания</b> на толщину детали. Контур замкнутый: отрезки и дуги стыкуются точно, скругления касаются сторон. Отверстия лежат в отдельном слое HOLES.</li>
+        <li>Дальше это обычный эскиз. Можно проставить размеры и ограничения (горизонтальность, касание, равенство радиусов), округлить значения и менять их, а модель перестроится.</li>
+      </ol>
+      <p class="muted" style="margin:0">Объёмная деталь: снимите вид сверху и вид сбоку (деталь на боку) двумя отдельными сканами. Вид сверху выдавите, вид сбоку используйте как эскиз для вырезания на плоскости XZ.</p>
+    </div>
+    <div class="card">
+      <h2>Чего ожидать по точности</h2>
+      <p style="margin:0">На хорошем фото 12 Мп с листом A4 погрешность обычно 0,1–0,3 мм. Больше всего на неё влияют точность размеров листа, тени и наклон камеры при толстой детали. Ответственные размеры перед выдавливанием проверьте штангенциркулем и при необходимости откалибруйте на шаге 3.</p>
+    </div>
+  </section>
+</main>
+<div class="busy" id="busy" hidden><div id="busyT">Обработка…</div></div>
+
+<script>
+/*CORE*/
+</script>
+<script>
+(() => {
+const C = window.KCore;
+const $ = (id) => document.getElementById(id);
+const S = { img: null, corners: null, rect: null, ext: null, shapes: null, pose: null, G: null, Ginv: null, k: 1, measure: false, mpts: [], lastMeas: null, f35src: '' };
+
+// ─── шаги ───
+function go(n) {
+  document.querySelectorAll('section[data-step]').forEach(s => s.hidden = s.dataset.step != n);
+  document.querySelectorAll('#steps button').forEach(b => b.classList.toggle('on', b.dataset.go == n));
+  S.step = n;
+  if (n == 2) v1.resize(true);
+  if (n == 3) v2.resize(true);
+  if (n == 4) prepExport();
+  window.scrollTo(0, 0);
+}
+function enable(n) { document.querySelectorAll('#steps button').forEach(b => { if (+b.dataset.go <= n) b.disabled = false; }); }
+document.querySelectorAll('#steps button').forEach(b => b.onclick = () => !b.disabled && go(+b.dataset.go));
+
+const busy = async (t, fn) => {
+  $('busyT').textContent = t; $('busy').hidden = false;
+  await new Promise(r => setTimeout(r, 40));
+  try { return await fn(); } catch (e) { console.error(e); alertBox(e.message || String(e)); } finally { $('busy').hidden = true; }
+};
+function alertBox(msg) { $('warnings').innerHTML = `<div class="note">${msg}</div>`; }
+
+// ─── лист ───
+$('fmt').onchange = () => {
+  const v = $('fmt').value;
+  if (v !== 'custom') { const [a, b] = v.split('x'); $('sheetA').value = a; $('sheetB').value = b; }
+};
+['sheetA', 'sheetB'].forEach(id => $(id).oninput = () => { $('fmt').value = 'custom'; });
+const sheetDims = () => [parseFloat($('sheetA').value) || 210, parseFloat($('sheetB').value) || 297];
+
+// ─── просмотрщик с масштабом и перетаскиванием ───
+class View {
+  constructor(el, o) {
+    this.el = el; this.cv = el.querySelector('canvas'); this.ctx = this.cv.getContext('2d'); this.o = o;
+    this.s = 1; this.tx = 0; this.ty = 0; this.cw = 1; this.ch = 1; this.ptr = new Map(); this.drag = null;
+    new ResizeObserver(() => this.resize(false)).observe(el);
+    el.addEventListener('pointerdown', e => this.down(e));
+    el.addEventListener('pointermove', e => this.move(e));
+    el.addEventListener('pointerup', e => this.up(e));
+    el.addEventListener('pointercancel', e => this.up(e));
+    el.addEventListener('wheel', e => { e.preventDefault(); const r = this.cv.getBoundingClientRect(); this.zoomAt(e.clientX - r.left, e.clientY - r.top, Math.exp(-e.deltaY * 0.0015)); }, { passive: false });
+    el.querySelectorAll('[data-zoom]').forEach(b => b.addEventListener('pointerdown', e => e.stopPropagation()));
+    el.querySelectorAll('[data-zoom]').forEach(b => b.onclick = () => {
+      const z = b.dataset.zoom; if (z === 'fit') this.fit(); else this.zoomAt(this.W / 2, this.H / 2, z === 'in' ? 1.6 : 1 / 1.6);
+    });
+  }
+  setContent(w, h) { this.cw = w; this.ch = h; this.fit(); }
+  resize(refit) {
+    const r = this.el.getBoundingClientRect(), d = window.devicePixelRatio || 1;
+    if (!r.width) return;
+    const was = this.W;
+    this.W = r.width; this.H = r.height; this.d = d;
+    this.cv.width = Math.round(r.width * d); this.cv.height = Math.round(r.height * d);
+    if (refit || !was) this.fit(); else this.draw();
+  }
+  fit() { if (!this.W) return; this.s = Math.min(this.W / this.cw, this.H / this.ch) * 0.94; this.tx = (this.W - this.cw * this.s) / 2; this.ty = (this.H - this.ch * this.s) / 2; this.draw(); }
+  zoomAt(x, y, f) { const ns = Math.max(0.02, Math.min(this.s * f, 80)); f = ns / this.s; this.tx = x - (x - this.tx) * f; this.ty = y - (y - this.ty) * f; this.s = ns; this.draw(); }
+  toC(x, y) { return [(x - this.tx) / this.s, (y - this.ty) / this.s]; }
+  toS(x, y) { return [x * this.s + this.tx, y * this.s + this.ty]; }
+  pos(e) { const r = this.cv.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; }
+  down(e) {
+    this.el.setPointerCapture(e.pointerId);
+    const p = this.pos(e); this.ptr.set(e.pointerId, p);
+    if (this.ptr.size === 1) {
+      const hit = this.o.hit ? this.o.hit(this.toC(...p), this) : null;
+      this.drag = { start: p, t: Date.now(), hit, last: p, moved: false };
+    } else { this.drag = null; this.pinch = this.pinchState(); }
+  }
+  pinchState() { const [a, b] = [...this.ptr.values()]; return { d: Math.hypot(a[0] - b[0], a[1] - b[1]), m: [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2] }; }
+  move(e) {
+    if (!this.ptr.has(e.pointerId)) return;
+    const p = this.pos(e); this.ptr.set(e.pointerId, p);
+    if (this.ptr.size === 2 && this.pinch) {
+      const n = this.pinchState();
+      this.tx += n.m[0] - this.pinch.m[0]; this.ty += n.m[1] - this.pinch.m[1];
+      this.zoomAt(n.m[0], n.m[1], n.d / (this.pinch.d || 1)); this.pinch = n; return;
+    }
+    const d = this.drag; if (!d) return;
+    if (Math.hypot(p[0] - d.start[0], p[1] - d.start[1]) > 6) d.moved = true;
+    const dx = p[0] - d.last[0], dy = p[1] - d.last[1]; d.last = p;
+    if (d.hit != null && this.o.dragTo) { this.o.dragTo(d.hit, dx / this.s, dy / this.s, p); this.draw(); }
+    else { this.tx += dx; this.ty += dy; this.draw(); }
+  }
+  up(e) {
+    const d = this.drag; this.ptr.delete(e.pointerId);
+    if (this.ptr.size < 2) this.pinch = null;
+    if (d && this.ptr.size === 0) {
+      if (!d.moved && Date.now() - d.t < 500 && this.o.tap) this.o.tap(this.toC(...d.start), this);
+      if (d.hit != null && this.o.dragEnd) this.o.dragEnd(d.hit);
+      this.drag = null; this.draw();
+    }
+  }
+  draw() {
+    if (!this.W) return;
+    const c = this.ctx; c.setTransform(this.d, 0, 0, this.d, 0, 0); c.clearRect(0, 0, this.W, this.H);
+    c.save(); c.translate(this.tx, this.ty); c.scale(this.s, this.s); this.o.draw(c, this); c.restore();
+    if (this.o.overlay) this.o.overlay(c, this);
+  }
+}
+
+// ─── шаг 2: углы ───
+const v1 = new View($('stage1'), {
+  draw(c, v) {
+    if (!S.img) return;
+    c.imageSmoothingEnabled = true;
+    c.drawImage(S.img.disp, 0, 0, S.img.w, S.img.h);
+    if (!S.corners) return;
+    const lw = 2 / v.s;
+    c.strokeStyle = '#ffd22e'; c.lineWidth = lw; c.beginPath();
+    S.corners.forEach((p, i) => i ? c.lineTo(...p) : c.moveTo(...p)); c.closePath(); c.stroke();
+    S.corners.forEach((p, i) => {
+      c.beginPath(); c.arc(p[0], p[1], 14 / v.s, 0, 7); c.fillStyle = 'rgba(255,210,46,.25)'; c.fill(); c.stroke();
+      c.beginPath(); c.moveTo(p[0] - 6 / v.s, p[1]); c.lineTo(p[0] + 6 / v.s, p[1]); c.moveTo(p[0], p[1] - 6 / v.s); c.lineTo(p[0], p[1] + 6 / v.s); c.stroke();
+    });
+  },
+  hit(p, v) {
+    if (!S.corners) return null;
+    let best = null, bd = 34 / v.s;
+    S.corners.forEach((q, i) => { const d = Math.hypot(q[0] - p[0], q[1] - p[1]); if (d < bd) { bd = d; best = i; } });
+    return best;
+  },
+  dragTo(i, dx, dy) { const p = S.corners[i]; p[0] += dx; p[1] += dy; S.dragging = i; markCornersDirty(); },
+  dragEnd() { S.dragging = null; },
+  overlay(c, v) {
+    if (S.dragging == null || !S.img) return;
+    // лупа ×4 по исходному фото
+    const p = S.corners[S.dragging], R = 64, z = 4 * Math.max(1, v.s * 2);
+    const sp = v.toS(...p);
+    const cx = sp[0] < v.W / 2 ? v.W - R - 12 : R + 12, cy = R + 12;
+    c.save(); c.beginPath(); c.arc(cx, cy, R, 0, 7); c.clip();
+    const srcR = R / z;
+    c.drawImage(S.img.full, p[0] - srcR, p[1] - srcR, 2 * srcR, 2 * srcR, cx - R, cy - R, 2 * R, 2 * R);
+    c.strokeStyle = '#ff2fb4'; c.lineWidth = 1.5; c.beginPath(); c.moveTo(cx - R, cy); c.lineTo(cx + R, cy); c.moveTo(cx, cy - R); c.lineTo(cx, cy + R); c.stroke();
+    c.restore(); c.strokeStyle = '#ffd22e'; c.lineWidth = 3; c.beginPath(); c.arc(cx, cy, R, 0, 7); c.stroke();
+  },
+});
+function markCornersDirty() { S.rect = null; setQ('Углы заданы вручную', 'warn'); }
+function setQ(t, cls) { const q = $('cornerQ'); q.textContent = t; q.className = 'pill ' + cls; }
+
+async function loadImage(file) {
+  const buf = await file.arrayBuffer();
+  const f35 = C.readExifFocal35(buf);
+  let bmp;
+  try { bmp = await createImageBitmap(new Blob([buf]), { imageOrientation: 'from-image' }); }
+  catch { bmp = await new Promise((res, rej) => { const im = new Image(); im.onload = () => res(im); im.onerror = () => rej(new Error('Не удалось открыть изображение')); im.src = URL.createObjectURL(new Blob([buf])); }); }
+  return fromBitmap(bmp, f35);
+}
+function fromBitmap(bmp, f35) {
+  let w = bmp.width, h = bmp.height;
+  const lim = 16e6;
+  if (w * h > lim) { const s = Math.sqrt(lim / (w * h)); w = Math.floor(w * s); h = Math.floor(h * s); }
+  const full = document.createElement('canvas'); full.width = w; full.height = h;
+  const fc = full.getContext('2d', { willReadFrequently: true }); fc.drawImage(bmp, 0, 0, w, h);
+  const gray = C.rgbaToGray(fc.getImageData(0, 0, w, h).data, w, h);
+  const ds = Math.min(1, 2048 / Math.max(w, h));
+  const disp = document.createElement('canvas'); disp.width = Math.round(w * ds); disp.height = Math.round(h * ds);
+  disp.getContext('2d').drawImage(full, 0, 0, disp.width, disp.height);
+  return { gray, w, h, full, disp, f35 };
+}
+async function startWith(img) {
+  S.img = img; S.rect = null; S.k = 1; S.mpts = []; S.lastMeas = null; updCalib();
+  enable(2); go(2); v1.setContent(img.w, img.h);
+  detect();
+}
+function detect() {
+  const c = C.detectSheet(S.img.gray, S.img.w, S.img.h);
+  if (c) { S.corners = c; setQ(c.rms != null ? `Лист найден, кромка ±${c.rms.toFixed(2)} px` : 'Лист найден', c.rms != null && c.rms < 1 ? 'ok' : 'warn'); }
+  else {
+    const { w, h } = S.img, m = 0.15;
+    S.corners = [[w * m, h * m], [w * (1 - m), h * m], [w * (1 - m), h * (1 - m)], [w * m, h * (1 - m)]];
+    setQ('Лист не найден, расставьте углы вручную', 'bad');
+  }
+  S.rect = null; v1.draw();
+}
+for (const id of ['cam', 'gal']) $(id).onchange = async (e) => {
+  const f = e.target.files[0]; e.target.value = '';
+  if (f) await busy('Открываю фото…', async () => startWith(await loadImage(f)));
+};
+$('autoDetect').onclick = () => busy('Ищу лист…', detect);
+$('refine').onclick = () => busy('Уточняю…', () => {
+  const r = C.refineCorners(S.img.gray, S.img.w, S.img.h, S.corners);
+  if (r) { S.corners = r; S.rect = null; setQ(`Уточнено по краям, ±${r.rms.toFixed(2)} px`, r.rms < 1 ? 'ok' : 'warn'); }
+  else setQ('Края не найдены: нужен тёмный фон вокруг листа', 'bad');
+  v1.draw();
+});
+$('toContour').onclick = () => busy('Выпрямляю лист и ищу контур…', async () => { buildRect(); extract(); enable(4); go(3); v2.setContent(S.rect.w, S.rect.h); });
+
+// ─── шаг 3: ортофото и контур ───
+function buildRect() {
+  if (S.rect) return;
+  const [a, b] = sheetDims();
+  const { W, H } = C.sheetSizeForCorners(S.corners, a, b);
+  const Hm = C.homography([[0, 0], [W, 0], [W, H], [0, H]], S.corners);
+  const sides = [0, 1, 2, 3].map(i => Math.hypot(S.corners[i][0] - S.corners[(i + 1) % 4][0], S.corners[i][1] - S.corners[(i + 1) % 4][1]));
+  const srcPpm = ((sides[0] + sides[2]) / 2 / W + (sides[1] + sides[3]) / 2 / H) / 2;
+  let ppm = Math.max(4, Math.min(12, Math.round(srcPpm)));
+  while (W * H * ppm * ppm > 12e6 && ppm > 4) ppm--;
+  S.Wmm = W; S.Hmm = H; S.Hm = Hm; S.srcPpm = srcPpm;
+  S.rect = C.rectify(S.img.gray, S.img.w, S.img.h, Hm, W, H, ppm);
+  const cv = document.createElement('canvas'); cv.width = S.rect.w; cv.height = S.rect.h;
+  const cx = cv.getContext('2d'), id = cx.createImageData(S.rect.w, S.rect.h);
+  for (let i = 0, j = 0; i < S.rect.data.length; i++, j += 4) { const g = S.rect.data[i]; id.data[j] = id.data[j + 1] = id.data[j + 2] = g; id.data[j + 3] = 255; }
+  cx.putImageData(id, 0, 0); S.rectCanvas = cv;
+  S.threshold = null;
+  computePose();
+}
+function computePose() {
+  const { w, h } = S.img, diag = Math.hypot(w, h);
+  const user = parseFloat($('f35').value);
+  let f, src;
+  if (user > 0) { f = user * diag / 43.2666; src = `задано вручную: ${user} мм`; }
+  else if (S.img.f35) { f = S.img.f35 * diag / 43.2666; src = `из EXIF: ${S.img.f35} мм`; }
+  else {
+    const fe = C.estimateFocal(S.Hm, w / 2, h / 2);
+    if (fe && fe > 0.45 * diag && fe < 2.5 * diag) { f = fe; src = `оценка по наклону листа: ${(fe / diag * 43.27).toFixed(0)} мм`; }
+    else { f = 26 * diag / 43.2666; src = 'по умолчанию: 26 мм (нет EXIF)'; }
+  }
+  S.f = f; S.fsrc = src;
+  S.pose = C.cameraPose(S.Hm, f, w / 2, h / 2);
+}
+function extract() {
+  const opts = { marginMm: parseFloat($('margin').value) || 0, minHoleMm2: parseFloat($('minHole').value) || 0, lightObject: $('polarity').value === 'light' };
+  if (S.threshold != null) opts.threshold = S.threshold;
+  S.ext = C.extractContours(S.rect, opts);
+  S.threshold = S.ext.threshold;
+  $('thr').value = Math.round(S.threshold); $('thrV').textContent = Math.round(S.threshold);
+  rebuild();
+}
+function rebuild() {
+  const h = parseFloat($('hgt').value) || 0;
+  S.G = C.heightCorrection(S.Hm, S.pose, h);
+  S.Ginv = S.G ? C.inv3(S.G) : null;
+  const tol = parseFloat($('tol').value);
+  $('tolV').textContent = tol.toFixed(2);
+  S.shapes = C.buildShapes(S.ext.loops, { G: S.G, scale: S.k, tol, snapDia: parseFloat($('snap').value) || 0 });
+  // крупнейший внешний контур вперёд
+  S.shapes.sort((a, b) => (a.hole - b.hole));
+  renderStats();
+  v2.draw();
+}
+const toSheet = (p) => { const q = [p[0] / S.k, p[1] / S.k]; return S.Ginv ? C.applyH(S.Ginv, q[0], q[1]) : q; }; // итоговые мм → мм листа
+const fromSheet = (p) => { const q = S.G ? C.applyH(S.G, p[0], p[1]) : p; return [q[0] * S.k, q[1] * S.k]; };
+
+const v2 = new View($('stage2'), {
+  draw(c, v) {
+    if (!S.rect) return;
+    c.imageSmoothingEnabled = v.s < 2;
+    c.drawImage(S.rectCanvas, 0, 0);
+    if (!S.shapes) return;
+    const ppm = S.rect.ppm, lw = 2 / v.s;
+    const P = (p) => { const q = toSheet(p); return [q[0] * ppm, q[1] * ppm]; };
+    for (const s of S.shapes) {
+      c.strokeStyle = s.hole ? '#00c2ff' : '#ff2fb4'; c.lineWidth = lw; c.beginPath();
+      for (const e of s.ents) {
+        let pts;
+        if (e.type === 'line') pts = [e.a, e.b];
+        else if (e.type === 'arc') pts = C.arcSample(e, 24);
+        else pts = Array.from({ length: 73 }, (_, i) => [e.c[0] + e.r * Math.cos(i * Math.PI / 36), e.c[1] + e.r * Math.sin(i * Math.PI / 36)]);
+        pts.map(P).forEach((q, i) => i ? c.lineTo(...q) : c.moveTo(...q));
+      }
+      c.stroke();
+      c.fillStyle = '#ffd22e';
+      for (const e of s.ents) {
+        const q = P(e.type === 'circle' ? e.c : e.a), r = 2.5 / v.s;
+        c.fillRect(q[0] - r, q[1] - r, 2 * r, 2 * r);
+      }
+    }
+    // точка под камерой
+    const nd = S.pose.nadir, nx = nd[0] * ppm, ny = nd[1] * ppm, r = 10 / v.s;
+    c.strokeStyle = '#ffd22e'; c.lineWidth = 2 / v.s; c.beginPath(); c.moveTo(nx - r, ny - r); c.lineTo(nx + r, ny + r); c.moveTo(nx + r, ny - r); c.lineTo(nx - r, ny + r); c.stroke();
+    // измерение
+    if (S.mpts.length) {
+      c.strokeStyle = '#ffffff'; c.fillStyle = '#ffffff'; c.lineWidth = 2 / v.s;
+      const qs = S.mpts.map(P);
+      c.beginPath(); qs.forEach((q, i) => i ? c.lineTo(...q) : c.moveTo(...q)); c.stroke();
+      qs.forEach(q => { c.beginPath(); c.arc(q[0], q[1], 5 / v.s, 0, 7); c.fill(); });
+    }
+  },
+  tap(p, v) {
+    if (!S.measure || !S.shapes) return;
+    const ppm = S.rect.ppm;
+    let pt = fromSheet([p[0] / ppm, p[1] / ppm]);
+    // притяжение к стыкам и центрам окружностей
+    let best = null, bd = 18 / v.s / ppm;
+    for (const s of S.shapes) for (const e of s.ents) for (const q of (e.type === 'circle' ? [e.c] : e.type === 'arc' ? [e.a, e.c] : [e.a])) {
+      const qs = toSheet(q), d = Math.hypot(qs[0] - p[0] / ppm, qs[1] - p[1] / ppm);
+      if (d < bd) { bd = d; best = q; }
+    }
+    if (best) pt = best.slice();
+    if (S.mpts.length >= 2) S.mpts = [];
+    S.mpts.push(pt);
+    if (S.mpts.length === 2) {
+      const [a, b] = S.mpts, L = Math.hypot(a[0] - b[0], a[1] - b[1]);
+      S.lastMeas = L;
+      $('measV').textContent = `L = ${L.toFixed(2)} мм   ΔX ${Math.abs(a[0] - b[0]).toFixed(2)}   ΔY ${Math.abs(a[1] - b[1]).toFixed(2)}`;
+      $('calib').disabled = false;
+    } else $('measV').textContent = 'Коснитесь второй точки';
+    v.draw();
+  },
+});
+
+function renderStats() {
+  const outer = S.shapes.filter(s => !s.hole), holes = S.shapes.filter(s => s.hole);
+  const cnt = { line: 0, arc: 0, circle: 0 };
+  S.shapes.forEach(s => s.ents.forEach(e => cnt[e.type]++));
+  const bb = outer.length ? C.shapesBBox(outer) : null;
+  const html = [
+    ['Габарит, мм', bb ? `${bb.w.toFixed(2)} × ${bb.h.toFixed(2)}` : '—'],
+    ['Контуров', `${outer.length} внешн. + ${holes.length} отв.`],
+    ['Элементы', `${cnt.line} отр. · ${cnt.arc} дуг · ${cnt.circle} окр.`],
+    ['Разрешение', `${S.rect.ppm} px/мм (фото ${S.srcPpm.toFixed(1)})`],
+  ].map(([k, n]) => `<div class="stat"><span class="k">${k}</span><span class="n">${n}</span></div>`).join('');
+  $('stats').innerHTML = html; $('stats2').innerHTML = html;
+  const items = [];
+  for (const s of S.shapes) for (const e of s.ents) {
+    if (e.type === 'circle') items.push(`<span>Ø${(2 * e.r).toFixed(2)}</span>`);
+  }
+  const radii = [...new Set(S.shapes.flatMap(s => s.ents.filter(e => e.type === 'arc').map(e => e.r.toFixed(2))))].slice(0, 16);
+  $('holes').innerHTML = (items.length ? items.join('') : '') + (radii.length ? radii.map(r => `<span>R${r}</span>`).join('') : '');
+  const w = [];
+  const h = parseFloat($('hgt').value) || 0;
+  const big = outer.slice().sort((a, b) => C.shapesBBox([b]).w * C.shapesBBox([b]).h - C.shapesBBox([a]).w * C.shapesBBox([a]).h)[0];
+  if (!outer.length) w.push(['bad', 'Контур не найден. Подвиньте порог яркости или проверьте, что деталь контрастна листу.']);
+  if (S.ext.loops.some(l => !l.hole && l.pts.some(p => p[0] < (parseFloat($('margin').value) || 0) + 1 || p[1] < (parseFloat($('margin').value) || 0) + 1 || p[0] > S.Wmm - (parseFloat($('margin').value) || 0) - 1 || p[1] > S.Hmm - (parseFloat($('margin').value) || 0) - 1)))
+    w.push(['warn', 'Контур касается края листа: часть детали может быть обрезана или в контур попала тень у края.']);
+  if (h > 0 && big) {
+    const nd = fromSheet(S.pose.nadir);
+    const inside = big.pts && pointIn(nd, big.pts);
+    if (!inside) w.push(['warn', 'Камера была не над деталью (✕ вне контура): коррекция высоты будет неполной. Переснимите строго сверху над деталью.']);
+  }
+  if (S.pose.tilt > 25) w.push(['warn', `Сильный наклон камеры (${S.pose.tilt.toFixed(0)}°). Для толстых деталей снимайте ровнее сверху.`]);
+  if (S.srcPpm < 5) w.push(['warn', `Мало пикселей на мм (${S.srcPpm.toFixed(1)}). Подойдите ближе или используйте лист меньшего формата.`]);
+  if (!w.length && outer.length) w.push(['ok', 'Контуры замкнуты и готовы к экспорту.']);
+  $('warnings').innerHTML = w.map(([c, t]) => `<div class="note ${c === 'ok' ? 'ok' : ''}">${t}</div>`).join('');
+  $('camInfo').textContent = `Камера: расстояние до листа ≈ ${S.pose.distance.toFixed(0)} мм, наклон ${S.pose.tilt.toFixed(1)}°, фокусное ${S.fsrc}. Лист ${S.Wmm} × ${S.Hmm} мм.`;
+}
+function pointIn(pt, poly) {
+  let ins = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const [xi, yi] = poly[i], [xj, yj] = poly[j];
+    if ((yi > pt[1]) !== (yj > pt[1]) && pt[0] < (xj - xi) * (pt[1] - yi) / (yj - yi) + xi) ins = !ins;
+  }
+  return ins;
+}
+
+let tmr;
+const later = (fn, ms = 250) => { clearTimeout(tmr); tmr = setTimeout(fn, ms); };
+$('thr').oninput = () => { $('thrV').textContent = $('thr').value; };
+$('thr').onchange = () => { S.threshold = +$('thr').value; busy('Пересчёт…', extract); };
+$('thrAuto').onclick = () => { S.threshold = null; busy('Пересчёт…', extract); };
+$('polarity').onchange = () => { S.threshold = null; busy('Пересчёт…', extract); };
+['margin', 'minHole'].forEach(id => $(id).onchange = () => busy('Пересчёт…', extract));
+$('tol').oninput = () => { $('tolV').textContent = (+$('tol').value).toFixed(2); later(rebuild); };
+['hgt', 'snap'].forEach(id => $(id).onchange = () => { S.mpts = []; rebuild(); });
+$('hgt').oninput = () => later(() => { S.mpts = []; rebuild(); }, 500);
+$('f35').onchange = () => { computePose(); rebuild(); };
+$('measure').onclick = () => {
+  S.measure = !S.measure; $('measure').classList.toggle('on', S.measure);
+  $('measure').textContent = S.measure ? 'Измерение включено' : 'Измерить';
+  $('hint2').textContent = S.measure ? 'Коснитесь двух точек: они притягиваются к стыкам и центрам.' : 'Розовый — внешний контур, голубой — отверстия. Двумя пальцами — масштаб.';
+  if (!S.measure) { S.mpts = []; v2.draw(); }
+  else $('stage2').scrollIntoView({ block: 'start', behavior: 'smooth' });
+};
+function updCalib() { $('calibV').textContent = S.k === 1 ? 'Калибровка не применялась (масштаб по листу).' : `Применён поправочный коэффициент ×${S.k.toFixed(5)}.`; }
+$('calib').onclick = () => {
+  const real = parseFloat($('realLen').value);
+  if (!(real > 0) || !S.lastMeas) return;
+  S.k *= real / S.lastMeas; S.mpts = []; S.lastMeas = null; $('calib').disabled = true; $('measV').textContent = '—';
+  updCalib(); rebuild();
+};
+$('calibReset').onclick = () => { S.k = 1; S.mpts = []; updCalib(); rebuild(); };
+$('toExport').onclick = () => go(4);
+
+// ─── шаг 4: экспорт ───
+const fname = () => ($('fname').value.trim() || 'detal').replace(/[\\/:*?"<>|]+/g, '_');
+function prepExport() { if (!S.shapes) return; S.dxf = C.toDXF(S.shapes); S.svg = C.toSVG(S.shapes); $('dxfText').value = S.dxf; }
+let dl = null;
+const inViewer = !!(window.claude && window.claude.use);
+if (inViewer) window.claude.use('downloads').then(d => { dl = d; updDlNote(); });
+function updDlNote() {
+  $('dlNote').textContent = dl ? 'Внутри Claude DXF скачивается в архиве .zip (формат .dxf напрямую не разрешён). Распакуйте архив: в нём detal.dxf.' : inViewer ? 'Скачивание здесь недоступно: скопируйте текст DXF ниже в файл с расширением .dxf.' : '';
+}
+updDlNote();
+async function save(name, data, mime) {
+  if (dl) {
+    try { await dl.save({ filename: name, data }); } catch (e) { if (e && e.code !== 'declined') $('dlNote').textContent = 'Не удалось сохранить: ' + (e.message || e.code); }
+    return;
+  }
+  const url = URL.createObjectURL(new Blob([data], { type: mime }));
+  const a = document.createElement('a'); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
+$('dlDxf').onclick = () => {
+  prepExport();
+  if (dl) save(fname() + '.zip', C.makeZip([[fname() + '.dxf', S.dxf], [fname() + '.svg', S.svg]]));
+  else save(fname() + '.dxf', S.dxf, 'application/dxf');
+};
+$('dlSvg').onclick = () => { prepExport(); save(fname() + '.svg', S.svg, 'image/svg+xml'); };
+$('copyDxf').onclick = async () => {
+  try { await navigator.clipboard.writeText(S.dxf); $('copyDxf').textContent = 'Скопировано'; }
+  catch { $('dxfText').select(); $('copyDxf').textContent = 'Выделено — скопируйте'; }
+};
+
+// ─── пример: синтетическое фото пластины ───
+$('demo').onclick = () => busy('Создаю пример фото…', async () => {
+  const w = 1800, h = 2400, f = 1900;
+  const cam = makeCam([70, 120, -400], [105, 150, 0], f, w, h);
+  const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+  const cx = cv.getContext('2d'), id = cx.createImageData(w, h);
+  const inRR = (x, y) => { const o = { cx: 105, cy: 150, w: 100, h: 60, r: 8 }; const dx = Math.abs(x - o.cx) - (o.w / 2 - o.r), dy = Math.abs(y - o.cy) - (o.h / 2 - o.r); if (dx <= 0 || dy <= 0) return Math.abs(x - o.cx) <= o.w / 2 && Math.abs(y - o.cy) <= o.h / 2; return dx * dx + dy * dy <= o.r * o.r; };
+  const hole = (x, y) => (x - 80) ** 2 + (y - 150) ** 2 <= 100 || (Math.abs(x - 125) <= 10 && Math.abs(y - 150) <= 5);
+  let s = 7; const rnd = () => { s = (s * 1103515245 + 12345) & 0x7fffffff; return s / 0x7fffffff; };
+  for (let v = 0; v < h; v++) for (let u = 0; u < w; u++) {
+    let acc = 0;
+    for (let k = 0; k < 4; k++) {
+      const uu = u + (k & 1) * 0.5 - 0.25, vv = v + (k >> 1) * 0.5 - 0.25;
+      const rc = [(uu - w / 2) / f, (vv - h / 2) / f, 1];
+      const d = [0, 1, 2].map(i => cam.x[i] * rc[0] + cam.y[i] * rc[1] + cam.z[i] * rc[2]);
+      const t = -cam.C[2] / d[2], X = cam.C[0] + t * d[0], Y = cam.C[1] + t * d[1];
+      acc += inRR(X, Y) && !hole(X, Y) ? 45 : (X >= 0 && X <= 210 && Y >= 0 && Y <= 297) ? 228 - 12 * X / 210 : 62;
+    }
+    const g = acc / 4 + (rnd() - 0.5) * 8, j = (v * w + u) * 4;
+    id.data[j] = g * 0.98; id.data[j + 1] = g; id.data[j + 2] = g * 1.03; id.data[j + 3] = 255;
+  }
+  cx.putImageData(id, 0, 0);
+  $('sheetA').value = 210; $('sheetB').value = 297; $('fmt').value = '210x297';
+  const bmp = await createImageBitmap(cv);
+  const img = fromBitmap(bmp, null); img.f35 = Math.round(f / Math.hypot(w, h) * 43.2666);
+  await startWith(img);
+  setQ('Пример: пластина 100×60, R8, Ø20, паз 20×10', 'ok');
+});
+function makeCam(Cp, target, f, w, h) {
+  const norm = v => { const n = Math.hypot(...v); return v.map(x => x / n); };
+  const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+  const z = norm(target.map((v, i) => v - Cp[i])), x = norm(cross([0, 1, 0], z)), y = cross(z, x);
+  return { C: Cp, x, y, z };
+}
+})();
+</script>
