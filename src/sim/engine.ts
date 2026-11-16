@@ -112,6 +112,8 @@ export class SimEngine {
   private cam = new THREE.PerspectiveCamera(62, 1, 0.15, 5000);
   private pipCam = new THREE.PerspectiveCamera(50, 1.36, 0.3, 3000);
   private model!: DroneModel;
+  /** Мир готов: текстуры и панорама освещения загружены. */
+  get ready() { return this.world.ready; }
   private composer: EffectComposer | null = null;
   private grade: ShaderPass | null = null;
   private bloom: UnrealBloomPass | null = null;
@@ -157,8 +159,8 @@ export class SimEngine {
     this.renderer = new THREE.WebGLRenderer({ canvas: o.canvas, antialias: o.quality !== "high", powerPreference: "high-performance" });
     const maxPr = o.quality === "high" ? 2 : o.quality === "medium" ? 1.5 : 1;
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, maxPr));
-    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = o.mission.world.palette.exposure;
+    this.renderer.toneMapping = THREE.AgXToneMapping;
+    this.renderer.toneMappingExposure = o.mission.world.palette.exposure * 1.25;
     this.renderer.shadowMap.enabled = o.quality !== "low";
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.shadowMap.autoUpdate = false;
@@ -527,6 +529,13 @@ export class SimEngine {
     }
     cam.updateProjectionMatrix();
     this.world.update(dt, d.pos, cam.position);
+    if (this.world.grass) {
+      let thr = 0;
+      for (let i = 0; i < d.n; i++) thr += d.thrust[i];
+      // сила потока от винтов растёт с тягой и массой аппарата
+      const wash = Math.min(1.4, (thr / (9.81 * 3)) ** 0.5 * 0.35);
+      this.world.grass.update(cam.position, d.windNow, d.pos, wash);
+    }
 
     this.pipCam.position.set(d.pos.x, d.pos.y - d.gear * 0.5, d.pos.z);
     this.pipCam.rotation.set((this.gimbalPitch * Math.PI) / 180, d.yaw, 0, "YXZ");

@@ -83,36 +83,157 @@ export function makeWaterMaterial(p: SkyParams, deep: THREE.Color, normals: THRE
   });
 }
 
-/** Процедурная детализация грунта поверх вершинных цветов: пятна мха, опад, камень на склонах, микрорельеф. */
-export function makeTerrainMaterial(tintA: THREE.Color, tintB: THREE.Color, rock: THREE.Color, bump: number, roughness: number): THREE.MeshStandardMaterial {
-  const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness, metalness: 0 });
+/** Фото-текстуры рельефа. */
+export interface TerrainTextures {
+  grass: THREE.Texture; grassN: THREE.Texture; meadow: THREE.Texture; dirt: THREE.Texture; dirtN: THREE.Texture;
+  rock: THREE.Texture; rockN: THREE.Texture; sand: THREE.Texture;
+}
+
+/**
+ * Материал земли: смешивание фото-текстур (трава, луг, лесная подстилка, грунт, песок, камень, снег) по весам,
+ * с картами нормалей и подавлением видимого повтора текстур (случайные сдвиги тайлов по шуму).
+ * Веса: атрибут splat (лес, грунт, песок, луг) + крутизна склона. Атрибут color — затемнение (гарь) и макровариации.
+ */
+export function makeTerrainMaterial(tex: TerrainTextures, opts: { snow: boolean; grassTint: THREE.Color }): THREE.MeshStandardMaterial {
+  const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.92, metalness: 0 });
   mat.onBeforeCompile = (sh) => {
-    sh.uniforms.uTintA = { value: tintA }; sh.uniforms.uTintB = { value: tintB }; sh.uniforms.uRock = { value: rock }; sh.uniforms.uBump = { value: bump };
+    Object.assign(sh.uniforms, {
+      tGrass: { value: tex.grass }, tGrassN: { value: tex.grassN }, tMeadow: { value: tex.meadow }, tDirt: { value: tex.dirt },
+      tDirtN: { value: tex.dirtN }, tRock: { value: tex.rock }, tRockN: { value: tex.rockN }, tSand: { value: tex.sand },
+      uSnow: { value: opts.snow ? 1 : 0 }, uGrassTint: { value: opts.grassTint },
+    });
     sh.vertexShader = sh.vertexShader
-      .replace("#include <common>", "#include <common>\nvarying vec3 vWPos; varying float vSlope;")
-      .replace("#include <begin_vertex>", "#include <begin_vertex>\nvWPos = (modelMatrix * vec4(transformed, 1.)).xyz; vSlope = normal.y;");
+      .replace("#include <common>", "#include <common>\nattribute vec4 splat;\nvarying vec3 vWPos; varying vec3 vWNrm; varying vec4 vSplat;")
+      .replace("#include <begin_vertex>", "#include <begin_vertex>\nvWPos = (modelMatrix * vec4(transformed, 1.)).xyz; vWNrm = normalize(mat3(modelMatrix) * objectNormal); vSplat = splat;");
     sh.fragmentShader = sh.fragmentShader
-      .replace("#include <common>", `#include <common>\nvarying vec3 vWPos; varying float vSlope; uniform vec3 uTintA, uTintB, uRock; uniform float uBump;\n${NOISE_GLSL}`)
-      .replace("#include <color_fragment>", /* glsl */ `#include <color_fragment>
+      .replace("#include <common>", /* glsl */ `#include <common>
+        varying vec3 vWPos; varying vec3 vWNrm; varying vec4 vSplat;
+        uniform sampler2D tGrass, tGrassN, tMeadow, tDirt, tDirtN, tRock, tRockN, tSand;
+        uniform float uSnow; uniform vec3 uGrassTint;
+        ${NOISE_GLSL}
+        // выборка без видимого повтора: два случайных сдвига тайла, переход по шуму
+        vec3 ntex(sampler2D s, vec2 uv, out float mixK, out vec2 oa, out vec2 ob) {
+          float k = vnoise(uv * .37) * 8.;
+          float i = floor(k), f = fract(k);
+          oa = sin(vec2(3., 7.) * i); ob = sin(vec2(3., 7.) * (i + 1.));
+          vec2 dx = dFdx(uv), dy = dFdy(uv);
+          vec3 a = textureGrad(s, uv + oa, dx, dy).rgb, b = textureGrad(s, uv + ob, dx, dy).rgb;
+          mixK = smoothstep(.2, .8, f - .1 * dot(a - b, vec3(1.)));
+          return mix(a, b, mixK);
+        }
+        vec3 nmap(sampler2D s, vec2 uv, float k, vec2 oa, vec2 ob) {
+          vec2 dx = dFdx(uv), dy = dFdy(uv);
+          return mix(textureGrad(s, uv + oa, dx, dy).xyz, textureGrad(s, uv + ob, dx, dy).xyz, k) * 2. - 1.;
+        }
+        float tRough;
+        vec3 tNormal;
+      `)
+      .replace("#include <map_fragment>", /* glsl */ `
         {
-          float nL = fbm3(vWPos.xz * .03), nM = fbm3(vWPos.xz * .27 + 7.), nS = vnoise(vWPos.xz * 2.9), nF = vnoise(vWPos.xz * 17.);
-          vec3 b = diffuseColor.rgb;
-          b = mix(b, b * uTintA, smoothstep(.3, .65, nL));
-          b = mix(b, uTintB, smoothstep(.5, .78, nM) * .5);
-          b = mix(b, uRock, smoothstep(.9, .74, vSlope));
-          b *= .72 + .34 * nS + .2 * nF;
-          diffuseColor.rgb = b;
-        }`)
+          vec2 w = vWPos.xz;
+          float macro = fbm3(w * .006), meso = vnoise(w * .05), micro = vnoise(w * .9);
+          float slope = 1. - normalize(vWNrm).y;
+          float wRock = smoothstep(.2, .4, slope + (meso - .5) * .14);
+          float wForest = clamp(vSplat.x, 0., 1.);
+          float wDirt = clamp(vSplat.y + smoothstep(.66, .82, meso * .6 + macro * .55) * .45 * (1. - wForest), 0., 1.);
+          float wSand = clamp(vSplat.z, 0., 1.);
+          float wMeadow = clamp(vSplat.w, 0., 1.) * smoothstep(.42, .62, macro + micro * .1);
+
+          float kG, kM, kD, kR, kS; vec2 aG, bG, aM, bM, aD, bD, aR, bR, aS, bS;
+          vec3 grass = ntex(tGrass, w / 7., kG, aG, bG) * uGrassTint;
+          vec3 meadow = ntex(tMeadow, w / 4.5, kM, aM, bM) * mix(uGrassTint, vec3(1.), .4);
+          vec3 dirt = ntex(tDirt, w / 4., kD, aD, bD);
+          vec3 rock = ntex(tRock, w / 6., kR, aR, bR);
+          vec3 sand = ntex(tSand, w / 3., kS, aS, bS);
+          // таёжная подстилка: мох, бурая хвоя, мелкие ягодники
+          vec3 moss = grass * vec3(.5, .62, .38);
+          vec3 needles = dirt * vec3(.62, .45, .32);
+          vec3 forest = mix(moss, needles, smoothstep(.35, .7, vnoise(w * .35) + micro * .2));
+          // сухие пятна и вариации тона травы
+          grass *= mix(vec3(1.), vec3(1.12, 1.02, .72), smoothstep(.55, .8, macro) * .6) * (.86 + .28 * meso);
+
+          vec3 col = grass;
+          col = mix(col, meadow, wMeadow * .75);
+          col = mix(col, forest, wForest);
+          col = mix(col, dirt * .9, wDirt);
+          col = mix(col, sand, wSand);
+          col = mix(col, rock, wRock);
+
+          vec3 nG = nmap(tGrassN, w / 7., kG, aG, bG);
+          vec3 nD = nmap(tDirtN, w / 4., kD, aD, bD);
+          vec3 nR = nmap(tRockN, w / 6., kR, aR, bR);
+          vec3 tn = mix(nG, nD, max(wDirt, wForest * .6));
+          tn = mix(tn, nD * vec3(.5, .5, 1.), wSand);
+          tn = mix(tn, nR, wRock);
+          float rough = mix(.94, .9, wDirt);
+          rough = mix(rough, .82, wSand);
+          rough = mix(rough, .72, wRock);
+
+          if (uSnow > .5) {
+            float cover = clamp(1. - wRock * .75 - wDirt * .25 - wForest * .2 + (micro - .5) * .15, 0., 1.);
+            vec3 snow = vec3(.9, .93, .97) * (.92 + .08 * vnoise(w * 3.1));
+            snow = mix(snow, vec3(.8, .85, .93), smoothstep(.5, .9, vnoise(w * .2)) * .3);
+            col = mix(col, snow, smoothstep(.15, .6, cover));
+            tn = mix(tn, vec3(nG.xy * .15, 1.), smoothstep(.15, .6, cover));
+            rough = mix(rough, .5, cover);
+          }
+          diffuseColor.rgb = col;
+          tRough = rough;
+          tNormal = tn;
+        }
+      `)
+      .replace("#include <roughnessmap_fragment>", "float roughnessFactor = tRough;")
       .replace("#include <normal_fragment_maps>", /* glsl */ `#include <normal_fragment_maps>
         {
-          float e = .3; vec2 q = vWPos.xz * .8;
-          float h0 = fbm3(q), hx = fbm3(q + vec2(e, 0.)), hz = fbm3(q + vec2(0., e));
-          float m0 = vnoise(vWPos.xz * 6.), mx = vnoise(vWPos.xz * 6. + vec2(.5, 0.)), mz = vnoise(vWPos.xz * 6. + vec2(0., .5));
-          vec3 bumpN = vec3(h0 - hx + (m0 - mx) * .35, 0., h0 - hz + (m0 - mz) * .35) * uBump;
-          normal = normalize(normal + mat3(viewMatrix) * bumpN);
+          vec3 N = normalize(vWNrm);
+          vec3 T = normalize(vec3(1., 0., 0.) - N * N.x);
+          vec3 B = cross(T, N);
+          vec3 pn = normalize(T * tNormal.x * .9 + B * tNormal.y * .9 + N * max(tNormal.z, .2));
+          normal = normalize(mat3(viewMatrix) * pn);
         }`);
   };
   return mat;
+}
+
+/**
+ * Атмосфера для всех стандартных материалов: экспоненциальный туман + высотная дымка в низинах
+ * и подсветка тумана в сторону солнца (рассеяние Ми). Константы вшиваются в шейдер при старте миссии.
+ */
+export function installAtmosphere(sunDir: THREE.Vector3, sunScatter: THREE.Color, heightDensity: number, falloff: number) {
+  const C = THREE.ShaderChunk as unknown as Record<string, string>;
+  const orig = (C.__atmoOrig ??= JSON.stringify({ pv: C.fog_pars_vertex, v: C.fog_vertex, pf: C.fog_pars_fragment, f: C.fog_fragment })) as string;
+  const o = JSON.parse(orig);
+  const v3 = (v: THREE.Vector3 | THREE.Color) => "x" in v ? `vec3(${v.x.toFixed(4)}, ${v.y.toFixed(4)}, ${v.z.toFixed(4)})` : `vec3(${v.r.toFixed(4)}, ${v.g.toFixed(4)}, ${v.b.toFixed(4)})`;
+  C.fog_pars_vertex = o.pv + "\n#ifdef USE_FOG\nvarying vec3 vFogPos;\n#endif\n";
+  C.fog_vertex = o.v + "\n#ifdef USE_FOG\nvFogPos = mvPosition.xyz;\n#endif\n";
+  C.fog_pars_fragment = o.pf + `
+#ifdef USE_FOG
+varying vec3 vFogPos;
+const vec3 ATMO_SUN = ${v3(sunDir.clone().normalize())};
+const vec3 ATMO_SCATTER = ${v3(sunScatter)};
+const float ATMO_HDENS = ${heightDensity.toFixed(6)};
+const float ATMO_FALL = ${falloff.toFixed(6)};
+#endif
+`;
+  C.fog_fragment = `
+#ifdef USE_FOG
+  {
+    float d = length(vFogPos);
+    vec3 wd = transpose(mat3(viewMatrix)) * (vFogPos / max(d, 1e-3));
+    float yd = wd.y * d;
+    float hf = ATMO_HDENS * exp(-ATMO_FALL * cameraPosition.y) * d * (abs(yd) > .01 ? (1. - exp(-ATMO_FALL * yd)) / (ATMO_FALL * yd) : 1.);
+    #ifdef FOG_EXP2
+      float base = fogDensity * fogDensity * d * d;
+    #else
+      float base = 0.;
+    #endif
+    float fogF = 1. - exp(-(base + hf));
+    float sunK = pow(max(dot(wd, ATMO_SUN), 0.), 6.);
+    vec3 fc = mix(fogColor, ATMO_SCATTER, sunK * .75);
+    gl_FragColor.rgb = mix(gl_FragColor.rgb, fc, clamp(fogF, 0., 1.));
+  }
+#endif
+`;
 }
 
 /** Материал кроны: покачивание на ветру, пёстрая хвоя. С атласом — ветви-карточки с альфа-тестом. */
@@ -145,15 +266,18 @@ export function makeFoliageMaterial(time: { value: number }, sway: number, map?:
   return mat;
 }
 
-/** Финальный проход: виньетка и лёгкое зерно плёнки. */
+/** Финальный проход: контраст, насыщенность, виньетка, зерно. */
 export const GradeShader = {
-  uniforms: { tDiffuse: { value: null }, uTime: { value: 0 }, uGrain: { value: 0.035 }, uVignette: { value: 0.32 } },
+  uniforms: { tDiffuse: { value: null }, uTime: { value: 0 }, uGrain: { value: 0.025 }, uVignette: { value: 0.28 }, uSat: { value: 1.08 }, uContrast: { value: 1.06 } },
   vertexShader: /* glsl */ `varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.); }`,
   fragmentShader: /* glsl */ `
-    uniform sampler2D tDiffuse; uniform float uTime, uGrain, uVignette; varying vec2 vUv;
+    uniform sampler2D tDiffuse; uniform float uTime, uGrain, uVignette, uSat, uContrast; varying vec2 vUv;
     float h(vec2 p){ return fract(sin(dot(p, vec2(12.9898, 78.233)) + uTime) * 43758.5453); }
     void main(){
       vec4 c = texture2D(tDiffuse, vUv);
+      float l = dot(c.rgb, vec3(.2126, .7152, .0722));
+      c.rgb = mix(vec3(l), c.rgb, uSat);
+      c.rgb = clamp((c.rgb - .5) * uContrast + .5, 0., 1.);
       vec2 q = vUv - .5;
       c.rgb *= 1. - uVignette * smoothstep(.25, .85, length(q) * 1.25);
       c.rgb += (h(vUv * 911.) - .5) * uGrain;

@@ -1,7 +1,12 @@
 // Процедурный мир: рельеф, река, тайга, постройки. Слой 0 — видимый спектр, слой 1 — тепловизор.
 import * as THREE from "three";
 import { clamp, fbm, lerp, makeNoise2D, mulberry32, smoothstep } from "./noise";
-import { makeFoliageMaterial, makeSkyMaterial, makeTerrainMaterial, makeWaterMaterial, SkyParams } from "./shaders";
+import { installAtmosphere, makeFoliageMaterial, makeSkyMaterial, makeTerrainMaterial, makeWaterMaterial, SkyParams, TerrainTextures } from "./shaders";
+import { RGBELoader } from "three/examples/jsm/loaders/RGBELoader.js";
+import { Water } from "three/examples/jsm/objects/Water.js";
+import { GrassField } from "./grass";
+
+const ASSET = (p: string) => `${import.meta.env.BASE_URL}sim/${p}`;
 
 export const THERMAL_LAYER = 1;
 export type Quality = "high" | "medium" | "low";
@@ -15,6 +20,8 @@ export interface Palette {
   clouds: number; // 0 — ясно, 1 — сплошная облачность
   exposure: number;
   snow?: boolean;
+  grassTint?: [number, number, number];
+  hdr?: string; // HDR-панорама для освещения (Poly Haven, CC0)
 }
 
 export interface WorldCfg {
@@ -61,6 +68,13 @@ export class World {
   private disposables: { dispose(): void }[] = [];
   private terrainColors!: THREE.BufferAttribute;
   private lodAcc = 1;
+  private loader = new THREE.LoadingManager();
+  ready: Promise<void>;
+  grass: GrassField | null = null;
+  private water: Water | null = null;
+  private hemi!: THREE.HemisphereLight;
+  private splat!: THREE.BufferAttribute;
+  private envRT: THREE.WebGLRenderTarget | null = null;
   private atlas!: THREE.Texture;
   private spruceLo!: THREE.BufferGeometry;
 
@@ -74,10 +88,12 @@ export class World {
     this.treeX = new Float32Array(0); this.treeZ = new Float32Array(0); this.treeY = new Float32Array(0);
     this.treeH = new Float32Array(0); this.treeR = new Float32Array(0);
     this.treeKind = new Uint8Array(0); this.treeAlive = new Uint8Array(0);
+    this.ready = new Promise((res) => { this.loader.onLoad = () => res(); this.loader.onError = () => res(); });
     this.buildHeights();
     this.buildSky();
     this.buildTerrain();
     this.buildTrees();
+    this.paintSplat();
     this.buildGroundCover();
   }
 
@@ -167,7 +183,10 @@ export class World {
     }
     this.sun = sun;
     this.scene.add(sun, sun.target);
-    this.scene.add(new THREE.HemisphereLight(pal.ambient, new THREE.Color(pal.groundA).multiplyScalar(0.6), pal.ambientIntensity));
+    this.hemi = new THREE.HemisphereLight(pal.ambient, new THREE.Color(pal.groundA).multiplyScalar(0.6), pal.ambientIntensity);
+    this.scene.add(this.hemi);
+    // дымка в низинах и подсвеченный солнцем туман
+    installAtmosphere(sunDir, new THREE.Color(pal.sun).multiplyScalar(1.1).lerp(new THREE.Color(pal.fog), 0.35), pal.fogDensity * 1.4, 1 / 35);
   }
 
   /** Карта окружения для PBR-отражений строится из самого неба. */
@@ -181,12 +200,27 @@ export class World {
     this.own(rt);
     this.scene.environment = rt.texture;
     this.scene.environmentIntensity = 0.55;
+    const hdr = this.cfg.palette.hdr;
+    if (hdr && this.quality !== "low") {
+      // настоящая панорама неба и леса даёт фотографичное рассеянное освещение и отражения
+      new RGBELoader(this.loader).load(ASSET(hdr), (eq) => {
+        const pm2 = new THREE.PMREMGenerator(renderer);
+        this.envRT = pm2.fromEquirectangular(eq);
+        this.own(this.envRT);
+        eq.dispose(); pm2.dispose();
+        this.scene.environment = this.envRT.texture;
+        this.scene.environmentIntensity = 0.75;
+        this.scene.environmentRotation.y = Math.atan2(this.skyParams.sunDir.x, this.skyParams.sunDir.z);
+        this.hemi.intensity *= 0.45;
+      });
+    }
     pm.dispose();
   }
 
   /** Каждый кадр: тени следуют за аппаратом, деревья переключают уровень детализации. */
   update(dt: number, focus: THREE.Vector3, camPos: THREE.Vector3) {
     this.time.value += dt;
+    if (this.water) (this.water.material as THREE.ShaderMaterial).uniforms.time.value += dt * 0.6;
     this.sky.position.copy(camPos);
     if (this.sun.castShadow) {
       const texel = (this.sun.shadow.camera.right * 2) / this.sun.shadow.mapSize.x * 4;
@@ -216,15 +250,15 @@ export class World {
     const colors = new Float32Array(pos.count * 3);
     const heat = new Float32Array(pos.count * 3);
     const noise = makeNoise2D(cfg.seed + 7);
-    const cA = new THREE.Color(pal.groundA), cB = new THREE.Color(pal.groundB), cS = new THREE.Color(pal.shore);
     const c = new THREE.Color();
     for (let i = 0; i < pos.count; i++) {
       const h = this.hf[i];
       pos.setY(i, h);
       const x = pos.getX(i), z = pos.getZ(i);
       const t = fbm(noise, x / 90, z / 90, 3) * 0.5 + 0.5;
-      c.copy(cA).lerp(cB, smoothstep(0.3, 0.7, t));
-      if (this.waterLevel !== null) c.lerp(cS, 1 - smoothstep(0.1, 1.5, h));
+      // вершинный цвет — только макровариации яркости и будущая гарь; цвет даёт фото-текстура
+      const v = 0.88 + 0.22 * t;
+      c.setRGB(v, v, v);
       colors[i * 3] = c.r; colors[i * 3 + 1] = c.g; colors[i * 3 + 2] = c.b;
       const g = h < 0 ? 0.004 : 0.02 + 0.02 * t;
       heat[i * 3] = g; heat[i * 3 + 1] = g; heat[i * 3 + 2] = g;
@@ -233,9 +267,23 @@ export class World {
     geo.setAttribute("color", this.terrainColors);
     geo.computeVertexNormals();
 
-    const mat = this.own(pal.snow
-      ? makeTerrainMaterial(new THREE.Color(0.86, 0.9, 1), new THREE.Color(0.62, 0.7, 0.82), new THREE.Color(0x6f7780), 0.5, 0.7)
-      : makeTerrainMaterial(new THREE.Color(0.62, 0.8, 0.55), new THREE.Color(0x4d3f2a), new THREE.Color(0x6a655c), 1.5, 0.96));
+    this.splat = new THREE.BufferAttribute(new Float32Array(pos.count * 4), 4);
+    geo.setAttribute("splat", this.splat);
+    const tl = new THREE.TextureLoader(this.loader);
+    const load = (f: string, srgb: boolean) => {
+      const t = this.own(tl.load(ASSET(`tex/${f}`)));
+      t.wrapS = t.wrapT = THREE.RepeatWrapping;
+      t.anisotropy = 8;
+      if (srgb) t.colorSpace = THREE.SRGBColorSpace;
+      return t;
+    };
+    const tex: TerrainTextures = {
+      grass: load("grass.jpg", true), grassN: load("grass_n.jpg", false), meadow: load("meadow.jpg", true),
+      dirt: load("dirt.jpg", true), dirtN: load("dirt_n.jpg", false), rock: load("rock.jpg", true), rockN: load("rock_n.jpg", false),
+      sand: load("sand.jpg", true),
+    };
+    const gt = pal.grassTint ?? [0.82, 0.86, 0.72];
+    const mat = this.own(makeTerrainMaterial(tex, { snow: !!pal.snow, grassTint: new THREE.Color(...gt) }));
     const mesh = new THREE.Mesh(geo, mat);
     mesh.receiveShadow = true;
     this.scene.add(mesh);
@@ -251,13 +299,64 @@ export class World {
     if (this.waterLevel !== null) {
       const wg = this.own(new THREE.PlaneGeometry(size * 2.5, size * 2.5));
       wg.rotateX(-Math.PI / 2);
-      const normals = this.own(new THREE.TextureLoader().load(`${import.meta.env.BASE_URL}sim/waternormals.jpg`));
+      const normals = this.own(new THREE.TextureLoader(this.loader).load(ASSET("waternormals.jpg")));
       normals.wrapS = normals.wrapT = THREE.RepeatWrapping;
-      const wm = this.own(makeWaterMaterial(this.skyParams, new THREE.Color(pal.water).multiplyScalar(0.55), normals, this.scene.fog as THREE.FogExp2, this.time));
-      const water = new THREE.Mesh(wg, wm);
+      let water: THREE.Mesh;
+      if (this.quality === "high") {
+        // зеркальная вода: настоящие отражения леса, неба и аппарата
+        const w = new Water(wg, {
+          textureWidth: 1024, textureHeight: 1024, waterNormals: normals,
+          sunDirection: this.skyParams.sunDir.clone(), sunColor: new THREE.Color(pal.sun),
+          waterColor: new THREE.Color(pal.water).multiplyScalar(0.6), distortionScale: 1.6, fog: true,
+        });
+        (w.material as THREE.ShaderMaterial).uniforms.size.value = 2.2;
+        this.water = w;
+        water = w;
+      } else {
+        const wm = this.own(makeWaterMaterial(this.skyParams, new THREE.Color(pal.water).multiplyScalar(0.55), normals, this.scene.fog as THREE.FogExp2, this.time));
+        water = new THREE.Mesh(wg, wm);
+      }
       water.position.y = this.waterLevel;
       this.scene.add(water);
       this.addThermal(water, 0.004);
+    }
+  }
+
+  /** Веса слоёв грунта: лесная подстилка под кронами, песок у воды, грунт на площадках, луг на открытых местах. */
+  private paintSplat() {
+    const { n, cell, size, cfg } = this;
+    const sp = this.splat.array as Float32Array;
+    const dens = new Float32Array(n * n);
+    const near: number[] = [];
+    for (let iz = 0; iz < n; iz++) for (let ix = 0; ix < n; ix++) {
+      const i = iz * n + ix, x = -size / 2 + ix * cell, z = -size / 2 + iz * cell, h = this.hf[i];
+      let forest = 0;
+      for (const t of this.treesNear(x, z, 9, near)) {
+        const d = Math.hypot(this.treeX[t] - x, this.treeZ[t] - z);
+        forest += Math.max(0, 1 - d / 9) * 0.55;
+      }
+      forest = Math.min(1, forest);
+      let dirt = 0, onFlat = false;
+      for (const f of cfg.flats) {
+        const d = Math.max(Math.abs(x - f.x) / f.rx, Math.abs(z - f.z) / f.rz);
+        dirt = Math.max(dirt, smoothstep(1.3, 0.6, d) * (f.rx > 20 ? 0.45 : 0.85));
+        if (d < 1.1) onFlat = true;
+      }
+      const sand = this.waterLevel !== null ? 1 - smoothstep(0.2, 1.6, h) : 0;
+      const meadow = (1 - forest) * (1 - dirt);
+      sp[i * 4] = forest; sp[i * 4 + 1] = dirt; sp[i * 4 + 2] = sand; sp[i * 4 + 3] = meadow;
+      // трава: густо на лугу, редко в лесу, нет на площадках, у воды и в воде
+      dens[i] = h < 0.6 || onFlat ? 0 : clamp(meadow * 0.95 + forest * 0.25 - dirt - sand, 0, 1);
+    }
+    this.splat.needsUpdate = true;
+    if (this.quality !== "low" && !cfg.palette.snow) {
+      const gt = cfg.palette.grassTint ?? [0.82, 0.86, 0.72];
+      this.grass = new GrassField({
+        size: this.quality === "high" ? 70 : 50, count: this.quality === "high" ? 26000 : 11000,
+        heights: this.hf, n, worldSize: size, density: dens,
+        tint: new THREE.Color(0x5f7a2c).multiply(new THREE.Color(...gt)).multiplyScalar(1.25), time: this.time,
+      });
+      this.scene.add(this.grass.mesh);
     }
   }
 
@@ -391,11 +490,20 @@ export class World {
     // подрост: молодые ёлочки 1–3 м
     const saplings = this.quality === "high" ? 4000 : 1500;
     scatter(this.spruceLo.clone(), makeFoliageMaterial(this.time, 0.02, this.atlas, this.quality === "high"), saplings, 0.45, 1.3, 2.4, 0.05, [0.7, 1.2], 0.08);
-    scatter(new THREE.DodecahedronGeometry(1, 0), new THREE.MeshStandardMaterial({ color: snow ? 0xb8c0c8 : 0x77736b, roughness: 0.95, flatShading: true }),
-      1400, 0.3, 1.6, 0.6, 0.35, [0.7, 1.15]);
-    const log = new THREE.CylinderGeometry(0.16, 0.2, 1, 7);
-    log.rotateZ(Math.PI / 2);
-    scatter(log, new THREE.MeshStandardMaterial({ color: snow ? 0x8a8478 : 0x4a3a2c, roughness: 1 }), 500, 4, 9, 1, 0.02, [0.7, 1.1]);
+    // валуны: фото-текстура камня с картой нормалей, слегка «сплющенные» и утопленные в грунт
+    const rockGeo = new THREE.DodecahedronGeometry(1, 1);
+    const rp = rockGeo.attributes.position;
+    for (let k = 0; k < rp.count; k++) {
+      const hh = Math.sin(rp.getX(k) * 7.3 + rp.getZ(k) * 3.1) * 0.5 + 0.5;
+      rp.setXYZ(k, rp.getX(k) * (0.85 + hh * 0.25), rp.getY(k) * (0.8 + hh * 0.3), rp.getZ(k) * (0.85 + hh * 0.25));
+    }
+    rockGeo.computeVertexNormals();
+    const tl = new THREE.TextureLoader(this.loader);
+    const rMap = this.own(tl.load(ASSET("tex/rock.jpg"))), rN = this.own(tl.load(ASSET("tex/rock_n.jpg")));
+    rMap.colorSpace = THREE.SRGBColorSpace;
+    rMap.wrapS = rMap.wrapT = rN.wrapS = rN.wrapT = THREE.RepeatWrapping;
+    scatter(rockGeo, new THREE.MeshStandardMaterial({ map: rMap, normalMap: rN, roughness: 0.85, color: snow ? 0xc8ccd2 : 0x9a968c }),
+      1100, 0.3, 1.4, 0.6, 0.4, [0.75, 1.1]);
   }
 
   private inFlat(x: number, z: number, k: number): boolean {
@@ -480,6 +588,8 @@ export class World {
   }
 
   dispose() {
+    this.grass?.dispose();
+    if (this.water) (this.water.material as THREE.Material).dispose();
     for (const d of this.disposables) d.dispose();
     this.scene.traverse((o) => {
       const m = o as THREE.Mesh;
@@ -496,126 +606,179 @@ export class World {
 
 // ─────────────────────────── геометрия деревьев ───────────────────────────
 
-// Атлас 1024×512: верх — ветвь ели, низ слева — ветвь сосны, справа внизу — сплошной тёмный участок для «сердцевины» кроны.
-const SOLID_UV: [number, number] = [0.97, 0.03];
-const BARK_UV: [number, number] = [0.97, 0.09];
-const PINE_BARK_UV: [number, number] = [0.97, 0.15];
-const SPRUCE_V: [number, number] = [0.5, 1];
-const PINE_V: [number, number] = [0, 0.5];
+// Атлас хвои 1024×1024 (v растёт вверх):
+//   v 0.75–1  — ветвь ели;  v 0.5–0.75 — ветвь сосны;
+//   низ слева — пучок сосновой хвои, низ справа — пучок еловой хвои, узкая колонка справа — сплошные цвета.
+const SPRUCE_V: [number, number] = [0.75, 1];
+const PINE_V: [number, number] = [0.5, 0.75];
 const PINE_U = 0.88;
+const PINE_TUFT = { u: [0, 0.484], v: [0.016, 0.484] } as const;
+const SPRUCE_TUFT = { u: [0.5, 0.93], v: [0.016, 0.484] } as const;
+const SOLID_UV: [number, number] = [0.97, 0.41];
+// полосы коры 64×~160 px: развёртка ствола по окружности (u) и высоте (v)
+const BARK = { u: [0.94, 1], v: [0.17, 0.326] } as const;
+const PINE_BARK = { u: [0.94, 1], v: [0.004, 0.16] } as const;
+const BARK_UV: [number, number] = [0.97, 0.25];
+/** Отношение радиуса кроны к высоте дерева: дерево масштабируется неравномерно (R, H, R). */
+const RH = 0.18;
 
 function conifersAtlas(spruce: THREE.Color, pine: THREE.Color, snow: boolean): THREE.CanvasTexture {
-  const W = 1024, H = 512;
+  const W = 1024, H = 1024;
   const c = document.createElement("canvas");
   c.width = W; c.height = H;
-  const g = c.getContext("2d")!;
+  const main = c.getContext("2d")!;
+  // текущий контекст рисования (подменяется при рисовании пучков на отдельном холсте)
+  let g = main;
   const rnd = mulberry32(911);
   const css = (col: THREE.Color, k: number, a = 1) => {
     const t = col.clone().convertLinearToSRGB();
     return `rgba(${Math.min(255, t.r * 255 * k) | 0},${Math.min(255, t.g * 255 * k) | 0},${Math.min(255, t.b * 255 * k) | 0},${a})`;
   };
   const bark = "rgba(70,52,38,1)";
-
-  // ветвь ели: стебель, боковые побеги, короткая густая хвоя
-  const y0 = 0, h0 = H / 2;
   const twig = (x0: number, yA: number, x1: number, yB: number, w: number) => {
     g.strokeStyle = bark; g.lineWidth = w; g.beginPath(); g.moveTo(x0, yA); g.lineTo(x1, yB); g.stroke();
   };
-  const needles = (x0: number, yA: number, x1: number, yB: number, len: number, density: number, col: THREE.Color, tipBoost: number) => {
+  const needles = (x0: number, yA: number, x1: number, yB: number, len: number, density: number, col: THREE.Color, k0: number, k1: number) => {
     const n = Math.hypot(x1 - x0, yB - yA) * density;
     for (let i = 0; i < n; i++) {
       const t = rnd(), x = x0 + (x1 - x0) * t, y = yA + (yB - yA) * t;
       const ang = Math.atan2(yB - yA, x1 - x0) + (rnd() < 0.5 ? -1 : 1) * (0.6 + rnd() * 0.7);
       const L = len * (0.6 + rnd() * 0.6) * (1 - t * 0.35);
-      const k = 1.0 + rnd() * 0.7 + t * tipBoost;
-      g.strokeStyle = css(col, k);
-      g.lineWidth = 2.6 + rnd() * 1.4;
+      g.strokeStyle = css(col, k0 + rnd() * (k1 - k0) + t * 0.3);
+      g.lineWidth = 2.4 + rnd() * 1.4;
       g.beginPath(); g.moveTo(x, y); g.lineTo(x + Math.cos(ang) * L, y + Math.sin(ang) * L); g.stroke();
     }
   };
-  const cy = y0 + h0 / 2;
-  // плотная «подложка» побега, чтобы ветвь не рассыпалась на дальних мип-уровнях
   const body = (x0: number, yA: number, x1: number, yB: number, w: number, col: THREE.Color) => {
-    g.strokeStyle = css(col, 0.75); g.lineCap = "round"; g.lineWidth = w;
+    g.strokeStyle = css(col, 0.62); g.lineCap = "round"; g.lineWidth = w;
     g.beginPath(); g.moveTo(x0, yA); g.lineTo(x1, yB); g.stroke();
     g.lineCap = "butt";
   };
+  const snowDab = (x: number, y: number, r: number) => {
+    const gr = g.createRadialGradient(x, y, 0, x, y, r);
+    gr.addColorStop(0, "rgba(245,248,255,0.95)"); gr.addColorStop(1, "rgba(235,240,250,0)");
+    g.fillStyle = gr; g.beginPath(); g.arc(x, y, r, 0, 6.3); g.fill();
+  };
+
+  // ── ветвь ели (y 0–256)
+  const cy = 128;
   twig(4, cy, W - 20, cy + 6, 6);
   for (let k = 0; k < 9; k++) {
     const t = 0.08 + k * 0.1, x = 4 + (W - 30) * t;
     for (const side of [-1, 1]) {
-      const len = (h0 * 0.42) * (1 - t * 0.55) * (0.8 + rnd() * 0.3);
+      const len = 107 * (1 - t * 0.55) * (0.8 + rnd() * 0.3);
       const ex = x + len * 0.9, ey = cy + side * len * 0.75;
       body(x, cy, ex, ey, 15, spruce);
       twig(x, cy, ex, ey, 3);
-      needles(x, cy, ex, ey, 24, 2.6, spruce, 0.6);
+      needles(x, cy, ex, ey, 24, 2.6, spruce, 0.85, 1.35);
     }
   }
   body(10, cy, W - 40, cy + 6, 26, spruce);
-  needles(4, cy, W - 20, cy + 6, 30, 2.2, spruce, 0.5);
-  if (snow) {
-    for (let i = 0; i < 260; i++) {
-      const x = 20 + rnd() * (W - 60), y = cy + (rnd() - 0.5) * h0 * 0.7;
-      const r = 4 + rnd() * 12;
-      const gr = g.createRadialGradient(x, y, 0, x, y, r);
-      gr.addColorStop(0, "rgba(245,248,255,0.95)"); gr.addColorStop(1, "rgba(235,240,250,0)");
-      g.fillStyle = gr; g.beginPath(); g.arc(x, y, r, 0, 6.3); g.fill();
-    }
-  }
+  needles(4, cy, W - 20, cy + 6, 30, 2.2, spruce, 0.85, 1.3);
+  if (snow) for (let i = 0; i < 260; i++) snowDab(20 + rnd() * (W - 60), cy + (rnd() - 0.5) * 180, 4 + rnd() * 12);
 
-  // ветвь сосны: голый сучок и пучки длинной хвои на концах
-  const py = H * 0.75, pw = W * PINE_U;
+  // ── ветвь сосны (y 256–512)
+  const py = 384, pw = W * PINE_U;
   twig(4, py, pw - 40, py - 8, 7);
   const tufts: [number, number][] = [];
   for (let k = 0; k < 10; k++) {
     const t = 0.25 + k * 0.075, x = 4 + (pw - 50) * t;
     for (const side of [-1, 1]) {
       if (rnd() < 0.15) continue;
-      const len = h0 * 0.3 * (0.7 + rnd() * 0.4);
+      const len = 77 * (0.7 + rnd() * 0.4);
       const ex = x + len * 0.6, ey = py - 4 + side * len * 0.8;
       twig(x, py - 4, ex, ey, 3);
       tufts.push([ex, ey]);
     }
   }
   tufts.push([pw - 40, py - 8], [pw - 90, py - 6]);
-  for (const [x, y] of tufts) {
-    g.fillStyle = css(pine, 0.7);
-    g.beginPath(); g.ellipse(x, y, 40, 30, 0, 0, 6.3); g.fill();
-    for (let i = 0; i < 90; i++) {
-      const ang = rnd() * 6.283, L = 20 + rnd() * 30;
-      g.strokeStyle = css(pine, 1.0 + rnd() * 0.7); g.lineWidth = 2.4 + rnd() * 1.2;
+  const pineTuft = (x: number, y: number, r: number) => {
+    g.fillStyle = css(pine, 0.55);
+    g.beginPath(); g.ellipse(x, y, r * 0.75, r * 0.55, 0, 0, 6.3); g.fill();
+    for (let i = 0; i < r * 2.4; i++) {
+      const ang = rnd() * 6.283, L = r * (0.45 + rnd() * 0.75);
+      g.strokeStyle = css(pine, 0.75 + rnd() * 0.55); g.lineWidth = 2.2 + rnd() * 1.2;
       g.beginPath(); g.moveTo(x, y); g.lineTo(x + Math.cos(ang) * L, y + Math.sin(ang) * L * 0.8); g.stroke();
     }
-    if (snow && rnd() < 0.7) {
-      const gr = g.createRadialGradient(x, y - 6, 0, x, y - 6, 22);
-      gr.addColorStop(0, "rgba(245,248,255,0.95)"); gr.addColorStop(1, "rgba(235,240,250,0)");
-      g.fillStyle = gr; g.beginPath(); g.arc(x, y - 6, 22, 0, 6.3); g.fill();
+    if (snow && rnd() < 0.8) snowDab(x, y - r * 0.25, r * 0.6);
+  };
+  for (const [x, y] of tufts) pineTuft(x, y, 40);
+
+  // пучки рисуем на отдельном холсте и обрезаем мягкой круглой маской — силуэт кроны не будет «квадратным»
+  const round = (x0: number, y0: number, w: number, h: number, draw: () => void) => {
+    const keep = g;
+    const off = document.createElement("canvas");
+    off.width = W; off.height = H;
+    const og = off.getContext("2d")!;
+    g = og;
+    draw();
+    og.globalCompositeOperation = "destination-in";
+    const gr = og.createRadialGradient(x0 + w / 2, y0 + h / 2, Math.min(w, h) * 0.25, x0 + w / 2, y0 + h / 2, Math.min(w, h) * 0.5);
+    gr.addColorStop(0, "rgba(0,0,0,1)"); gr.addColorStop(1, "rgba(0,0,0,0)");
+    og.fillStyle = gr; og.fillRect(x0, y0, w, h);
+    g = keep;
+    keep.drawImage(off, x0, y0, w, h, x0, y0, w, h);
+  };
+  // ── пучок сосны (x 0–496, y 528–1008): несколько кистей хвои на коротких веточках
+  round(0, 528, 496, 480, () => {
+    const cx = 248, cy2 = 768;
+    for (let k = 0; k < 9; k++) {
+      const a = (k / 9) * 6.283 + rnd() * 0.4, d = 70 + rnd() * 90;
+      const x = cx + Math.cos(a) * d, y = cy2 + Math.sin(a) * d * 0.8;
+      twig(cx, cy2, x, y, 4);
     }
-  }
-  // сплошной участок
-  g.fillStyle = css(spruce, 0.75);
-  g.fillRect(W * 0.94, H * 0.94, W * 0.06, H * 0.06);
-  g.fillStyle = "rgb(78,62,50)";
-  g.fillRect(W * 0.94, H * 0.88, W * 0.06, H * 0.06);
-  g.fillStyle = "rgb(168,96,52)";
-  g.fillRect(W * 0.94, H * 0.82, W * 0.06, H * 0.06);
+    for (let k = 0; k < 16; k++) {
+      const a = rnd() * 6.283, d = Math.sqrt(rnd()) * 120;
+      pineTuft(cx + Math.cos(a) * d, cy2 + Math.sin(a) * d * 0.8, 46 + rnd() * 20);
+    }
+  });
+  // ── пучок ели (x 512–952): плотный «лапник» из веточек с короткой хвоей
+  round(512, 528, 440, 480, () => {
+    const cx = 732, cy2 = 768;
+    for (let k = 0; k < 13; k++) {
+      const a = (k / 13) * 6.283 + rnd() * 0.3, len = 140 + rnd() * 60;
+      const ex = cx + Math.cos(a) * len, ey = cy2 + Math.sin(a) * len * 0.85;
+      body(cx, cy2, ex, ey, 30, spruce);
+      twig(cx, cy2, ex, ey, 3);
+      needles(cx, cy2, ex, ey, 26, 2.4, spruce, 0.8, 1.3);
+    }
+    if (snow) for (let i = 0; i < 90; i++) snowDab(cx + (rnd() - 0.5) * 340, cy2 - rnd() * 200, 6 + rnd() * 14);
+  });
+  // ── сплошной цвет хвои и две полосы коры: серо-бурая с продольными трещинами и рыжая чешуйчатая сосновая
+  g.fillStyle = css(spruce, 0.6); g.fillRect(964, 520, 60, 160);
+  const barkStrip = (y0: number, h: number, base: [number, number, number], crack: string, flakes: boolean) => {
+    g.fillStyle = `rgb(${base.join(",")})`; g.fillRect(964, y0, 60, h);
+    for (let i = 0; i < 420; i++) {
+      const x = 964 + rnd() * 60, y = y0 + rnd() * h, k = 0.75 + rnd() * 0.5;
+      g.fillStyle = `rgba(${base.map((c) => Math.min(255, c * k) | 0).join(",")},0.8)`;
+      g.fillRect(x, y, 2 + rnd() * 6, 2 + rnd() * (flakes ? 4 : 10));
+    }
+    g.strokeStyle = crack; g.lineWidth = 1.5;
+    for (let i = 0; i < 14; i++) {
+      let x = 964 + rnd() * 60;
+      g.beginPath(); g.moveTo(x, y0);
+      for (let y = y0; y < y0 + h; y += 8) { x += (rnd() - 0.5) * 3; g.lineTo(x, y); }
+      g.stroke();
+    }
+  };
+  barkStrip(690, 160, [86, 70, 58], "rgba(30,22,16,0.8)", false);
+  barkStrip(860, 160, [176, 104, 58], "rgba(90,50,28,0.6)", true);
 
   const tex = new THREE.CanvasTexture(c);
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.anisotropy = 8;
-  tex.generateMipmaps = true;
   tex.minFilter = THREE.LinearMipmapLinearFilter;
   return tex;
 }
 
 class CardSoup {
   pos: number[] = []; nor: number[] = []; uv: number[] = []; col: number[] = [];
+  segs = 2;
   vert(p: THREE.Vector3, n: THREE.Vector3, u: number, v: number, shade: number) {
     this.pos.push(p.x, p.y, p.z); this.nor.push(n.x, n.y, n.z); this.uv.push(u, v); this.col.push(shade, shade, shade);
   }
   /** Ветвь-карточка: от ствола на высоте y под углом ang, длиной len, с провисанием droop и наклоном tilt вокруг своей оси. */
-  segs = 2;
-  branch(y: number, ang: number, len: number, width: number, droop: number, tilt: number, v: [number, number], u1: number, shade: number, rise = 0) {
+  branch(y: number, ang: number, len: number, width: number, droop: number, tilt: number, v: readonly [number, number], u1: number, shade: number, rise = 0) {
     const seg = this.segs;
     const dir = new THREE.Vector3(Math.cos(ang), 0, Math.sin(ang)), side = new THREE.Vector3(-dir.z, 0, dir.x);
     const ct = Math.cos(tilt), st = Math.sin(tilt);
@@ -624,7 +787,7 @@ class CardSoup {
       const t = i / seg;
       const c = dir.clone().multiplyScalar(len * t).setY(y + rise * t - droop * t * t);
       const w = width * (0.55 + 0.45 * Math.sin(Math.min(1, t * 1.6 + 0.15) * Math.PI * 0.85));
-      const off = side.clone().multiplyScalar(ct * w / 2).setY(st * w / 2 * 0.25);
+      const off = side.clone().multiplyScalar(ct * w / 2).setY(st * w / 2 * RH);
       rows.push([c.clone().sub(off), c.clone().add(off)]);
     }
     const n = new THREE.Vector3();
@@ -633,13 +796,38 @@ class CardSoup {
       const ua = (i / seg) * u1, ub = ((i + 1) / seg) * u1;
       const quad: [THREE.Vector3, number, number][] = [[a[0], ua, v[0]], [b[0], ub, v[0]], [b[1], ub, v[1]], [a[0], ua, v[0]], [b[1], ub, v[1]], [a[1], ua, v[1]]];
       for (const [p, u, vv] of quad) {
-        // нормали «наружу от ствола» — классический приём для мягкого освещения кроны
         n.set(p.x, (p.y - y) * 0.5 + 0.55 * Math.hypot(p.x, p.z), p.z).normalize();
         this.vert(p, n, u, vv, shade * (0.7 + 0.3 * Math.min(1, Math.hypot(p.x, p.z) / Math.max(0.05, len))));
       }
     }
   }
-  /** Сплошная «сердцевина» кроны из атласного участка. */
+  /** Объёмный пучок хвои: три вертикальные плоскости под 60° и одна горизонтальная (видна сверху с дрона). */
+  clump(cx: number, cy: number, cz: number, size: number, rot: number, reg: { u: readonly [number, number]; v: readonly [number, number] }, shade: number, crownY: number) {
+    const hs = size / 2, vs = hs * RH;
+    const n = new THREE.Vector3();
+    const quad = (corners: THREE.Vector3[], s: number) => {
+      const uvs: [number, number][] = [[reg.u[0], reg.v[0]], [reg.u[1], reg.v[0]], [reg.u[1], reg.v[1]], [reg.u[0], reg.v[1]]];
+      for (const k of [0, 1, 2, 0, 2, 3]) {
+        const p = corners[k];
+        // нормаль «от оси кроны»: мягкое объёмное освещение пучков
+        n.set(p.x, (p.y - crownY) * 2.5 + 0.35, p.z).normalize();
+        this.vert(p, n, uvs[k][0], uvs[k][1], s);
+      }
+    };
+    for (let k = 0; k < 3; k++) {
+      const a = rot + (k * Math.PI) / 3, dx = Math.cos(a) * hs, dz = Math.sin(a) * hs;
+      quad([
+        new THREE.Vector3(cx - dx, cy - vs, cz - dz), new THREE.Vector3(cx + dx, cy - vs, cz + dz),
+        new THREE.Vector3(cx + dx, cy + vs, cz + dz), new THREE.Vector3(cx - dx, cy + vs, cz - dz),
+      ], shade);
+    }
+    const ca = Math.cos(rot) * hs, sa = Math.sin(rot) * hs;
+    quad([
+      new THREE.Vector3(cx - ca + sa, cy, cz - sa - ca), new THREE.Vector3(cx + ca + sa, cy, cz + sa - ca),
+      new THREE.Vector3(cx + ca - sa, cy, cz + sa + ca), new THREE.Vector3(cx - ca - sa, cy, cz - sa + ca),
+    ], shade * 1.1);
+  }
+  /** Сплошная геометрия (ствол, сердцевина) с атласным участком сплошного цвета. */
   solid(geo: THREE.BufferGeometry, shade: number, uv: [number, number] = SOLID_UV) {
     const ng = geo.index ? geo.toNonIndexed() : geo;
     ng.computeVertexNormals();
@@ -662,55 +850,81 @@ class CardSoup {
   }
 }
 
-function trunkInto(soup: CardSoup, y0: number, y1: number, r0: number, r1: number, segs: number, shade: number, uv = BARK_UV) {
+/** Ствол с развёрткой коры из атласа: по окружности — ширина полосы, по высоте — её длина. */
+function trunkInto(soup: CardSoup, y0: number, y1: number, r0: number, r1: number, segs: number, shade: number, reg: { u: readonly [number, number]; v: readonly [number, number] } = BARK) {
   const t = new THREE.CylinderGeometry(r1, r0, y1 - y0, segs, 1, true);
   t.translate(0, (y0 + y1) / 2, 0);
-  soup.solid(t, shade, uv);
+  const ng = t.toNonIndexed();
+  ng.computeVertexNormals();
+  const p = ng.attributes.position, nn = ng.attributes.normal, uv = ng.attributes.uv;
+  const a = new THREE.Vector3(), n = new THREE.Vector3();
+  for (let i = 0; i < p.count; i++) {
+    a.fromBufferAttribute(p, i); n.fromBufferAttribute(nn, i);
+    soup.vert(a, n, reg.u[0] + uv.getX(i) * (reg.u[1] - reg.u[0]), reg.v[0] + uv.getY(i) * (reg.v[1] - reg.v[0]), shade);
+  }
+  ng.dispose(); t.dispose();
 }
 
-/** Ель единичной высоты и радиуса: мутовки провисающих лап, густеющие к вершине. */
+/** Ель единичной высоты и радиуса: мутовки провисающих лап с пушистыми концами, густеющие к вершине. */
 function spruceGeometry(rnd: () => number, snow: boolean, detailed: boolean): THREE.BufferGeometry {
   const soup = new CardSoup();
   soup.segs = detailed ? 2 : 1;
   trunkInto(soup, 0, 0.92, 0.055, 0.01, detailed ? 6 : 4, 0.9);
-  const core = new THREE.ConeGeometry(detailed ? 0.26 : 0.4, 0.8, detailed ? 8 : 5, 1, true);
+  const core = new THREE.ConeGeometry(detailed ? 0.2 : 0.34, 0.8, detailed ? 7 : 5, 1, true);
   core.translate(0, 0.54, 0);
-  soup.solid(core, detailed ? 0.6 : 0.8);
-  const tiers = detailed ? 13 : 6, per = detailed ? 7 : 5;
+  soup.solid(core, detailed ? 0.7 : 0.95);
+  const tiers = detailed ? 11 : 5, per = detailed ? 6 : 4;
   for (let i = 0; i < tiers; i++) {
     const t = i / (tiers - 1);
-    const y = 0.1 + 0.86 * t;
-    const len = (Math.pow(1 - t, 0.85) * 0.95 + 0.07) * (detailed ? 1 : 1.08);
+    const y = 0.1 + 0.84 * t;
+    const len = Math.pow(1 - t, 0.85) * 0.95 + 0.08;
     const rot = rnd() * 6.28;
-    const shade = 0.55 + 0.55 * t + (snow ? 0.1 : 0);
+    const shade = 0.55 + 0.5 * t + (snow ? 0.1 : 0);
     for (let k = 0; k < per; k++) {
       const ang = rot + (k / per) * 6.283 + (rnd() - 0.5) * 0.5;
       const L = len * (0.8 + rnd() * 0.35);
       soup.branch(y, ang, L, L * 0.55 + 0.05, 0.05 + L * 0.06, (rnd() - 0.5) * 1.2, SPRUCE_V, 0.96, shade * (0.85 + rnd() * 0.3));
+      // пушистый конец лапы
+      if (detailed ? k % 2 === 0 : k === 0) {
+        const r = L * 0.78;
+        soup.clump(Math.cos(ang) * r, y - L * 0.04, Math.sin(ang) * r, L * 0.6 + 0.08, rnd() * 3, SPRUCE_TUFT, shade, y);
+      }
     }
   }
-  // макушка
-  for (let k = 0; k < 3; k++) soup.branch(0.93, k * 2.1, 0.08, 0.06, -0.06, 1.2, SPRUCE_V, 0.5, 1.2, 0.07);
+  soup.clump(0, 0.95, 0, 0.16, 0, SPRUCE_TUFT, 1.2, 0.95);
   return soup.build();
 }
 
-/** Сосна: длинный голый ствол, крона из восходящих сучьев с пучками хвои в верхней трети. */
+/** Сосна: длинный голый ствол с рыжей корой вверху и неровная «облачная» крона из пучков хвои. */
 function pineGeometry(rnd: () => number, snow: boolean, detailed: boolean): THREE.BufferGeometry {
   const soup = new CardSoup();
-  soup.segs = detailed ? 2 : 1;
+  soup.segs = 1;
   trunkInto(soup, 0, 0.45, 0.065, 0.045, detailed ? 7 : 4, 0.9);
-  trunkInto(soup, 0.45, 0.97, 0.045, 0.016, detailed ? 7 : 4, 1, PINE_BARK_UV);
-  const whorls = detailed ? 8 : 4, per = detailed ? 7 : 5;
-  for (let i = 0; i < whorls; i++) {
-    const t = i / (whorls - 1);
-    const y = 0.6 + 0.36 * t;
-    const len = (0.95 - 0.5 * t) * (0.75 + rnd() * 0.35);
-    const rot = rnd() * 6.28;
-    for (let k = 0; k < per; k++) {
-      const ang = rot + (k / per) * 6.283 + (rnd() - 0.5) * 0.7;
-      const L = len * (0.6 + rnd() * 0.5);
-      soup.branch(y, ang, L, L * 0.75 + 0.08, -0.01, (rnd() - 0.5) * 1.6, PINE_V, PINE_U, (0.8 + 0.4 * t) * (snow ? 1.1 : 1), 0.04 + rnd() * 0.05);
+  trunkInto(soup, 0.45, 0.95, 0.045, 0.014, detailed ? 7 : 4, 1, PINE_BARK);
+  const clumps = detailed ? 16 : 6;
+  const crownY = 0.8;
+  for (let k = 0; k < clumps; k++) {
+    // крона — сплюснутый неровный эллипсоид в верхней трети, гуще к центру
+    const a = rnd() * 6.283, rr = Math.sqrt(rnd()) * 0.62;
+    const y = 0.62 + rnd() * 0.33;
+    const taper = 1 - Math.abs(y - crownY) * 2.2;
+    const x = Math.cos(a) * rr * taper, z = Math.sin(a) * rr * taper;
+    if (detailed && rr > 0.25) {
+      // голый сук от ствола к пучку
+      const br = new THREE.CylinderGeometry(0.008, 0.016, 1, 4, 1, true);
+      const from = new THREE.Vector3(0, y - 0.04, 0), to = new THREE.Vector3(x * 0.85, y, z * 0.85);
+      const d = to.clone().sub(from);
+      br.scale(1, d.length(), 1);
+      br.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), d.clone().normalize()));
+      br.translate((from.x + to.x) / 2, (from.y + to.y) / 2, (from.z + to.z) / 2);
+      soup.solid(br, 0.8, BARK_UV);
     }
+    const size = (detailed ? 0.5 : 0.8) + rnd() * 0.25;
+    soup.clump(x, y, z, size, rnd() * 3, PINE_TUFT, (0.7 + 0.45 * (y - 0.6) / 0.35) * (snow ? 1.1 : 1), crownY);
+  }
+  if (detailed) for (let k = 0; k < 4; k++) {
+    const ang = rnd() * 6.283;
+    soup.branch(0.66 + k * 0.07, ang, 0.5, 0.42, -0.01, (rnd() - 0.5) * 1.4, PINE_V, PINE_U, 0.85, 0.05);
   }
   return soup.build();
 }

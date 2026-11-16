@@ -177,7 +177,8 @@ function Flight({ mission, af, difficulty, quality, flightMode, camMode, input, 
       return;
      }
      engine.current = e;
-     setLoading(false);
+     // экран загрузки держим, пока не придут текстуры и HDR (но не дольше 15 с)
+     Promise.race([e.ready, new Promise((r) => setTimeout(r, 15000))]).then(() => { if (alive) setLoading(false); });
     }, 80);
     return () => { alive = false; clearTimeout(timer); e?.dispose(); engine.current = null; };
     // режим и камера нужны только при старте, дальше ими управляет движок

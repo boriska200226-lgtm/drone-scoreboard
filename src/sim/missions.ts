@@ -100,29 +100,29 @@ const SUMMER: Palette = {
   groundA: 0x4a5a2a, groundB: 0x6e6b3a, shore: 0x8a7d60, tree: 0x2a4628, treeVar: 0x3d5a2a, water: 0x1d3a4a,
   skyTop: 0x2f6db5, skyBottom: 0xb4cfe6, fog: 0xa9c3d8, fogDensity: 0.0009,
   sun: 0xfff1dc, sunIntensity: 3.2, ambient: 0xa8c4e8, ambientIntensity: 0.9, sunDir: [0.45, 0.75, 0.35],
-  clouds: 0.42, exposure: 0.95,
+  clouds: 0.42, exposure: 0.95, hdr: "rooitou_park_1k.hdr", grassTint: [0.86, 0.9, 0.74],
 };
 const HAZE: Palette = {
   ...SUMMER, groundB: 0x7a6a3c, skyTop: 0x7a8aa0, skyBottom: 0xd2a77a, fog: 0xb99a7a, fogDensity: 0.0018,
   sun: 0xffb070, sunIntensity: 2.8, ambient: 0xc8a888, ambientIntensity: 0.8, sunDir: [-0.55, 0.42, 0.4],
-  clouds: 0.25, exposure: 1.0,
+  clouds: 0.25, exposure: 1.0, hdr: "venice_sunset_1k.hdr", grassTint: [1.0, 0.9, 0.6],
 };
 const DUSK_FOG: Palette = {
   groundA: 0x34452a, groundB: 0x464a30, shore: 0x6d6a58, tree: 0x1f3a28, treeVar: 0x2a4028, water: 0x18303c,
   skyTop: 0x3c4652, skyBottom: 0x7d8790, fog: 0x6f7880, fogDensity: 0.0066,
   sun: 0xffc89a, sunIntensity: 1.0, ambient: 0x8a96a8, ambientIntensity: 1.0, sunDir: [0.6, 0.14, -0.5],
-  clouds: 0.85, exposure: 1.25,
+  clouds: 0.85, exposure: 1.25, hdr: "kiara_1_dawn_1k.hdr", grassTint: [0.72, 0.8, 0.66],
 };
 const WINTER: Palette = {
   groundA: 0xdfe6ee, groundB: 0xc6d2df, shore: 0x9aa6b2, tree: 0x1f3a2e, treeVar: 0x2a4636, water: 0x16262f,
   skyTop: 0x6d86a3, skyBottom: 0xd3dde8, fog: 0xc8d3df, fogDensity: 0.0024,
   sun: 0xfff4e8, sunIntensity: 2.4, ambient: 0xc8d8f0, ambientIntensity: 1.0, sunDir: [0.3, 0.28, 0.65],
-  clouds: 0.7, exposure: 0.82, snow: true,
+  clouds: 0.7, exposure: 0.82, snow: true, hdr: "forest_slope_1k.hdr",
 };
 const OVERCAST: Palette = {
   ...SUMMER, skyTop: 0x6f7f90, skyBottom: 0xbcc5ce, fog: 0xb0bac4, fogDensity: 0.0014,
   sun: 0xf2f2f2, sunIntensity: 2.6, ambient: 0xc0cad6, ambientIntensity: 1.1, sunDir: [-0.3, 0.75, -0.25],
-  clouds: 0.88, exposure: 1.05,
+  clouds: 0.88, exposure: 1.05, hdr: "forest_slope_1k.hdr", grassTint: [0.8, 0.86, 0.72],
 };
 
 // ───────────────────────────── 1. Учебный полигон ─────────────────────────────
