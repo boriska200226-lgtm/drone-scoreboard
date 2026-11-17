@@ -204,6 +204,7 @@ export class SimEngine {
       say: (t, k = "info") => o.onSay(t, k),
       thermal: () => this.thermal,
       camDir: () => this.camDirV,
+      camPos: () => this.cam.position,
     };
     this.mission = o.mission.create(ctx);
     if (o.flightMode) this.drone.mode = o.flightMode;

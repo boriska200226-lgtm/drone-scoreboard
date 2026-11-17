@@ -1,10 +1,11 @@
 // Процедурный мир: рельеф, река, тайга, постройки. Слой 0 — видимый спектр, слой 1 — тепловизор.
 import * as THREE from "three";
 import { clamp, fbm, lerp, makeNoise2D, mulberry32, smoothstep } from "./noise";
-import { installAtmosphere, makeFoliageMaterial, makeSkyMaterial, makeTerrainMaterial, makeWaterMaterial, SkyParams, TerrainTextures } from "./shaders";
+import { installAtmosphere, makeSkyMaterial, makeTerrainMaterial, makeWaterMaterial, SkyParams, TerrainTextures } from "./shaders";
 import { RGBELoader } from "three/examples/jsm/loaders/RGBELoader.js";
 import { Water } from "three/examples/jsm/objects/Water.js";
 import { GrassField } from "./grass";
+import { BIRCH, ForestKit, PINE, SPRUCE } from "./forest";
 
 const ASSET = (p: string) => `${import.meta.env.BASE_URL}sim/${p}`;
 
@@ -37,11 +38,10 @@ export interface WorldCfg {
 }
 
 const TREE_CELL = 16;
-const CHUNK = 128;
-const SPRUCE = 0, PINE = 1;
+const CHUNK = 64;
 
-interface TreeRef { hi: THREE.InstancedMesh; lo: THREE.InstancedMesh; th: THREE.InstancedMesh; idx: number }
-interface Chunk { x: number; z: number; hi: THREE.InstancedMesh; lo: THREE.InstancedMesh }
+interface TreeRef { far: THREE.InstancedMesh; idx: number }
+interface Chunk { x: number; z: number; near: THREE.InstancedMesh[]; far: THREE.InstancedMesh }
 
 export class World {
   scene = new THREE.Scene();
@@ -75,8 +75,9 @@ export class World {
   private hemi!: THREE.HemisphereLight;
   private splat!: THREE.BufferAttribute;
   private envRT: THREE.WebGLRenderTarget | null = null;
-  private atlas!: THREE.Texture;
-  private spruceLo!: THREE.BufferGeometry;
+  kit!: ForestKit;
+  private bakeDone!: () => void;
+  private forestBaked = new Promise<void>((r) => { this.bakeDone = r; });
 
   constructor(cfg: WorldCfg, quality: Quality) {
     this.cfg = cfg;
@@ -88,7 +89,8 @@ export class World {
     this.treeX = new Float32Array(0); this.treeZ = new Float32Array(0); this.treeY = new Float32Array(0);
     this.treeH = new Float32Array(0); this.treeR = new Float32Array(0);
     this.treeKind = new Uint8Array(0); this.treeAlive = new Uint8Array(0);
-    this.ready = new Promise((res) => { this.loader.onLoad = () => res(); this.loader.onError = () => res(); });
+    const assets = new Promise<void>((res) => { this.loader.onLoad = () => res(); this.loader.onError = () => res(); });
+    this.ready = Promise.all([assets, this.forestBaked]).then(() => undefined);
     this.buildHeights();
     this.buildSky();
     this.buildTerrain();
@@ -191,6 +193,8 @@ export class World {
 
   /** Карта окружения для PBR-отражений строится из самого неба. */
   bakeEnvironment(renderer: THREE.WebGLRenderer) {
+    // дальние деревья — снимки настоящих, снимаем их, когда загрузятся текстуры коры и хвои
+    this.kit.bake(renderer).then(this.bakeDone, this.bakeDone);
     const pm = new THREE.PMREMGenerator(renderer);
     const s = new THREE.Scene();
     const sky = new THREE.Mesh(this.sky.geometry, this.sky.material);
@@ -242,10 +246,11 @@ export class World {
     this.lodAcc += dt;
     if (this.lodAcc > 0.3) {
       this.lodAcc = 0;
-      const far = this.quality === "high" ? 230 : this.quality === "medium" ? 150 : -1;
+      const far = this.quality === "high" ? 125 : this.quality === "medium" ? 80 : -1;
       for (const c of this.chunks) {
-        const near = Math.hypot(c.x - camPos.x, c.z - camPos.z) < far;
-        c.hi.visible = near; c.lo.visible = !near;
+        const near = Math.hypot(c.x - camPos.x, c.z - camPos.z) < far + CHUNK * 0.7;
+        for (const m of c.near) m.visible = near;
+        c.far.visible = !near;
       }
     }
   }
@@ -389,10 +394,16 @@ export class World {
   private buildTrees() {
     const { cfg, size } = this;
     const pal = cfg.palette;
+    const snow = !!pal.snow;
     const rnd = mulberry32(cfg.seed * 31 + 5);
     const noise = makeNoise2D(cfg.seed + 99);
+    const kit = new ForestKit({
+      snow, time: this.time, a2c: this.quality === "high", variantsPerSpecies: this.quality === "low" ? 2 : 3,
+      leafTint: new THREE.Color(...(pal.grassTint ?? [0.86, 0.9, 0.74])).lerp(new THREE.Color(1, 1, 1), 0.5),
+    });
+    this.kit = kit;
     const step = Math.sqrt(100 / Math.max(0.05, cfg.forestDensity));
-    const xs: number[] = [], zs: number[] = [], hs: number[] = [], rs: number[] = [], kinds: number[] = [];
+    const xs: number[] = [], zs: number[] = [], hs: number[] = [], rs: number[] = [], kinds: number[] = [], vars: number[] = [];
     const half = size / 2 - 20;
     for (let gz = -half; gz < half; gz += step) {
       for (let gx = -half; gx < half; gx += step) {
@@ -400,11 +411,15 @@ export class World {
         const u = rnd(), v = rnd(), w = rnd();
         if (fbm(noise, x / 120, z / 120, 2) < -0.22) continue;
         if (!this.treeAllowed(x, z)) continue;
-        // сосны — на сухих гривах, ели — в низинах
-        const pine = fbm(noise, x / 210 + 31, z / 210 - 12, 2) + (this.groundAt(x, z) - 8) * 0.02 > 0.12 ? v < 0.8 : v < 0.12;
-        const hgt = pine ? 15 + u * 11 : 9 + u * 15;
-        xs.push(x); zs.push(z); hs.push(hgt); kinds.push(pine ? PINE : SPRUCE);
-        rs.push(pine ? 2.2 + hgt * 0.06 + w * 0.8 : 1.5 + hgt * 0.1 + w * 0.8);
+        // сосна — на сухих гривах, ель — в низинах, берёза — пятнами на опушках и вырубках
+        const dry = fbm(noise, x / 210 + 31, z / 210 - 12, 2) + (this.groundAt(x, z) - 8) * 0.02 > 0.12;
+        const birchy = fbm(noise, x / 90 - 7, z / 90 + 5, 2) > 0.18;
+        const kind = dry ? (v < 0.78 ? PINE : v < 0.9 ? BIRCH : SPRUCE) : birchy && v < 0.55 ? BIRCH : v < 0.1 ? PINE : SPRUCE;
+        const hgt = kind === PINE ? 16 + u * 11 : kind === BIRCH ? 11 + u * 9 : 10 + u * 15;
+        const list = kit.bySpecies[kind];
+        const vi = list[Math.floor(w * list.length) % list.length];
+        xs.push(x); zs.push(z); hs.push(hgt); kinds.push(kind); vars.push(vi);
+        rs.push(kit.variants[vi].crown * hgt * 0.9);
       }
     }
     const count = xs.length;
@@ -415,21 +430,9 @@ export class World {
     this.treeY = new Float32Array(count);
     this.treeAlive = new Uint8Array(count).fill(1);
 
-    const base = new THREE.Color(pal.tree), alt = new THREE.Color(pal.treeVar);
-    const snow = !!pal.snow;
-    const atlas = this.own(conifersAtlas(base, alt, snow));
-    this.atlas = atlas;
-    const geos = [
-      { hi: this.own(spruceGeometry(mulberry32(3), snow, true)), lo: this.own(spruceGeometry(mulberry32(3), snow, false)) },
-      { hi: this.own(pineGeometry(mulberry32(4), snow, true)), lo: this.own(pineGeometry(mulberry32(4), snow, false)) },
-    ];
-    this.spruceLo = geos[0].lo;
-    const foliage = this.own(makeFoliageMaterial(this.time, 0.012, atlas, this.quality === "high"));
-    const thermalMat = this.own(new THREE.MeshBasicMaterial({ color: new THREE.Color(0.05, 0.05, 0.05), fog: false, toneMapped: false }));
-
     const buckets = new Map<string, number[]>();
     for (let i = 0; i < count; i++) {
-      const key = `${Math.floor(xs[i] / CHUNK)},${Math.floor(zs[i] / CHUNK)},${kinds[i]}`;
+      const key = `${Math.floor(xs[i] / CHUNK)},${Math.floor(zs[i] / CHUNK)},${vars[i]}`;
       let b = buckets.get(key);
       if (!b) buckets.set(key, (b = []));
       b.push(i);
@@ -439,34 +442,36 @@ export class World {
       list.push(i);
     }
     this.refs = new Array(count);
-    const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(), p = new THREE.Vector3(), col = new THREE.Color();
+    const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3(), p = new THREE.Vector3(), col = new THREE.Color();
     for (const [key, list] of buckets) {
-      const [cx, cz, kind] = key.split(",").map(Number);
-      const g = geos[kind];
-      const hi = new THREE.InstancedMesh(g.hi, foliage, list.length);
-      const lo = new THREE.InstancedMesh(g.lo, foliage, list.length);
-      const th = new THREE.InstancedMesh(g.lo, thermalMat, list.length);
+      const [cx, cz, vi] = key.split(",").map(Number);
+      const v = kit.variants[vi];
+      const far = new THREE.InstancedMesh(v.impostor, kit.impostorMat, list.length);
       list.forEach((i, k) => {
-        const y = this.groundAt(xs[i], zs[i]) - 0.25;
+        const y = this.groundAt(xs[i], zs[i]) - 0.2;
         this.treeY[i] = y;
         p.set(xs[i], y, zs[i]);
         q.setFromAxisAngle(THREE.Object3D.DEFAULT_UP, rnd() * 6.28);
-        s.set(rs[i], hs[i], rs[i]);
-        hi.setMatrixAt(k, m4.compose(p, q, s));
-        const tint = 0.72 + rnd() * 0.5;
+        sc.setScalar(hs[i]);
+        far.setMatrixAt(k, m4.compose(p, q, sc));
+        const tint = 0.8 + rnd() * 0.35;
         this.treeTint[i] = tint;
-        col.setScalar(tint);
-        hi.setColorAt(k, col);
-        this.refs[i] = { hi, lo, th, idx: k };
+        far.setColorAt(k, col.setScalar(tint));
+        this.refs[i] = { far, idx: k };
       });
-      lo.instanceMatrix = hi.instanceMatrix;
-      th.instanceMatrix = hi.instanceMatrix;
-      lo.instanceColor = hi.instanceColor;
-      for (const m of [hi, lo, th]) { m.computeBoundingSphere(); this.scene.add(m); this.disposables.push(m); }
-      hi.castShadow = true; hi.receiveShadow = true; lo.receiveShadow = true;
-      hi.visible = false;
+      const near: THREE.InstancedMesh[] = [];
+      if (this.quality !== "low") {
+        near.push(new THREE.InstancedMesh(v.branches, v.species === BIRCH ? kit.barkMats.birch : kit.barkMats.pine, list.length));
+        const lm = kit.leafMats[v.species];
+        if (v.leaves && lm) near.push(new THREE.InstancedMesh(v.leaves, lm, list.length));
+      }
+      const th = new THREE.InstancedMesh(v.impostor, kit.thermalMat, list.length);
+      for (const m of [...near, th]) { m.instanceMatrix = far.instanceMatrix; m.instanceColor = far.instanceColor; }
+      for (const m of [far, ...near, th]) { m.computeBoundingSphere(); m.castShadow = true; m.receiveShadow = true; this.scene.add(m); }
+      th.castShadow = false;
       th.layers.set(THERMAL_LAYER);
-      this.chunks.push({ x: (cx + 0.5) * CHUNK, z: (cz + 0.5) * CHUNK, hi, lo });
+      for (const m of near) m.visible = false;
+      this.chunks.push({ x: (cx + 0.5) * CHUNK, z: (cz + 0.5) * CHUNK, near, far });
     }
   }
 
@@ -500,7 +505,8 @@ export class World {
     };
     // подрост: молодые ёлочки 1–3 м
     const saplings = this.quality === "high" ? 4000 : 1500;
-    scatter(this.spruceLo.clone(), makeFoliageMaterial(this.time, 0.02, this.atlas, this.quality === "high"), saplings, 0.45, 1.3, 2.4, 0.05, [0.7, 1.2], 0.08);
+    const sap = this.kit.variants[this.kit.bySpecies[SPRUCE][0]];
+    scatter(sap.impostor.clone(), this.kit.impostorMat, saplings, 1.0, 3.2, 1, 0.05, [0.75, 1.15], 0.08);
     // валуны: фото-текстура камня с картой нормалей, слегка «сплющенные» и утопленные в грунт
     const rockGeo = new THREE.DodecahedronGeometry(1, 1);
     const rp = rockGeo.attributes.position;
@@ -558,8 +564,10 @@ export class World {
       const rel = (p.y - this.treeY[i]) / this.treeH[i];
       if (rel < 0 || rel > 1) continue;
       let rad: number;
-      if (this.treeKind[i] === PINE) rad = rel < 0.55 ? 0.3 : this.treeR[i] * 0.8;
-      else rad = rel < 0.14 ? 0.25 : this.treeR[i] * (1 - rel) * 0.85;
+      const kind = this.treeKind[i];
+      if (kind === PINE) rad = rel < 0.58 ? 0.3 : this.treeR[i] * 0.8;
+      else if (kind === BIRCH) rad = rel < 0.35 ? 0.2 : this.treeR[i] * 0.75;
+      else rad = rel < 0.1 ? 0.25 : this.treeR[i] * (1 - rel) * 1.05;
       if (Math.hypot(p.x - this.treeX[i], p.z - this.treeZ[i]) < rad + r * 0.6) return "Столкновение с деревом";
     }
     for (const c of this.colliders) {
@@ -572,8 +580,8 @@ export class World {
   removeTree(i: number) {
     this.treeAlive[i] = 0;
     const ref = this.refs[i];
-    ref.hi.setMatrixAt(ref.idx, new THREE.Matrix4().makeScale(0, 0, 0));
-    ref.hi.instanceMatrix.needsUpdate = true;
+    ref.far.setMatrixAt(ref.idx, new THREE.Matrix4().makeScale(0, 0, 0));
+    ref.far.instanceMatrix.needsUpdate = true;
   }
 
   /** k: 0 — живое дерево, 1 — полностью обугленное. glow — отсвет пламени. */
@@ -582,8 +590,8 @@ export class World {
     const t = this.treeTint[i];
     const c = new THREE.Color(t, t, t).lerp(new THREE.Color(0.1, 0.08, 0.07), k);
     if (glow > 0) c.lerp(new THREE.Color(2.2, 0.7, 0.15), glow * 0.55);
-    ref.hi.setColorAt(ref.idx, c);
-    ref.hi.instanceColor!.needsUpdate = true;
+    ref.far.setColorAt(ref.idx, c);
+    ref.far.instanceColor!.needsUpdate = true;
   }
 
   /** Добавляет копию объекта в тепловой слой. heat 0..1 — яркость. */
@@ -600,6 +608,7 @@ export class World {
 
   dispose() {
     this.grass?.dispose();
+    this.kit?.dispose();
     if (this.water) (this.water.material as THREE.Material).dispose();
     for (const d of this.disposables) d.dispose();
     this.scene.traverse((o) => {
@@ -616,329 +625,6 @@ export class World {
 }
 
 // ─────────────────────────── геометрия деревьев ───────────────────────────
-
-// Атлас хвои 1024×1024 (v растёт вверх):
-//   v 0.75–1  — ветвь ели;  v 0.5–0.75 — ветвь сосны;
-//   низ слева — пучок сосновой хвои, низ справа — пучок еловой хвои, узкая колонка справа — сплошные цвета.
-const SPRUCE_V: [number, number] = [0.75, 1];
-const PINE_V: [number, number] = [0.5, 0.75];
-const PINE_U = 0.88;
-const PINE_TUFT = { u: [0, 0.484], v: [0.016, 0.484] } as const;
-const SPRUCE_TUFT = { u: [0.5, 0.93], v: [0.016, 0.484] } as const;
-const SOLID_UV: [number, number] = [0.97, 0.41];
-// полосы коры 64×~160 px: развёртка ствола по окружности (u) и высоте (v)
-const BARK = { u: [0.94, 1], v: [0.17, 0.326] } as const;
-const PINE_BARK = { u: [0.94, 1], v: [0.004, 0.16] } as const;
-const BARK_UV: [number, number] = [0.97, 0.25];
-/** Отношение радиуса кроны к высоте дерева: дерево масштабируется неравномерно (R, H, R). */
-const RH = 0.18;
-
-function conifersAtlas(spruce: THREE.Color, pine: THREE.Color, snow: boolean): THREE.CanvasTexture {
-  const W = 1024, H = 1024;
-  const c = document.createElement("canvas");
-  c.width = W; c.height = H;
-  const main = c.getContext("2d")!;
-  // текущий контекст рисования (подменяется при рисовании пучков на отдельном холсте)
-  let g = main;
-  const rnd = mulberry32(911);
-  const css = (col: THREE.Color, k: number, a = 1) => {
-    const t = col.clone().convertLinearToSRGB();
-    return `rgba(${Math.min(255, t.r * 255 * k) | 0},${Math.min(255, t.g * 255 * k) | 0},${Math.min(255, t.b * 255 * k) | 0},${a})`;
-  };
-  const bark = "rgba(70,52,38,1)";
-  const twig = (x0: number, yA: number, x1: number, yB: number, w: number) => {
-    g.strokeStyle = bark; g.lineWidth = w; g.beginPath(); g.moveTo(x0, yA); g.lineTo(x1, yB); g.stroke();
-  };
-  const needles = (x0: number, yA: number, x1: number, yB: number, len: number, density: number, col: THREE.Color, k0: number, k1: number) => {
-    const n = Math.hypot(x1 - x0, yB - yA) * density;
-    for (let i = 0; i < n; i++) {
-      const t = rnd(), x = x0 + (x1 - x0) * t, y = yA + (yB - yA) * t;
-      const ang = Math.atan2(yB - yA, x1 - x0) + (rnd() < 0.5 ? -1 : 1) * (0.6 + rnd() * 0.7);
-      const L = len * (0.6 + rnd() * 0.6) * (1 - t * 0.35);
-      g.strokeStyle = css(col, k0 + rnd() * (k1 - k0) + t * 0.3);
-      g.lineWidth = 2.4 + rnd() * 1.4;
-      g.beginPath(); g.moveTo(x, y); g.lineTo(x + Math.cos(ang) * L, y + Math.sin(ang) * L); g.stroke();
-    }
-  };
-  const body = (x0: number, yA: number, x1: number, yB: number, w: number, col: THREE.Color) => {
-    g.strokeStyle = css(col, 0.62); g.lineCap = "round"; g.lineWidth = w;
-    g.beginPath(); g.moveTo(x0, yA); g.lineTo(x1, yB); g.stroke();
-    g.lineCap = "butt";
-  };
-  const snowDab = (x: number, y: number, r: number) => {
-    const gr = g.createRadialGradient(x, y, 0, x, y, r);
-    gr.addColorStop(0, "rgba(245,248,255,0.95)"); gr.addColorStop(1, "rgba(235,240,250,0)");
-    g.fillStyle = gr; g.beginPath(); g.arc(x, y, r, 0, 6.3); g.fill();
-  };
-
-  // ── ветвь ели (y 0–256)
-  const cy = 128;
-  twig(4, cy, W - 20, cy + 6, 6);
-  for (let k = 0; k < 9; k++) {
-    const t = 0.08 + k * 0.1, x = 4 + (W - 30) * t;
-    for (const side of [-1, 1]) {
-      const len = 107 * (1 - t * 0.55) * (0.8 + rnd() * 0.3);
-      const ex = x + len * 0.9, ey = cy + side * len * 0.75;
-      body(x, cy, ex, ey, 15, spruce);
-      twig(x, cy, ex, ey, 3);
-      needles(x, cy, ex, ey, 24, 2.6, spruce, 0.85, 1.35);
-    }
-  }
-  body(10, cy, W - 40, cy + 6, 26, spruce);
-  needles(4, cy, W - 20, cy + 6, 30, 2.2, spruce, 0.85, 1.3);
-  if (snow) for (let i = 0; i < 260; i++) snowDab(20 + rnd() * (W - 60), cy + (rnd() - 0.5) * 180, 4 + rnd() * 12);
-
-  // ── ветвь сосны (y 256–512)
-  const py = 384, pw = W * PINE_U;
-  twig(4, py, pw - 40, py - 8, 7);
-  const tufts: [number, number][] = [];
-  for (let k = 0; k < 10; k++) {
-    const t = 0.25 + k * 0.075, x = 4 + (pw - 50) * t;
-    for (const side of [-1, 1]) {
-      if (rnd() < 0.15) continue;
-      const len = 77 * (0.7 + rnd() * 0.4);
-      const ex = x + len * 0.6, ey = py - 4 + side * len * 0.8;
-      twig(x, py - 4, ex, ey, 3);
-      tufts.push([ex, ey]);
-    }
-  }
-  tufts.push([pw - 40, py - 8], [pw - 90, py - 6]);
-  const pineTuft = (x: number, y: number, r: number) => {
-    g.fillStyle = css(pine, 0.55);
-    g.beginPath(); g.ellipse(x, y, r * 0.75, r * 0.55, 0, 0, 6.3); g.fill();
-    for (let i = 0; i < r * 2.4; i++) {
-      const ang = rnd() * 6.283, L = r * (0.45 + rnd() * 0.75);
-      g.strokeStyle = css(pine, 0.75 + rnd() * 0.55); g.lineWidth = 2.2 + rnd() * 1.2;
-      g.beginPath(); g.moveTo(x, y); g.lineTo(x + Math.cos(ang) * L, y + Math.sin(ang) * L * 0.8); g.stroke();
-    }
-    if (snow && rnd() < 0.8) snowDab(x, y - r * 0.25, r * 0.6);
-  };
-  for (const [x, y] of tufts) pineTuft(x, y, 40);
-
-  // пучки рисуем на отдельном холсте и обрезаем мягкой круглой маской — силуэт кроны не будет «квадратным»
-  const round = (x0: number, y0: number, w: number, h: number, draw: () => void) => {
-    const keep = g;
-    const off = document.createElement("canvas");
-    off.width = W; off.height = H;
-    const og = off.getContext("2d")!;
-    g = og;
-    draw();
-    og.globalCompositeOperation = "destination-in";
-    const gr = og.createRadialGradient(x0 + w / 2, y0 + h / 2, Math.min(w, h) * 0.25, x0 + w / 2, y0 + h / 2, Math.min(w, h) * 0.5);
-    gr.addColorStop(0, "rgba(0,0,0,1)"); gr.addColorStop(1, "rgba(0,0,0,0)");
-    og.fillStyle = gr; og.fillRect(x0, y0, w, h);
-    g = keep;
-    keep.drawImage(off, x0, y0, w, h, x0, y0, w, h);
-  };
-  // ── пучок сосны (x 0–496, y 528–1008): несколько кистей хвои на коротких веточках
-  round(0, 528, 496, 480, () => {
-    const cx = 248, cy2 = 768;
-    for (let k = 0; k < 9; k++) {
-      const a = (k / 9) * 6.283 + rnd() * 0.4, d = 70 + rnd() * 90;
-      const x = cx + Math.cos(a) * d, y = cy2 + Math.sin(a) * d * 0.8;
-      twig(cx, cy2, x, y, 4);
-    }
-    for (let k = 0; k < 16; k++) {
-      const a = rnd() * 6.283, d = Math.sqrt(rnd()) * 120;
-      pineTuft(cx + Math.cos(a) * d, cy2 + Math.sin(a) * d * 0.8, 46 + rnd() * 20);
-    }
-  });
-  // ── пучок ели (x 512–952): плотный «лапник» из веточек с короткой хвоей
-  round(512, 528, 440, 480, () => {
-    const cx = 732, cy2 = 768;
-    for (let k = 0; k < 13; k++) {
-      const a = (k / 13) * 6.283 + rnd() * 0.3, len = 140 + rnd() * 60;
-      const ex = cx + Math.cos(a) * len, ey = cy2 + Math.sin(a) * len * 0.85;
-      body(cx, cy2, ex, ey, 30, spruce);
-      twig(cx, cy2, ex, ey, 3);
-      needles(cx, cy2, ex, ey, 26, 2.4, spruce, 0.8, 1.3);
-    }
-    if (snow) for (let i = 0; i < 90; i++) snowDab(cx + (rnd() - 0.5) * 340, cy2 - rnd() * 200, 6 + rnd() * 14);
-  });
-  // ── сплошной цвет хвои и две полосы коры: серо-бурая с продольными трещинами и рыжая чешуйчатая сосновая
-  g.fillStyle = css(spruce, 0.6); g.fillRect(964, 520, 60, 160);
-  const barkStrip = (y0: number, h: number, base: [number, number, number], crack: string, flakes: boolean) => {
-    g.fillStyle = `rgb(${base.join(",")})`; g.fillRect(964, y0, 60, h);
-    for (let i = 0; i < 420; i++) {
-      const x = 964 + rnd() * 60, y = y0 + rnd() * h, k = 0.75 + rnd() * 0.5;
-      g.fillStyle = `rgba(${base.map((c) => Math.min(255, c * k) | 0).join(",")},0.8)`;
-      g.fillRect(x, y, 2 + rnd() * 6, 2 + rnd() * (flakes ? 4 : 10));
-    }
-    g.strokeStyle = crack; g.lineWidth = 1.5;
-    for (let i = 0; i < 14; i++) {
-      let x = 964 + rnd() * 60;
-      g.beginPath(); g.moveTo(x, y0);
-      for (let y = y0; y < y0 + h; y += 8) { x += (rnd() - 0.5) * 3; g.lineTo(x, y); }
-      g.stroke();
-    }
-  };
-  barkStrip(690, 160, [86, 70, 58], "rgba(30,22,16,0.8)", false);
-  barkStrip(860, 160, [176, 104, 58], "rgba(90,50,28,0.6)", true);
-
-  const tex = new THREE.CanvasTexture(c);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  tex.anisotropy = 8;
-  tex.minFilter = THREE.LinearMipmapLinearFilter;
-  return tex;
-}
-
-class CardSoup {
-  pos: number[] = []; nor: number[] = []; uv: number[] = []; col: number[] = [];
-  segs = 2;
-  vert(p: THREE.Vector3, n: THREE.Vector3, u: number, v: number, shade: number) {
-    this.pos.push(p.x, p.y, p.z); this.nor.push(n.x, n.y, n.z); this.uv.push(u, v); this.col.push(shade, shade, shade);
-  }
-  /** Ветвь-карточка: от ствола на высоте y под углом ang, длиной len, с провисанием droop и наклоном tilt вокруг своей оси. */
-  branch(y: number, ang: number, len: number, width: number, droop: number, tilt: number, v: readonly [number, number], u1: number, shade: number, rise = 0) {
-    const seg = this.segs;
-    const dir = new THREE.Vector3(Math.cos(ang), 0, Math.sin(ang)), side = new THREE.Vector3(-dir.z, 0, dir.x);
-    const ct = Math.cos(tilt), st = Math.sin(tilt);
-    const rows: THREE.Vector3[][] = [];
-    for (let i = 0; i <= seg; i++) {
-      const t = i / seg;
-      const c = dir.clone().multiplyScalar(len * t).setY(y + rise * t - droop * t * t);
-      const w = width * (0.55 + 0.45 * Math.sin(Math.min(1, t * 1.6 + 0.15) * Math.PI * 0.85));
-      const off = side.clone().multiplyScalar(ct * w / 2).setY(st * w / 2 * RH);
-      rows.push([c.clone().sub(off), c.clone().add(off)]);
-    }
-    const n = new THREE.Vector3();
-    for (let i = 0; i < seg; i++) {
-      const a = rows[i], b = rows[i + 1];
-      const ua = (i / seg) * u1, ub = ((i + 1) / seg) * u1;
-      const quad: [THREE.Vector3, number, number][] = [[a[0], ua, v[0]], [b[0], ub, v[0]], [b[1], ub, v[1]], [a[0], ua, v[0]], [b[1], ub, v[1]], [a[1], ua, v[1]]];
-      for (const [p, u, vv] of quad) {
-        n.set(p.x, (p.y - y) * 0.5 + 0.55 * Math.hypot(p.x, p.z), p.z).normalize();
-        this.vert(p, n, u, vv, shade * (0.7 + 0.3 * Math.min(1, Math.hypot(p.x, p.z) / Math.max(0.05, len))));
-      }
-    }
-  }
-  /** Объёмный пучок хвои: три вертикальные плоскости под 60° и одна горизонтальная (видна сверху с дрона). */
-  clump(cx: number, cy: number, cz: number, size: number, rot: number, reg: { u: readonly [number, number]; v: readonly [number, number] }, shade: number, crownY: number) {
-    const hs = size / 2, vs = hs * RH;
-    const n = new THREE.Vector3();
-    const quad = (corners: THREE.Vector3[], s: number) => {
-      const uvs: [number, number][] = [[reg.u[0], reg.v[0]], [reg.u[1], reg.v[0]], [reg.u[1], reg.v[1]], [reg.u[0], reg.v[1]]];
-      for (const k of [0, 1, 2, 0, 2, 3]) {
-        const p = corners[k];
-        // нормаль «от оси кроны»: мягкое объёмное освещение пучков
-        n.set(p.x, (p.y - crownY) * 2.5 + 0.35, p.z).normalize();
-        this.vert(p, n, uvs[k][0], uvs[k][1], s);
-      }
-    };
-    for (let k = 0; k < 3; k++) {
-      const a = rot + (k * Math.PI) / 3, dx = Math.cos(a) * hs, dz = Math.sin(a) * hs;
-      quad([
-        new THREE.Vector3(cx - dx, cy - vs, cz - dz), new THREE.Vector3(cx + dx, cy - vs, cz + dz),
-        new THREE.Vector3(cx + dx, cy + vs, cz + dz), new THREE.Vector3(cx - dx, cy + vs, cz - dz),
-      ], shade);
-    }
-    const ca = Math.cos(rot) * hs, sa = Math.sin(rot) * hs;
-    quad([
-      new THREE.Vector3(cx - ca + sa, cy, cz - sa - ca), new THREE.Vector3(cx + ca + sa, cy, cz + sa - ca),
-      new THREE.Vector3(cx + ca - sa, cy, cz + sa + ca), new THREE.Vector3(cx - ca - sa, cy, cz - sa + ca),
-    ], shade * 1.1);
-  }
-  /** Сплошная геометрия (ствол, сердцевина) с атласным участком сплошного цвета. */
-  solid(geo: THREE.BufferGeometry, shade: number, uv: [number, number] = SOLID_UV) {
-    const ng = geo.index ? geo.toNonIndexed() : geo;
-    ng.computeVertexNormals();
-    const p = ng.attributes.position, nn = ng.attributes.normal;
-    const a = new THREE.Vector3(), n = new THREE.Vector3();
-    for (let i = 0; i < p.count; i++) {
-      a.fromBufferAttribute(p, i); n.fromBufferAttribute(nn, i);
-      this.vert(a, n, uv[0], uv[1], shade);
-    }
-    if (ng !== geo) ng.dispose();
-    geo.dispose();
-  }
-  build(): THREE.BufferGeometry {
-    const g = new THREE.BufferGeometry();
-    g.setAttribute("position", new THREE.Float32BufferAttribute(this.pos, 3));
-    g.setAttribute("normal", new THREE.Float32BufferAttribute(this.nor, 3));
-    g.setAttribute("uv", new THREE.Float32BufferAttribute(this.uv, 2));
-    g.setAttribute("color", new THREE.Float32BufferAttribute(this.col, 3));
-    return g;
-  }
-}
-
-/** Ствол с развёрткой коры из атласа: по окружности — ширина полосы, по высоте — её длина. */
-function trunkInto(soup: CardSoup, y0: number, y1: number, r0: number, r1: number, segs: number, shade: number, reg: { u: readonly [number, number]; v: readonly [number, number] } = BARK) {
-  const t = new THREE.CylinderGeometry(r1, r0, y1 - y0, segs, 1, true);
-  t.translate(0, (y0 + y1) / 2, 0);
-  const ng = t.toNonIndexed();
-  ng.computeVertexNormals();
-  const p = ng.attributes.position, nn = ng.attributes.normal, uv = ng.attributes.uv;
-  const a = new THREE.Vector3(), n = new THREE.Vector3();
-  for (let i = 0; i < p.count; i++) {
-    a.fromBufferAttribute(p, i); n.fromBufferAttribute(nn, i);
-    soup.vert(a, n, reg.u[0] + uv.getX(i) * (reg.u[1] - reg.u[0]), reg.v[0] + uv.getY(i) * (reg.v[1] - reg.v[0]), shade);
-  }
-  ng.dispose(); t.dispose();
-}
-
-/** Ель единичной высоты и радиуса: мутовки провисающих лап с пушистыми концами, густеющие к вершине. */
-function spruceGeometry(rnd: () => number, snow: boolean, detailed: boolean): THREE.BufferGeometry {
-  const soup = new CardSoup();
-  soup.segs = detailed ? 2 : 1;
-  trunkInto(soup, 0, 0.92, 0.055, 0.01, detailed ? 6 : 4, 0.9);
-  const core = new THREE.ConeGeometry(detailed ? 0.2 : 0.34, 0.8, detailed ? 7 : 5, 1, true);
-  core.translate(0, 0.54, 0);
-  soup.solid(core, detailed ? 0.7 : 0.95);
-  const tiers = detailed ? 11 : 5, per = detailed ? 6 : 4;
-  for (let i = 0; i < tiers; i++) {
-    const t = i / (tiers - 1);
-    const y = 0.1 + 0.84 * t;
-    const len = Math.pow(1 - t, 0.85) * 0.95 + 0.08;
-    const rot = rnd() * 6.28;
-    const shade = 0.55 + 0.5 * t + (snow ? 0.1 : 0);
-    for (let k = 0; k < per; k++) {
-      const ang = rot + (k / per) * 6.283 + (rnd() - 0.5) * 0.5;
-      const L = len * (0.8 + rnd() * 0.35);
-      soup.branch(y, ang, L, L * 0.55 + 0.05, 0.05 + L * 0.06, (rnd() - 0.5) * 1.2, SPRUCE_V, 0.96, shade * (0.85 + rnd() * 0.3));
-      // пушистый конец лапы
-      if (detailed ? k % 2 === 0 : k === 0) {
-        const r = L * 0.78;
-        soup.clump(Math.cos(ang) * r, y - L * 0.04, Math.sin(ang) * r, L * 0.6 + 0.08, rnd() * 3, SPRUCE_TUFT, shade, y);
-      }
-    }
-  }
-  soup.clump(0, 0.95, 0, 0.16, 0, SPRUCE_TUFT, 1.2, 0.95);
-  return soup.build();
-}
-
-/** Сосна: длинный голый ствол с рыжей корой вверху и неровная «облачная» крона из пучков хвои. */
-function pineGeometry(rnd: () => number, snow: boolean, detailed: boolean): THREE.BufferGeometry {
-  const soup = new CardSoup();
-  soup.segs = 1;
-  trunkInto(soup, 0, 0.45, 0.065, 0.045, detailed ? 7 : 4, 0.9);
-  trunkInto(soup, 0.45, 0.95, 0.045, 0.014, detailed ? 7 : 4, 1, PINE_BARK);
-  const clumps = detailed ? 16 : 6;
-  const crownY = 0.8;
-  for (let k = 0; k < clumps; k++) {
-    // крона — сплюснутый неровный эллипсоид в верхней трети, гуще к центру
-    const a = rnd() * 6.283, rr = Math.sqrt(rnd()) * 0.62;
-    const y = 0.62 + rnd() * 0.33;
-    const taper = 1 - Math.abs(y - crownY) * 2.2;
-    const x = Math.cos(a) * rr * taper, z = Math.sin(a) * rr * taper;
-    if (detailed && rr > 0.25) {
-      // голый сук от ствола к пучку
-      const br = new THREE.CylinderGeometry(0.008, 0.016, 1, 4, 1, true);
-      const from = new THREE.Vector3(0, y - 0.04, 0), to = new THREE.Vector3(x * 0.85, y, z * 0.85);
-      const d = to.clone().sub(from);
-      br.scale(1, d.length(), 1);
-      br.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), d.clone().normalize()));
-      br.translate((from.x + to.x) / 2, (from.y + to.y) / 2, (from.z + to.z) / 2);
-      soup.solid(br, 0.8, BARK_UV);
-    }
-    const size = (detailed ? 0.5 : 0.8) + rnd() * 0.25;
-    soup.clump(x, y, z, size, rnd() * 3, PINE_TUFT, (0.7 + 0.45 * (y - 0.6) / 0.35) * (snow ? 1.1 : 1), crownY);
-  }
-  if (detailed) for (let k = 0; k < 4; k++) {
-    const ang = rnd() * 6.283;
-    soup.branch(0.66 + k * 0.07, ang, 0.5, 0.42, -0.01, (rnd() - 0.5) * 1.4, PINE_V, PINE_U, 0.85, 0.05);
-  }
-  return soup.build();
-}
 
 // ─────────────────────────── постройки и реквизит ───────────────────────────
 

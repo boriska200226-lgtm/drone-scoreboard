@@ -1,7 +1,7 @@
 // Сценарии миссий. Каждая миссия описывает мир, погоду и правила выполнения.
 import * as THREE from "three";
 import { Airframe } from "./airframes";
-import { Particles } from "./effects";
+import { FlameField, Particles } from "./effects";
 import { clamp, mulberry32 } from "./noise";
 import { DroneSim } from "./physics";
 import {
@@ -35,6 +35,7 @@ export interface Ctx {
   say(text: string, kind?: SayKind): void;
   thermal(): boolean;
   camDir(): THREE.Vector3;
+  camPos(): THREE.Vector3;
 }
 
 export interface Action { held: boolean; pressed: boolean }
@@ -193,6 +194,7 @@ class FireMission extends Mission {
   private acc = 0; private heat = 0; private burning = 0; private lost = 0; private dropped = 0;
   private spread: number; private pumpSaid = 0;
   private glow: THREE.PointLight;
+  private flames: FlameField;
   private curtain: THREE.Mesh;
   private curtainTex: THREE.CanvasTexture;
   private smolder: Float32Array;
@@ -239,6 +241,7 @@ class FireMission extends Mission {
     this.curtain.visible = false;
     this.curtain.renderOrder = 4;
     ctx.world.scene.add(this.curtain);
+    this.flames = new FlameField(ctx.world.scene, this.nx * this.nz * 8);
     this.glow = new THREE.PointLight(0xff7a2a, 0, 110, 1.6);
     this.glow.position.set(40, ctx.world.groundAt(40, -420) + 8, -420);
     ctx.world.scene.add(this.glow);
@@ -374,14 +377,31 @@ class FireMission extends Mission {
     this.glow.intensity = Math.min(1, gi / 8) * 120 * (0.85 + 0.15 * Math.sin(this.time * 17) * Math.sin(this.time * 7.3));
 
     // пламя и дым
+    this.flames.begin();
     for (let c = 0; c < this.state.length; c++) {
       if (this.state[c] !== 2) continue;
       const I = this.inten[c];
-      if (this.ctx.rnd() < I * 13 * dt) {
+      // низовой огонь: языки пламени на постоянных местах клетки, их высота дышит и зависит от силы горения
+      for (let k = 0; k < 5; k++) {
+        const h1 = Math.sin(c * 12.9898 + k * 78.233) * 43758.5453, r1 = h1 - Math.floor(h1);
+        const h2 = Math.sin(c * 39.346 + k * 11.135) * 24634.6345, r2 = h2 - Math.floor(h2);
+        const x = this.cx(c) + (r1 - 0.5) * this.cs * 0.9, z = this.cz(c) + (r2 - 0.5) * this.cs * 0.9;
+        const breath = 0.8 + 0.2 * Math.sin(this.time * (2 + r1 * 3) + k);
+        this.flames.add(x, world.groundAt(x, z) - 0.2, z, (2.5 + r2 * 2.5) * (0.5 + 0.5 * I), (2.5 + r1 * 4) * (0.3 + 0.7 * I) * breath, I);
+      }
+      // верховой огонь: горящие кроны деревьев
+      const trees = this.cellTrees[c];
+      for (let k = 0; k < Math.min(3, trees.length); k++) {
+        const t = trees[(k * 7) % trees.length];
+        if (!world.treeAlive[t] || I < 0.35) continue;
+        const h = world.treeH[t];
+        this.flames.add(world.treeX[t], world.treeY[t] + h * 0.15, world.treeZ[t], h * 0.35 * I + 1.5, h * (0.75 + 0.15 * Math.sin(this.time * 3 + t)) * I, I);
+      }
+      // искры и горящие хлопья, которые уносит потоком
+      if (this.ctx.rnd() < I * 9 * dt) {
         const x = this.cx(c) + (this.ctx.rnd() - 0.5) * this.cs, z = this.cz(c) + (this.ctx.rnd() - 0.5) * this.cs;
-        // размер языков пламени зависит от силы горения: под водой огонь заметно «садится»
-        fx.fire.spawn(x, world.groundAt(x, z) + this.ctx.rnd() * 9 * I, z, wx * 1.5, (3 + this.ctx.rnd() * 4) * (0.5 + 0.5 * I), wz * 1.5,
-          0.8 + this.ctx.rnd() * 0.8, (3.5 + this.ctx.rnd() * 4.5) * (0.3 + 0.7 * I), 1, 1, 1, 0.55);
+        fx.fire.spawn(x, world.groundAt(x, z) + 2 + this.ctx.rnd() * 8 * I, z, wx * 2 + (this.ctx.rnd() - 0.5) * 3, 5 + this.ctx.rnd() * 7, wz * 2 + (this.ctx.rnd() - 0.5) * 3,
+          1.2 + this.ctx.rnd() * 1.4, 0.25 + this.ctx.rnd() * 0.35, 1, 1, 1, 0.9);
       }
       if (this.ctx.rnd() < I * 2.6 * dt) {
         const x = this.cx(c) + (this.ctx.rnd() - 0.5) * this.cs, z = this.cz(c) + (this.ctx.rnd() - 0.5) * this.cs;
@@ -389,6 +409,8 @@ class FireMission extends Mission {
         fx.smoke.spawn(x, world.groundAt(x, z) + 8, z, 0, 4 + this.ctx.rnd() * 2, 0, 12 + this.ctx.rnd() * 6, 9 + this.ctx.rnd() * 5, g * 1.05, g, g * 0.92, 0.42);
       }
     }
+
+    this.flames.end(dt, this.ctx.camPos());
 
     // тлеющие потушенные квадраты: тонкий светлый дымок
     for (let c = 0; c < this.state.length; c++) {
@@ -456,6 +478,8 @@ class FireMission extends Mission {
 
   // брызги и пар несут нулевую массу — они не тушат и не порождают новых брызг
   onWaterHit(x: number, z: number, mass: number) { if (mass > 0) this.splash(x, z, mass); }
+
+  dispose() { this.flames.dispose(); }
 
   extraWind(p: THREE.Vector3, out: THREE.Vector3) {
     const c = this.cellAt(p.x, p.z);

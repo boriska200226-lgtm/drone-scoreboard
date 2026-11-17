@@ -170,3 +170,108 @@ export class Particles {
     this.mat.dispose();
   }
 }
+
+// ─────────────────────────── языки пламени ───────────────────────────
+
+const FLAME_VERT = /* glsl */ `
+attribute float aSeed;
+attribute float aHeat;
+uniform vec3 uCam;
+varying vec2 vUv;
+varying float vSeed;
+varying float vHeat;
+void main() {
+  vUv = uv; vSeed = aSeed; vHeat = aHeat;
+  vec3 c = instanceMatrix[3].xyz;
+  float w = length(instanceMatrix[0].xyz), h = length(instanceMatrix[1].xyz);
+  // цилиндрический билборд: плоскость всегда развёрнута к камере, но стоит вертикально
+  vec3 toCam = uCam - c; toCam.y = 0.;
+  vec3 right = normalize(cross(vec3(0., 1., 0.), normalize(toCam + vec3(1e-4, 0., 0.))));
+  vec3 p = c + right * position.x * w + vec3(0., 1., 0.) * position.y * h;
+  gl_Position = projectionMatrix * viewMatrix * vec4(p, 1.);
+}`;
+
+const FLAME_FRAG = /* glsl */ `
+uniform float uTime;
+varying vec2 vUv;
+varying float vSeed;
+varying float vHeat;
+float hsh(vec2 p){ vec3 p3 = fract(vec3(p.xyx) * .1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
+float vn(vec2 p){ vec2 i = floor(p), f = fract(p); f = f*f*(3.-2.*f);
+  return mix(mix(hsh(i), hsh(i+vec2(1.,0.)), f.x), mix(hsh(i+vec2(0.,1.)), hsh(i+vec2(1.,1.)), f.x), f.y); }
+float fb(vec2 p){ float a = .5, s = 0.; for (int i = 0; i < 4; i++) { s += a * vn(p); p = p * 2.07 + 11.3; a *= .5; } return s; }
+void main() {
+  vec2 uv = vUv;
+  float t = uTime * (1.6 + vSeed * .6);
+  // турбулентность поднимается вверх, у основания пламя плотнее
+  float n = fb(vec2(uv.x * 3. + vSeed * 17., uv.y * 2.4 - t));
+  float n2 = fb(vec2(uv.x * 6. - vSeed * 9., uv.y * 5. - t * 1.7));
+  float x = (uv.x - .5) * 2. + (n - .5) * .7 * uv.y;
+  float body = 1. - abs(x) * (.85 + uv.y * 1.9);
+  float f = body - uv.y * .95 + (n * .6 + n2 * .4 - .5) * 1.1 + .25;
+  f *= smoothstep(0., .08, uv.y) * smoothstep(1., .55, uv.y);
+  f = clamp(f, 0., 1.);
+  if (f < .02) discard;
+  // цвет по температуре: тёмно-красный край → оранжевый → жёлтый → почти белое ядро
+  vec3 col = vec3(.55, .07, .01);
+  col = mix(col, vec3(1., .38, .04), smoothstep(.05, .3, f));
+  col = mix(col, vec3(1., .72, .2), smoothstep(.3, .6, f));
+  col = mix(col, vec3(1., .9, .62), smoothstep(.78, 1., f));
+  float k = f * (.6 + .4 * vHeat);
+  gl_FragColor = vec4(col * k * 1.9, 1.);
+}`;
+
+/** Поле языков пламени: инстансированные билборды с процедурным огнём, яркие — их подхватывает свечение (bloom). */
+export class FlameField {
+  mesh: THREE.InstancedMesh;
+  private seed: THREE.InstancedBufferAttribute;
+  private heat: THREE.InstancedBufferAttribute;
+  private mat: THREE.ShaderMaterial;
+  private m4 = new THREE.Matrix4();
+  private n = 0;
+
+  constructor(scene: THREE.Scene, max: number) {
+    const geo = new THREE.PlaneGeometry(1, 1);
+    geo.translate(0, 0.5, 0);
+    this.seed = new THREE.InstancedBufferAttribute(new Float32Array(max), 1);
+    this.heat = new THREE.InstancedBufferAttribute(new Float32Array(max), 1);
+    for (let i = 0; i < max; i++) this.seed.setX(i, Math.random());
+    geo.setAttribute("aSeed", this.seed);
+    geo.setAttribute("aHeat", this.heat);
+    this.mat = new THREE.ShaderMaterial({
+      vertexShader: FLAME_VERT, fragmentShader: FLAME_FRAG,
+      uniforms: { uTime: { value: 0 }, uCam: { value: new THREE.Vector3() } },
+      transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
+    });
+    this.mesh = new THREE.InstancedMesh(geo, this.mat, max);
+    this.mesh.count = 0;
+    this.mesh.frustumCulled = false;
+    this.mesh.renderOrder = 3;
+    this.mesh.layers.enable(THERMAL_LAYER);
+    scene.add(this.mesh);
+  }
+
+  begin() { this.n = 0; }
+
+  /** Язык пламени с основанием в (x, y, z), шириной w, высотой h и силой горения heat 0..1. */
+  add(x: number, y: number, z: number, w: number, h: number, heat: number) {
+    if (this.n >= this.seed.count) return;
+    this.m4.makeScale(w, h, 1).setPosition(x, y, z);
+    this.mesh.setMatrixAt(this.n, this.m4);
+    this.heat.setX(this.n, heat);
+    this.n++;
+  }
+
+  end(dt: number, cam: THREE.Vector3) {
+    this.mesh.count = this.n;
+    this.mesh.instanceMatrix.needsUpdate = true;
+    this.heat.needsUpdate = true;
+    this.mat.uniforms.uTime.value += dt;
+    this.mat.uniforms.uCam.value.copy(cam);
+  }
+
+  dispose() {
+    this.mesh.geometry.dispose();
+    this.mat.dispose();
+  }
+}
