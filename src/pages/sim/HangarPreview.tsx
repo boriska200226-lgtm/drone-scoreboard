@@ -6,7 +6,7 @@ import { buildDrone } from "@/sim/droneModel";
 import { DroneSim } from "@/sim/physics";
 
 /** Вращающаяся 3D-модель аппарата на подиуме ангара. */
-export default function HangarPreview({ af, tank }: { af: Airframe; tank: boolean }) {
+export default function HangarPreview({ af, tank, livery }: { af: Airframe; tank: boolean; livery?: string }) {
   const ref = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
@@ -47,7 +47,7 @@ export default function HangarPreview({ af, tank }: { af: Airframe; tank: boolea
     ring.rotation.x = Math.PI / 2;
     scene.add(podium, ring);
 
-    const model = buildDrone(af, { tank, boom: 0 });
+    const model = buildDrone(af, { tank, boom: 0, livery });
     const gearH = 0.16 + af.arm * 0.28;
     model.group.position.y = gearH;
     scene.add(model.group);
@@ -86,7 +86,7 @@ export default function HangarPreview({ af, tank }: { af: Airframe; tank: boolea
       pm.dispose();
       renderer.dispose();
     };
-  }, [af, tank]);
+  }, [af, tank, livery]);
 
   return <canvas ref={ref} className="w-full h-full block" />;
 }

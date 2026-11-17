@@ -139,8 +139,8 @@ function Loading({ mission }: { mission: MissionDef }) {
   );
 }
 
-function Flight({ mission, af, difficulty, quality, flightMode, camMode, input, onExit, onRestart }: {
-  mission: MissionDef; af: Airframe; difficulty: Difficulty; quality: Quality; flightMode: FlightMode; camMode: CamMode; input: InputConfig;
+function Flight({ mission, af, difficulty, quality, flightMode, camMode, input, livery, onExit, onRestart }: {
+  mission: MissionDef; af: Airframe; difficulty: Difficulty; quality: Quality; flightMode: FlightMode; camMode: CamMode; input: InputConfig; livery: string;
   onExit: () => void; onRestart: () => void;
 }) {
   const canvas = useRef<HTMLCanvasElement>(null);
@@ -165,7 +165,7 @@ function Flight({ mission, af, difficulty, quality, flightMode, camMode, input, 
      if (!alive) return;
      try {
       e = new SimEngine({
-        canvas: canvas.current!, mapCanvas: map.current!, horizonCanvas: horizon.current!, mission, airframe: af, difficulty, quality, flightMode, camMode, input,
+        canvas: canvas.current!, mapCanvas: map.current!, horizonCanvas: horizon.current!, mission, airframe: af, difficulty, quality, flightMode, camMode, input, livery,
         onHud: setHud,
         onSay: (text, kind) => {
           const id = ++toastId.current;
@@ -387,7 +387,7 @@ function Flight({ mission, af, difficulty, quality, flightMode, camMode, input, 
 
 export default function Simulator() {
   const [settings, setSettings] = useState<LaunchSettings>(() => ({
-    mission: "training", af: "quad", diff: "pilot", quality: loadQuality(), fmode: "POS", cam: "chase", input: loadInput(),
+    mission: "training", af: "quad", diff: "pilot", quality: loadQuality(), fmode: "POS", cam: "chase", input: loadInput(), livery: "auto",
   }));
   const [run, setRun] = useState(0);
   const [best, setBest] = useState<Best>(loadBest);
@@ -395,7 +395,7 @@ export default function Simulator() {
   if (!run) return <Launcher initial={settings} best={best} onStart={(st) => { setSettings(st); setRun(1); }} />;
   return (
     <Flight key={run} mission={getMission(settings.mission)} af={getAirframe(settings.af)} difficulty={settings.diff} quality={settings.quality}
-      flightMode={settings.fmode} camMode={settings.cam} input={settings.input}
+      flightMode={settings.fmode} camMode={settings.cam} input={settings.input} livery={settings.livery}
       onExit={() => { setBest(loadBest()); setRun(0); }} onRestart={() => setRun(run + 1)} />
   );
 }

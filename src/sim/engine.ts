@@ -44,6 +44,7 @@ export interface EngineOpts {
   flightMode?: FlightMode;
   input?: InputConfig;
   camMode?: CamMode;
+  livery?: string;
   onHud(h: Hud): void;
   onSay(text: string, kind: SayKind): void;
   onEnd(r: SimResult): void;
@@ -224,7 +225,8 @@ export class SimEngine {
     if (o.camMode) this.camMode = o.camMode;
     this.model = buildDrone(o.airframe, {
       tank: o.mission.payloadUnit === "л",
-      boom: o.mission.id === "agro" ? Math.min(o.airframe.sprayWidth * 0.35, o.airframe.arm * 2.6) : 0,
+      boom: o.mission.id === "agro" || o.mission.id === "ticks" ? Math.min(o.airframe.sprayWidth * 0.35, o.airframe.arm * 2.6) : 0,
+      livery: o.livery,
     });
     scene.add(this.model.group);
 

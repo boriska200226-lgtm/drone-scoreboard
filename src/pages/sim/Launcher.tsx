@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import Icon from "@/components/ui/icon";
 import { AIRFRAMES, Airframe, getAirframe, hoverMinutes } from "@/sim/airframes";
 import { CAM_LABEL, CamMode, CAMS, MODES } from "@/sim/engine";
+import { LIVERIES, liveryFor } from "@/sim/droneModel";
 import { InputConfig, saveInput } from "@/sim/input";
 import { Difficulty, DIFFICULTY, getMission, MISSIONS } from "@/sim/missions";
 import { FlightMode, MODE_HINT, MODE_LABEL } from "@/sim/physics";
@@ -14,6 +15,7 @@ const HangarPreview = lazy(() => import("./HangarPreview"));
 
 export interface LaunchSettings {
   mission: string; af: string; diff: Difficulty; quality: Quality; fmode: FlightMode; cam: CamMode; input: InputConfig;
+  livery: string; // "auto" — штатная окраска аппарата
 }
 export type Best = Record<string, { score: number; stars: number }>;
 
@@ -199,10 +201,24 @@ export default function Launcher({ initial, best, onStart }: { initial: LaunchSe
             <section className="min-w-0 space-y-4">
               <h1 className="font-orbitron text-xl font-black">АНГАР</h1>
               <div className="relative rounded-2xl overflow-hidden h-[300px] sm:h-[380px]" style={{ background: "radial-gradient(ellipse at 50% 70%, #1b2430, #090c12 70%)", border: "1px solid rgba(255,255,255,0.06)" }}>
-                <Suspense fallback={null}><HangarPreview af={af} tank={mission.payloadUnit === "л"} /></Suspense>
+                <Suspense fallback={null}><HangarPreview af={af} tank={mission.payloadUnit === "л"} livery={s.livery} /></Suspense>
                 <div className="absolute left-5 top-4">
                   <div className="font-orbitron text-2xl font-black" style={{ color: afColor }}>{af.name}</div>
                   <div className="text-sm text-gray-400">{af.scheme} · {af.motors.length} моторов</div>
+                </div>
+                {/* окраска аппарата */}
+                <div className="absolute left-4 right-4 bottom-4 flex flex-wrap gap-1.5 items-center">
+                  <span className="text-[11px] font-orbitron text-gray-400 mr-1">ОКРАСКА</span>
+                  {[{ id: "auto", label: "Штатная" }, ...LIVERIES].map((l) => {
+                    const lv = liveryFor(af.id, l.id), on = s.livery === l.id;
+                    return (
+                      <button key={l.id} onClick={() => set({ livery: l.id })} className="flex items-center gap-1.5 px-2 py-1 rounded-md text-[11px] font-orbitron font-bold transition-colors"
+                        style={{ background: on ? `${ACCENT}22` : "rgba(8,11,18,0.7)", border: `1px solid ${on ? ACCENT : "rgba(255,255,255,0.12)"}`, color: on ? ACCENT : "#c8ced8" }}>
+                        <span className="w-3 h-3 rounded-full" style={{ background: `linear-gradient(135deg, ${hex(lv.primary)} 50%, ${hex(lv.secondary)} 50%)`, border: "1px solid rgba(255,255,255,0.3)" }} />
+                        {l.label}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
               <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
