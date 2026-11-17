@@ -697,7 +697,7 @@ export function makeHelipad(label: string, color = "#f2c230"): THREE.Group {
   return g;
 }
 
-function makeVan(): THREE.Group {
+export function makeVan(): THREE.Group {
   const model = instanceModel("van");
   if (model) return model;
   const g = new THREE.Group();

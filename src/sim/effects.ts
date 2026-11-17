@@ -111,6 +111,7 @@ export class Particles {
     });
     this.points = new THREE.Points(geo, this.mat);
     this.points.frustumCulled = false;
+    this.points.visible = false;
     this.points.renderOrder = opts.additive ? 3 : 2;
     if (opts.thermal) this.points.layers.enable(THERMAL_LAYER);
     scene.add(this.points);
@@ -129,14 +130,19 @@ export class Particles {
     this.vel[i * 3] = vx; this.vel[i * 3 + 1] = vy; this.vel[i * 3 + 2] = vz;
     this.col[i * 4] = r; this.col[i * 4 + 1] = g; this.col[i * 4 + 2] = b; this.col[i * 4 + 3] = a;
     this.life[i] = life; this.maxLife[i] = life; this.size[i] = size; this.alpha[i] = a; this.data[i] = data;
+    this.points.visible = true;
   }
 
   update(dt: number, wind: THREE.Vector3) {
     const { gravity = 0, drag = 0, grow = 0, ground, onHit, fireRamp } = this.opts;
     const k = Math.min(1, drag * dt);
     this.mat.uniforms.uTime.value += dt;
+    // пустую систему не рисуем вовсе: экономия кадра и никаких артефактов от «нулевых» точек
+    if (!this.points.visible) return;
+    let alive = 0;
     for (let i = 0; i < this.opts.max; i++) {
       if (this.life[i] <= 0) continue;
+      alive++;
       this.life[i] -= dt;
       const j = i * 3, c = i * 4;
       if (this.life[i] <= 0) { this.col[c + 3] = 0; this.size[i] = 0; continue; }
@@ -159,6 +165,7 @@ export class Particles {
         this.life[i] = 0; this.col[c + 3] = 0; this.size[i] = 0;
       }
     }
+    if (alive === 0) { this.points.visible = false; return; }
     const g = this.points.geometry;
     g.attributes.position.needsUpdate = true;
     g.attributes.aColor.needsUpdate = true;
