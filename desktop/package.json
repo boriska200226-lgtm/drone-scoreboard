@@ -1,0 +1,71 @@
+{
+  "name": "bas-simulator",
+  "productName": "БАС Симулятор",
+  "version": "1.0.0",
+  "description": "Тренажёр операторов беспилотных систем: миссии в Республике Коми",
+  "main": "main.cjs",
+  "author": "БАС Арена",
+  "license": "UNLICENSED",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "dist:win": "electron-builder --win nsis portable --x64",
+    "dist:linux": "electron-builder --linux AppImage --x64"
+  },
+  "devDependencies": {
+    "electron": "33.2.1",
+    "electron-builder": "25.1.8"
+  },
+  "build": {
+    "appId": "ru.basarena.simulator",
+    "productName": "БАС Симулятор",
+    "artifactName": "BAS-Simulator-${version}-${arch}.${ext}",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "main.cjs",
+      "app/**/*",
+      "build/icon.png"
+    ],
+    "asar": true,
+    "asarUnpack": [
+      "app/**/*.hdr",
+      "app/**/*.glb"
+    ],
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ],
+      "icon": "build/icon.ico",
+      "signAndEditExecutable": true,
+      "legalTrademarks": "БАС Симулятор"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "БАС Симулятор",
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "language": "1049",
+      "artifactName": "BAS-Simulator-Setup-${version}.${ext}"
+    },
+    "portable": {
+      "artifactName": "BAS-Simulator-${version}-portable.${ext}"
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "icon": "build/icon.png",
+      "category": "Game"
+    },
+    "publish": null,
+    "copyright": "© 2026 БАС Арена"
+  }
+}

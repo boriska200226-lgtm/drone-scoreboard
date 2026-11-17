@@ -28,7 +28,7 @@ const base = () => `${import.meta.env.BASE_URL}sim/models/`;
 
 /** Бинарный файл: на сайте — как есть, в автономной сборке хостинг не отдаёт .glb, поэтому рядом лежит base64. */
 export async function fetchBinary(url: string): Promise<ArrayBuffer> {
-  if (import.meta.env.VITE_STANDALONE) {
+  if (import.meta.env.VITE_PACKED_ASSETS) {
     const b64 = (await (await fetch(`${url}.txt`)).text()).trim();
     const bin = atob(b64), out = new Uint8Array(bin.length);
     for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);

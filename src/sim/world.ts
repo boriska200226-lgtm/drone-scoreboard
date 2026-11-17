@@ -218,7 +218,7 @@ export class World {
         this.scene.environmentRotation.y = Math.atan2(this.skyParams.sunDir.x, this.skyParams.sunDir.z);
         this.hemi.intensity *= 0.45;
       };
-      if (import.meta.env.VITE_STANDALONE) {
+      if (import.meta.env.VITE_PACKED_ASSETS) {
         // хостинг страницы не отдаёт .hdr — в автономной сборке панорама лежит рядом в base64
         this.loader.itemStart(hdr);
         fetch(ASSET(`${hdr}.txt`)).then((r) => r.text()).then((b64) => {
