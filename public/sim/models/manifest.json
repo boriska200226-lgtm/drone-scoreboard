@@ -1,0 +1,5 @@
+{
+  "person": [
+    { "url": "person.glb", "height": 1.78, "anim": "Idle", "credit": "Персонаж Soldier — примеры three.js (Mixamo)" }
+  ]
+}

@@ -7,6 +7,7 @@ import { clamp, mulberry32 } from "./noise";
 import { DroneSim, Env, FlightMode, MANUAL_THROTTLE, MODE_LABEL, Sticks } from "./physics";
 import { makeBaseCamp, Quality, THERMAL_LAYER, World } from "./world";
 import { buildDrone, DroneModel } from "./droneModel";
+import { releaseModels, updateModels } from "./models";
 import { GradeShader } from "./shaders";
 import { DEFAULT_INPUT, firstPad, InputConfig, readAxis, switchPos } from "./input";
 import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
@@ -25,6 +26,7 @@ export interface Hud {
   objectives: Objective[]; motors: boolean[]; warnings: string[];
   pipRect: { right: number; top: number; w: number; h: number }; mapSize: number;
   modeId: FlightMode; camId: CamMode; manual: boolean; osd: Osd;
+  fps: number; res: number;
 }
 
 export interface SimResult {
@@ -112,6 +114,13 @@ export class SimEngine {
   private cam = new THREE.PerspectiveCamera(62, 1, 0.15, 5000);
   private pipCam = new THREE.PerspectiveCamera(50, 1.36, 0.3, 3000);
   private model!: DroneModel;
+  private pr = 1;
+  private maxPr = 1;
+  private fpsAcc = 0;
+  private fpsN = 0;
+  private frameNo = 0;
+  fps = 0;
+  autoRes = true;
   /** Мир готов: текстуры и панорама освещения загружены. */
   get ready() { return this.world.ready; }
   private composer: EffectComposer | null = null;
@@ -157,8 +166,10 @@ export class SimEngine {
     this.gimbalPitch = o.mission.gimbalPitch;
 
     this.renderer = new THREE.WebGLRenderer({ canvas: o.canvas, antialias: o.quality !== "high", powerPreference: "high-performance" });
-    const maxPr = o.quality === "high" ? 2 : o.quality === "medium" ? 1.5 : 1;
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, maxPr));
+    // стартовое разрешение; дальше его подстраивает динамический масштаб под частоту кадров
+    this.maxPr = Math.min(window.devicePixelRatio || 1, o.quality === "high" ? 2 : o.quality === "medium" ? 1.5 : 1);
+    this.pr = Math.min(this.maxPr, o.quality === "high" ? 1.5 : this.maxPr);
+    this.renderer.setPixelRatio(this.pr);
     this.renderer.toneMapping = THREE.AgXToneMapping;
     this.renderer.toneMappingExposure = o.mission.world.palette.exposure * 1.25;
     this.renderer.shadowMap.enabled = o.quality !== "low";
@@ -386,13 +397,33 @@ export class SimEngine {
 
   private frame = (now: number) => {
     this.raf = requestAnimationFrame(this.frame);
-    const dt = Math.min(0.05, (now - this.last) / 1000);
+    const raw = (now - this.last) / 1000;
+    const dt = Math.min(0.05, raw);
     this.last = now;
+    this.measure(raw);
     if (!this.paused) this.update(dt);
     this.render();
     this.hudAcc += dt;
     if (this.hudAcc > 0.12) { this.hudAcc = 0; this.pushHud(); }
   };
+
+  /** Счётчик кадров и динамическое разрешение: при просадке FPS рендер становится чуть мягче, но плавным. */
+  private measure(raw: number) {
+    if (raw <= 0 || raw > 1) return;
+    this.fpsAcc += raw; this.fpsN++;
+    if (this.fpsAcc < 1) return;
+    this.fps = this.fpsN / this.fpsAcc;
+    this.fpsAcc = 0; this.fpsN = 0;
+    if (!this.autoRes || this.paused) return;
+    let pr = this.pr;
+    if (this.fps < 45) pr = Math.max(0.6, pr - (this.fps < 30 ? 0.2 : 0.1));
+    else if (this.fps > 58 && pr < this.maxPr) pr = Math.min(this.maxPr, pr + 0.05);
+    if (Math.abs(pr - this.pr) > 0.01) {
+      this.pr = pr;
+      this.renderer.setPixelRatio(pr);
+      this.resize();
+    }
+  }
 
   private update(dt: number) {
     const d = this.drone;
@@ -420,6 +451,7 @@ export class SimEngine {
       if (this.endTimer < 0) this.finish(false, d.crashed ?? "Миссия провалена");
     }
 
+    updateModels(dt);
     const windNow = d.windNow;
     this.fx.fire.update(dt, windNow);
     this.fx.smoke.update(dt, windNow);
@@ -567,7 +599,9 @@ export class SimEngine {
     r.setScissorTest(false);
     r.setViewport(0, 0, w, h);
     setScale(scale(this.cam, h));
-    r.shadowMap.needsUpdate = true;
+    // тени пересчитываем через кадр: глазу незаметно, а нагрузка от теней падает вдвое
+    this.frameNo++;
+    if (this.frameNo % 2 === 0 || this.o.quality === "high" && this.fps > 55) r.shadowMap.needsUpdate = true;
     if (this.composer) {
       const u = this.grade!.uniforms, fpv = this.camMode === "fpv";
       u.uTime.value = (u.uTime.value + 0.017) % 100;
@@ -738,6 +772,7 @@ export class SimEngine {
       wind: d.windNow.length(), windFrom,
       mode: this.rth ? "Автовозврат" : MODE_LABEL[d.mode], cam: CAM_LABEL[this.camMode],
       modeId: d.mode, camId: this.camMode, manual: MANUAL_THROTTLE[d.mode], osd: this.osd(),
+      fps: this.fps, res: this.pr,
       thermal: this.thermal, pip: this.pip, rth: this.rth,
       distHome: Math.hypot(d.pos.x, d.pos.z), time: m.time, objectives, motors: [...d.motorOk], warnings,
       ...layout(w),
@@ -751,6 +786,7 @@ export class SimEngine {
     window.removeEventListener("resize", this.resize);
     window.removeEventListener("blur", this.onBlur);
     this.audio.dispose();
+    releaseModels();
     this.mission.dispose();
     this.fx.fire.dispose(); this.fx.smoke.dispose(); this.fx.water.dispose();
     this.world.dispose();

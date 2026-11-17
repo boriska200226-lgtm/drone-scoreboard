@@ -10,3 +10,7 @@ HDR-панорамы освещения (CC0, Poly Haven, через репоз�
   waternormals.jpg — three.js examples, MIT
 
 Перед коммерческим использованием проверьте лицензии репозиториев-источников.
+
+3D-модели:
+  models/person.glb — персонаж Soldier из примеров three.js (MIT-репозиторий; исходно Mixamo, Adobe)
+Деревья: ez-tree 1.1.0 (MIT, Daniel Greenheck), текстуры коры — texturecan.com (CC0)

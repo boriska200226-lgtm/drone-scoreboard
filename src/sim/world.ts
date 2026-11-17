@@ -6,6 +6,7 @@ import { RGBELoader } from "three/examples/jsm/loaders/RGBELoader.js";
 import { Water } from "three/examples/jsm/objects/Water.js";
 import { GrassField } from "./grass";
 import { BIRCH, ForestKit, PINE, SPRUCE } from "./forest";
+import { instanceModel } from "./models";
 
 const ASSET = (p: string) => `${import.meta.env.BASE_URL}sim/${p}`;
 
@@ -246,7 +247,7 @@ export class World {
     this.lodAcc += dt;
     if (this.lodAcc > 0.3) {
       this.lodAcc = 0;
-      const far = this.quality === "high" ? 125 : this.quality === "medium" ? 80 : -1;
+      const far = this.quality === "high" ? 105 : this.quality === "medium" ? 70 : -1;
       for (const c of this.chunks) {
         const near = Math.hypot(c.x - camPos.x, c.z - camPos.z) < far + CHUNK * 0.7;
         for (const m of c.near) m.visible = near;
@@ -321,7 +322,7 @@ export class World {
       if (this.quality === "high") {
         // зеркальная вода: настоящие отражения леса, неба и аппарата
         const w = new Water(wg, {
-          textureWidth: 1024, textureHeight: 1024, waterNormals: normals,
+          textureWidth: 512, textureHeight: 512, waterNormals: normals,
           sunDirection: this.skyParams.sunDir.clone(), sunColor: new THREE.Color(pal.sun),
           waterColor: new THREE.Color(pal.water).multiplyScalar(0.6), distortionScale: 1.6, fog: true,
         });
@@ -368,7 +369,7 @@ export class World {
     if (this.quality !== "low" && !cfg.palette.snow) {
       const gt = cfg.palette.grassTint ?? [0.82, 0.86, 0.72];
       this.grass = new GrassField({
-        size: this.quality === "high" ? 70 : 50, count: this.quality === "high" ? 26000 : 11000,
+        size: this.quality === "high" ? 70 : 50, count: this.quality === "high" ? 20000 : 9000,
         heights: this.hf, n, worldSize: size, density: dens,
         tint: new THREE.Color(0x5f7a2c).multiply(new THREE.Color(...gt)).multiplyScalar(1.25), time: this.time,
       });
@@ -600,9 +601,22 @@ export class World {
     const meshes: THREE.Mesh[] = [];
     obj.traverse((o) => { if ((o as THREE.Mesh).isMesh && o.layers.mask === 1) meshes.push(o as THREE.Mesh); });
     for (const m of meshes) {
-      const t = new THREE.Mesh(m.geometry, mat);
+      let t: THREE.Mesh;
+      const sk = m as THREE.SkinnedMesh;
+      if (sk.isSkinnedMesh) {
+        // анимированная модель: тепловая копия двигается вместе со скелетом
+        const ts = new THREE.SkinnedMesh(sk.geometry, mat);
+        ts.bind(sk.skeleton, sk.bindMatrix);
+        ts.bindMode = sk.bindMode;
+        ts.frustumCulled = false;
+        t = ts;
+        sk.parent!.add(t);
+        t.position.copy(sk.position); t.quaternion.copy(sk.quaternion); t.scale.copy(sk.scale);
+      } else {
+        t = new THREE.Mesh(m.geometry, mat);
+        m.add(t);
+      }
       t.layers.set(THERMAL_LAYER);
-      m.add(t);
     }
   }
 
@@ -684,6 +698,8 @@ export function makeHelipad(label: string, color = "#f2c230"): THREE.Group {
 }
 
 function makeVan(): THREE.Group {
+  const model = instanceModel("van");
+  if (model) return model;
   const g = new THREE.Group();
   const white = std(0xe4e7ea, 0.45, 0.1), red = std(0xc8102e, 0.5, 0.1), glass = std(0x10161c, 0.08, 0.6), tire = std(0x111111, 0.95);
   g.add(box(2.1, 1.75, 3.7, white, 0, 1.45, 0.8), box(2.1, 0.32, 3.7, red, 0, 1.0, 0.8));
@@ -765,6 +781,8 @@ function houseTextures() {
 }
 
 export function makeHouse(rnd: () => number, snow: boolean): THREE.Group {
+  const model = instanceModel("house", rnd());
+  if (model) return model;
   const g = new THREE.Group();
   const t = houseTextures();
   const w = 6.5 + rnd() * 3, d = 5.5 + rnd() * 2.5, h = 2.9, rh = 2 + rnd() * 0.6, ov = 0.5;
@@ -802,6 +820,8 @@ export function makeHouse(rnd: () => number, snow: boolean): THREE.Group {
 }
 
 export function makePerson(jacket: number): THREE.Group {
+  const model = instanceModel("person");
+  if (model) return model;
   const g = new THREE.Group();
   const cloth = std(jacket, 0.85), pants = std(0x2c3340, 0.9), skin = std(0xd9a888, 0.7);
   g.add(part(new THREE.CapsuleGeometry(0.2, 0.42, 4, 10), cloth, 0, 1.18, 0));
@@ -818,6 +838,8 @@ export function makePerson(jacket: number): THREE.Group {
 }
 
 export function makeAnimal(kind: "moose" | "bear"): THREE.Group {
+  const model = instanceModel(kind);
+  if (model) return model;
   const g = new THREE.Group();
   const fur = std(kind === "moose" ? 0x4a3526 : 0x2a1f18, 1);
   const L = kind === "moose" ? 2.2 : 1.6, H = kind === "moose" ? 1.45 : 0.85, R = kind === "moose" ? 0.42 : 0.46;

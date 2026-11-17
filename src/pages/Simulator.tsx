@@ -3,6 +3,7 @@ import Icon from "@/components/ui/icon";
 import { Airframe, getAirframe } from "@/sim/airframes";
 import { CAM_LABEL, CamMode, CAMS, Command, Hud, MODES, SimEngine, SimResult } from "@/sim/engine";
 import { InputConfig, loadInput } from "@/sim/input";
+import { loadModels } from "@/sim/models";
 import { FlightMode, MODE_HINT, MODE_LABEL } from "@/sim/physics";
 import { Difficulty, DIFFICULTY, getMission, MissionDef, SayKind } from "@/sim/missions";
 import type { Quality } from "@/sim/world";
@@ -158,7 +159,9 @@ function Flight({ mission, af, difficulty, quality, flightMode, camMode, input, 
   useEffect(() => {
     let e: SimEngine | null = null, alive = true;
     // даём экрану загрузки отрисоваться, потом строим мир (это занимает пару секунд)
-    const timer = setTimeout(() => {
+    const timer = setTimeout(async () => {
+     // 3D-модели (люди, дома, техника) грузим до постройки мира; их отсутствие не мешает полёту
+     await loadModels().catch(() => undefined);
      if (!alive) return;
      try {
       e = new SimEngine({
@@ -260,6 +263,14 @@ function Flight({ mission, af, difficulty, quality, flightMode, camMode, input, 
             </div>
           ))}
         </div>
+
+        {/* счётчик кадров и текущее разрешение рендера */}
+        {hud && hud.fps > 0 && (
+          <div className="absolute font-mono text-[11px] px-1.5 py-0.5 rounded" style={{ top: 12 + hud.mapSize + 2, right: 14, background: "rgba(0,0,0,0.45)",
+            color: hud.fps >= 50 ? "#00ffaa" : hud.fps >= 30 ? "#ffd700" : "#ff5555", transform: hud.pip ? `translateY(${hud.pipRect.h + 10}px)` : undefined }}>
+            {Math.round(hud.fps)} FPS · {Math.round(hud.res * 100)}%
+          </div>
+        )}
 
         {/* карта и окно камеры */}
         <canvas ref={map} className="absolute rounded-xl" style={{ top: 12, right: 12, width: hud?.mapSize ?? 176, height: hud?.mapSize ?? 176, border: "1px solid rgba(255,255,255,0.14)" }} />
