@@ -3,6 +3,7 @@ import * as THREE from "three";
 import { Airframe } from "./airframes";
 import { FlameField, Particles } from "./effects";
 import { clamp, mulberry32 } from "./noise";
+import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { DroneSim } from "./physics";
 import {
   makeAnimal, makeBeam, makeHelipad, makeHouse, makePerson, makePylon, makeRing,
@@ -1025,6 +1026,492 @@ class PowerlineMission extends Mission {
 
 // ───────────────────────────── каталог ─────────────────────────────
 
+// ───────────────────────────── 7. Утечка на нефтепроводе ─────────────────────────────
+
+const TUNDRA: Palette = {
+  groundA: 0x5d5a3a, groundB: 0x6f6544, shore: 0x7d7562, tree: 0x2f4630, treeVar: 0x445a34, water: 0x1f3440,
+  skyTop: 0x5f7590, skyBottom: 0xc4ccd4, fog: 0xb5bec8, fogDensity: 0.0012,
+  sun: 0xfff0dc, sunIntensity: 2.6, ambient: 0xc0cad8, ambientIntensity: 1.0, sunDir: [0.5, 0.42, 0.45],
+  clouds: 0.6, exposure: 1.0, hdr: "forest_slope_1k.hdr", grassTint: [0.98, 0.86, 0.6],
+};
+const WINTER_EVENING: Palette = {
+  ...WINTER, skyTop: 0x2b3b58, skyBottom: 0xb6a9b2, fog: 0x9da0b3, fogDensity: 0.0019,
+  sun: 0xffc8a0, sunIntensity: 1.3, ambient: 0xaeb8d8, ambientIntensity: 0.9, sunDir: [-0.7, 0.12, 0.3],
+  clouds: 0.35, exposure: 1.05,
+};
+
+// трасса нефтепровода: от базы на северо-восток с поворотами
+const PIPE: [number, number][] = [[30, -30], [90, -160], [70, -300], [160, -420], [230, -560], [210, -690]];
+const pipeCorridor = PIPE.slice(0, -1).map(([x, z], i) => ({ x1: x, z1: z, x2: PIPE[i + 1][0], z2: PIPE[i + 1][1], w: 11 }));
+
+/** Ближайшая точка ломаной: расстояние и параметр «вдоль трассы» в метрах. */
+function nearestOnPath(path: [number, number][], x: number, z: number) {
+  let best = 1e9, at = 0, run = 0, px = 0, pz = 0;
+  for (let i = 0; i < path.length - 1; i++) {
+    const [ax, az] = path[i], [bx, bz] = path[i + 1];
+    const dx = bx - ax, dz = bz - az, L = Math.hypot(dx, dz);
+    const t = clamp(((x - ax) * dx + (z - az) * dz) / (L * L), 0, 1);
+    const d = Math.hypot(x - ax - dx * t, z - az - dz * t);
+    if (d < best) { best = d; at = run + t * L; px = ax + dx * t; pz = az + dz * t; }
+    run += L;
+  }
+  return { d: best, at, x: px, z: pz };
+}
+
+interface GasSource { x: number; z: number; q: number; oil: boolean; checked: boolean }
+
+class OilLeakMission extends Mission {
+  private sources: GasSource[] = [];
+  private leak!: GasSource;
+  private ppm = 2;
+  private peak = 2;
+  private falseReports = 0;
+  private spillArea = 0;
+  private found = false;
+
+  constructor(ctx: Ctx) {
+    super(ctx);
+    const { world, rnd } = ctx;
+    // надземная прокладка на опорах: так тянут трубы по вечной мерзлоте
+    const pipeMat = new THREE.MeshStandardMaterial({ color: 0x8c8f8a, roughness: 0.55, metalness: 0.6 });
+    const supMat = new THREE.MeshStandardMaterial({ color: 0x5a5c5e, roughness: 0.8, metalness: 0.4 });
+    for (let i = 0; i < PIPE.length - 1; i++) {
+      const [ax, az] = PIPE[i], [bx, bz] = PIPE[i + 1];
+      const L = Math.hypot(bx - ax, bz - az), steps = Math.ceil(L / 14);
+      for (let k = 0; k < steps; k++) {
+        const t0 = k / steps, t1 = (k + 1) / steps;
+        const x0 = ax + (bx - ax) * t0, z0 = az + (bz - az) * t0, x1 = ax + (bx - ax) * t1, z1 = az + (bz - az) * t1;
+        const y0 = world.groundAt(x0, z0) + 1.4, y1 = world.groundAt(x1, z1) + 1.4;
+        const a = new THREE.Vector3(x0, y0, z0), b = new THREE.Vector3(x1, y1, z1);
+        const seg = new THREE.Mesh(new THREE.CylinderGeometry(0.36, 0.36, a.distanceTo(b) + 0.05, 14, 1), pipeMat);
+        seg.position.copy(a).add(b).multiplyScalar(0.5);
+        seg.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), b.clone().sub(a).normalize());
+        seg.castShadow = true; seg.receiveShadow = true;
+        world.scene.add(seg);
+        const sup = new THREE.Mesh(new THREE.BoxGeometry(0.25, 1.4, 1.2), supMat);
+        sup.position.set(x0, y0 - 0.95, z0);
+        sup.rotation.y = Math.atan2(bx - ax, bz - az);
+        sup.castShadow = true;
+        world.scene.add(sup);
+        world.addThermal(seg, 0.32); // нефть в трубе тёплая
+      }
+    }
+    // место порыва — во второй половине трассы
+    // место порыва — во второй половине трассы, на ровном месте и не у самой реки
+    let lx = 0, lz = 0;
+    for (let tries = 0; tries < 40; tries++) {
+      const segI = 2 + Math.floor(rnd() * (PIPE.length - 3));
+      const t = 0.15 + rnd() * 0.7;
+      const [ax, az] = PIPE[segI], [bx, bz] = PIPE[segI + 1];
+      lx = ax + (bx - ax) * t; lz = az + (bz - az) * t;
+      const slope = Math.abs(world.groundAt(lx + 8, lz) - world.groundAt(lx - 8, lz)) + Math.abs(world.groundAt(lx, lz + 8) - world.groundAt(lx, lz - 8));
+      if (world.riverDist(lx, lz) > 60 && slope < 1.2) break;
+    }
+    this.leak = { x: lx, z: lz, q: 4800, oil: true, checked: false };
+    this.sources.push(this.leak);
+    // болотный газ: слабые естественные источники метана в стороне от трассы
+    for (let k = 0, tries = 0; k < 3 && tries < 60; tries++) {
+      const p = PIPE[1 + Math.floor(rnd() * (PIPE.length - 2))];
+      const a = rnd() * 6.283, d = 70 + rnd() * 120;
+      const x = p[0] + Math.cos(a) * d, z = p[1] + Math.sin(a) * d;
+      // болото не должно лежать рядом с порывом или с базой, иначе задача становится нечестной
+      if (Math.hypot(x - this.leak.x, z - this.leak.z) < 120 || Math.hypot(x, z) < 120) continue;
+      this.sources.push({ x, z, q: 260 + rnd() * 220, oil: false, checked: false });
+      k++;
+    }
+    // пятно разлива: плавный неровный контур, вытянутый в сторону растекания, сетка из колец ложится на рельеф
+    const R = 10 + rnd() * 5, seg = 72, rings = 6;
+    const ph = [rnd() * 6.28, rnd() * 6.28, rnd() * 6.28], flow = rnd() * 6.28;
+    const edge = (ang: number) => R * (1 + 0.22 * Math.sin(3 * ang + ph[0]) + 0.12 * Math.sin(5 * ang + ph[1]) + 0.06 * Math.sin(9 * ang + ph[2]))
+      * (1 + 0.6 * Math.max(0, Math.cos(ang - flow)) ** 2);
+    const pos: number[] = [], idx: number[] = [];
+    pos.push(this.leak.x, world.groundAt(this.leak.x, this.leak.z) + 0.07, this.leak.z);
+    let area = 0;
+    for (let r = 1; r <= rings; r++) {
+      for (let i = 0; i < seg; i++) {
+        const ang = (i / seg) * 6.283, rr = edge(ang) * (r / rings);
+        const x = this.leak.x + Math.cos(ang) * rr, z = this.leak.z + Math.sin(ang) * rr;
+        pos.push(x, world.groundAt(x, z) + 0.07, z);
+      }
+    }
+    for (let i = 0; i < seg; i++) {
+      const a = (i / seg) * 6.283, b = ((i + 1) / seg) * 6.283;
+      area += 0.5 * edge(a) * edge(b) * Math.sin(b - a);
+      idx.push(0, 1 + i, 1 + ((i + 1) % seg));
+      for (let r = 1; r < rings; r++) {
+        const o = 1 + (r - 1) * seg, n = 1 + r * seg;
+        idx.push(o + i, n + i, n + ((i + 1) % seg), o + i, n + ((i + 1) % seg), o + ((i + 1) % seg));
+      }
+    }
+    this.spillArea = area;
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+    geo.setIndex(idx);
+    geo.computeVertexNormals();
+    // сырая нефть: почти чёрная, с мягким маслянистым отливом, без зеркального блеска
+    const spill = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({
+      color: 0x070605, roughness: 0.3, metalness: 0, envMapIntensity: 0.35, polygonOffset: true, polygonOffsetFactor: -2, side: THREE.DoubleSide,
+    }));
+    spill.receiveShadow = true;
+    world.scene.add(spill);
+    world.addThermal(spill, 0.5);
+    ctx.say("Газоанализатор включён. Идите вдоль трубы и ищите рост концентрации метана", "info");
+  }
+
+  /** Концентрация метана от одного источника: факел, сносимый ветром, слабеет с высотой. */
+  private plume(s: GasSource, p: THREE.Vector3, wind: THREE.Vector3, agl: number) {
+    const wl = Math.hypot(wind.x, wind.z);
+    const dx = p.x - s.x, dz = p.z - s.z;
+    let along: number, cross: number;
+    if (wl < 0.3) { along = Math.hypot(dx, dz); cross = 0; } // штиль: газ расходится во все стороны
+    else {
+      const ux = wind.x / wl, uz = wind.z / wl;
+      along = dx * ux + dz * uz; cross = -dx * uz + dz * ux;
+    }
+    const sig = 6 + Math.max(0, along) * 0.28;
+    const up = along < 0 ? Math.exp(-(along * along) / (2 * 12 * 12)) : 1;
+    // концентрация быстро падает с удалением: на 300 м по ветру от порыва — десятки ppm, а не тысячи
+    const fall = 1 + Math.pow(Math.max(0, along) / 25, 1.6) + Math.pow(Math.max(0, -along) / 12, 2);
+    return (s.q * up * Math.exp(-(cross * cross) / (2 * sig * sig)) * Math.exp(-agl / 22)) / fall;
+  }
+
+  update(dt: number, action: Action) {
+    this.time += dt;
+    const { drone } = this.ctx;
+    const agl = this.agl();
+    let c = 1.9;
+    for (const s of this.sources) c += this.plume(s, drone.pos, drone.windNow, agl);
+    // шум датчика и инерция измерения
+    this.ppm += (c * (0.95 + Math.random() * 0.1) - this.ppm) * Math.min(1, dt * 2.5);
+    this.peak = Math.max(this.peak, this.ppm);
+
+    if (action.pressed && !drone.landed) {
+      const dir = this.ctx.camDir();
+      let near: GasSource | null = null, nd = 1e9;
+      for (const s of this.sources) {
+        const d = Math.hypot(s.x - drone.pos.x, s.z - drone.pos.z);
+        if (d < nd) { nd = d; near = s; }
+      }
+      if (dir.y > -0.6) this.ctx.say("Наведите камеру вниз (G) — снимаем пятно сверху", "warn");
+      else if (agl > 70) this.ctx.say("Слишком высоко для фиксации — спуститесь ниже 70 м", "warn");
+      else if (!near || nd > 35) this.ctx.say(`Здесь ничего нет. Газоанализатор: ${Math.round(this.ppm)} ppm`, "info");
+      else if (!near.oil) {
+        if (!near.checked) { this.falseReports++; near.checked = true; }
+        this.ctx.say("Нефти нет — это болотный газ, естественный метан. Ищите дальше вдоль трубы", "warn");
+      } else if (!this.found) {
+        this.found = true; this.tasksDone = true;
+        const km = (nearestOnPath(PIPE, this.leak.x, this.leak.z).at / 1000).toFixed(2);
+        this.ctx.say(`Порыв зафиксирован: км ${km} трассы, пятно ≈ ${Math.round(this.spillArea)} м². Координаты переданы аварийной бригаде`, "good");
+      }
+    }
+  }
+  refill() { return false; }
+  objectives(): Objective[] {
+    return [
+      { text: "Найти утечку по газоанализатору", done: this.found, progress: `CH₄ ${Math.round(this.ppm)} ppm` },
+      { text: "Снять разлив сверху (камера вниз)", done: this.found },
+    ];
+  }
+  summary() {
+    return {
+      score: clamp(100 - Math.max(0, this.time - 240) / 5 - this.falseReports * 12, 10, 100),
+      rows: [
+        ["Площадь разлива", this.found ? `${Math.round(this.spillArea)} м²` : "—"],
+        ["Пик концентрации", `${Math.round(this.peak)} ppm`], ["Ложные вызовы (болотный газ)", String(this.falseReports)],
+        ["Время", fmtTime(this.time)],
+      ] as [string, string][],
+    };
+  }
+  drawMap(m: MapDraw) {
+    for (let i = 0; i < PIPE.length - 1; i++) {
+      const [ax, az] = PIPE[i], [bx, bz] = PIPE[i + 1];
+      const n = Math.ceil(Math.hypot(bx - ax, bz - az) / 18);
+      for (let k = 0; k <= n; k++) m.dot(ax + ((bx - ax) * k) / n, az + ((bz - az) * k) / n, "#9aa3ab", 1.5);
+    }
+    for (const s of this.sources) if (s.checked) m.dot(s.x, s.z, "#888888", 3);
+    if (this.found) { m.dot(this.leak.x, this.leak.z, "#111111", 6); m.ring(this.leak.x, this.leak.z, 20, "#ff4444"); }
+  }
+}
+
+// ───────────────────────────── 8. Учёт оленей ─────────────────────────────
+
+function deerGeometry(): THREE.BufferGeometry {
+  const parts: THREE.BufferGeometry[] = [];
+  const add = (g: THREE.BufferGeometry, x: number, y: number, z: number, rx = 0) => {
+    g.rotateX(rx); g.translate(x, y, z); parts.push(g.index ? g.toNonIndexed() : g);
+  };
+  add(new THREE.CapsuleGeometry(0.28, 0.85, 4, 10), 0, 1.0, 0, Math.PI / 2);
+  add(new THREE.CapsuleGeometry(0.12, 0.42, 3, 8), 0, 1.32, -0.62, -0.7);
+  add(new THREE.CapsuleGeometry(0.1, 0.28, 3, 8), 0, 1.52, -0.86, Math.PI / 2 - 0.3);
+  for (const sx of [-0.15, 0.15]) for (const sz of [-0.42, 0.42]) add(new THREE.CylinderGeometry(0.05, 0.04, 0.82, 6), sx, 0.42, sz);
+  for (const sx of [-1, 1]) {
+    const a = new THREE.CylinderGeometry(0.025, 0.035, 0.6, 5);
+    a.rotateZ(sx * 0.5); a.rotateX(-0.4);
+    add(a, sx * 0.14, 1.85, -0.78);
+  }
+  const all = parts.map((g) => { const ng = g; ng.deleteAttribute("uv"); return ng; });
+  const merged = mergeGeometries(all)!;
+  all.forEach((g) => g.dispose());
+  merged.computeVertexNormals();
+  return merged;
+}
+
+class ReindeerMission extends Mission {
+  private n: number;
+  private pos: Float32Array; private head: Float32Array; private speed: Float32Array;
+  private counted: Uint8Array;
+  private center = new THREE.Vector2();
+  private drift = 0;
+  private herd: THREE.InstancedMesh;
+  private scared = 0;
+  private scareSaid = -20;
+  private photos = 0;
+  private m4 = new THREE.Matrix4();
+  private q = new THREE.Quaternion();
+
+  constructor(ctx: Ctx) {
+    super(ctx);
+    const { world, rnd } = ctx;
+    this.n = 38 + Math.floor(rnd() * 30);
+    const a0 = rnd() * 1.4 - 0.7, d0 = 330 + rnd() * 160;
+    this.center.set(Math.sin(a0) * d0, -Math.cos(a0) * d0);
+    this.drift = rnd() * 6.283;
+    this.pos = new Float32Array(this.n * 2); this.head = new Float32Array(this.n); this.speed = new Float32Array(this.n);
+    this.counted = new Uint8Array(this.n);
+    for (let i = 0; i < this.n; i++) {
+      const a = rnd() * 6.283, r = Math.sqrt(rnd()) * 28;
+      this.pos[i * 2] = this.center.x + Math.cos(a) * r; this.pos[i * 2 + 1] = this.center.y + Math.sin(a) * r;
+      this.head[i] = rnd() * 6.283;
+    }
+    const geo = world.track(deerGeometry());
+    this.herd = new THREE.InstancedMesh(geo, world.track(new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.95 })), this.n);
+    const col = new THREE.Color();
+    for (let i = 0; i < this.n; i++) {
+      // северные олени: от бурых до почти белых
+      const w = rnd();
+      this.herd.setColorAt(i, w > 0.85 ? col.setRGB(0.82, 0.8, 0.76) : col.setRGB(0.36 + w * 0.12, 0.31 + w * 0.1, 0.26 + w * 0.08));
+    }
+    this.herd.castShadow = true; this.herd.receiveShadow = true;
+    this.herd.frustumCulled = false;
+    world.scene.add(this.herd);
+    const th = new THREE.InstancedMesh(geo, world.track(new THREE.MeshBasicMaterial({ color: new THREE.Color(0.85, 0.85, 0.85), fog: false, toneMapped: false })), this.n);
+    th.instanceMatrix = this.herd.instanceMatrix;
+    th.frustumCulled = false;
+    th.layers.set(THERMAL_LAYER);
+    world.scene.add(th);
+    this.sync();
+    ctx.say("Стадо пасётся в 300–500 м к северу. Снимайте сверху с высоты 30–120 м, камера вниз", "info");
+  }
+
+  private sync() {
+    const w = this.ctx.world, s = new THREE.Vector3(1, 1, 1);
+    for (let i = 0; i < this.n; i++) {
+      const x = this.pos[i * 2], z = this.pos[i * 2 + 1];
+      this.q.setFromAxisAngle(THREE.Object3D.DEFAULT_UP, this.head[i] + Math.PI);
+      this.herd.setMatrixAt(i, this.m4.compose(new THREE.Vector3(x, w.groundAt(x, z), z), this.q, s));
+    }
+    this.herd.instanceMatrix.needsUpdate = true;
+  }
+
+  update(dt: number, action: Action) {
+    this.time += dt;
+    const { drone, rnd } = this.ctx;
+    const agl = this.agl();
+    // стадо медленно дрейфует, олени пасутся вокруг центра
+    this.drift += (rnd() - 0.5) * 0.2 * dt;
+    this.center.x += Math.sin(this.drift) * 0.35 * dt;
+    this.center.y += -Math.cos(this.drift) * 0.35 * dt;
+    let disturbed = false;
+    for (let i = 0; i < this.n; i++) {
+      const j = i * 2;
+      const dx = this.pos[j] - drone.pos.x, dz = this.pos[j + 1] - drone.pos.z;
+      const dd = Math.hypot(dx, dz);
+      let target = 0.25 + 0.25 * Math.sin(this.time * 0.3 + i);
+      // низкий дрон пугает оленей — они бегут прочь
+      if (agl < 30 && dd < 45 && !drone.landed) {
+        disturbed = true;
+        const away = Math.atan2(dx, dz);
+        this.head[i] += Math.atan2(Math.sin(away - this.head[i]), Math.cos(away - this.head[i])) * Math.min(1, dt * 4);
+        target = 7;
+      } else {
+        const cx = this.center.x - this.pos[j], cz = this.center.y - this.pos[j + 1];
+        if (Math.hypot(cx, cz) > 24) {
+          const to = Math.atan2(cx, cz);
+          this.head[i] += Math.atan2(Math.sin(to - this.head[i]), Math.cos(to - this.head[i])) * Math.min(1, dt);
+          target = 1.2;
+        } else this.head[i] += (rnd() - 0.5) * dt;
+      }
+      this.speed[i] += (target - this.speed[i]) * Math.min(1, dt * 2);
+      this.pos[j] += Math.sin(this.head[i]) * this.speed[i] * dt;
+      this.pos[j + 1] += Math.cos(this.head[i]) * this.speed[i] * dt;
+    }
+    if (disturbed) {
+      this.scared += dt;
+      if (this.time - this.scareSaid > 6) { this.scareSaid = this.time; this.ctx.say("Стадо пугается дрона! Поднимитесь выше 30 м", "warn"); }
+    }
+    this.sync();
+
+    if (action.pressed && !drone.landed) {
+      const dir = this.ctx.camDir();
+      if (dir.y > -0.9) this.ctx.say("Для учёта камера смотрит строго вниз (G)", "warn");
+      else if (agl < 25 || agl > 130) this.ctx.say(`Высота ${agl.toFixed(0)} м: снимайте с 25–130 м`, "warn");
+      else if (drone.vel.length() > 4) this.ctx.say("Смаз: замедлитесь перед кадром", "warn");
+      else {
+        // кадр камеры подвеса: прямоугольник на земле, повёрнутый по курсу
+        const hx = agl * 0.634, hz = agl * 0.466;
+        const c = Math.cos(drone.yaw), sn = Math.sin(drone.yaw);
+        let fresh = 0, inFrame = 0;
+        for (let i = 0; i < this.n; i++) {
+          const dx = this.pos[i * 2] - drone.pos.x, dz = this.pos[i * 2 + 1] - drone.pos.z;
+          const lx = dx * c - dz * sn, lz = dx * sn + dz * c;
+          if (Math.abs(lx) < hx && Math.abs(lz) < hz) {
+            inFrame++;
+            if (!this.counted[i]) { this.counted[i] = 1; fresh++; }
+          }
+        }
+        this.photos++;
+        const total = this.counted.reduce((a, v) => a + v, 0);
+        this.ctx.say(inFrame ? `Кадр ${this.photos}: в кадре ${inFrame}, новых ${fresh}. Учтено ${total}` : `Кадр ${this.photos}: оленей нет`, fresh ? "good" : "info");
+        if (!this.tasksDone && total >= Math.ceil(this.n * 0.95)) {
+          this.tasksDone = true;
+          this.ctx.say("Стадо учтено! Возвращайтесь на базу", "good");
+        }
+      }
+    }
+  }
+  refill() { return false; }
+  objectives(): Objective[] {
+    const total = this.counted.reduce((a, v) => a + v, 0);
+    return [
+      { text: "Сфотографировать всё стадо сверху", done: this.tasksDone, progress: `учтено ${total}` },
+      { text: "Не тревожить животных (выше 30 м)", done: this.scared === 0, progress: this.scared ? `${this.scared.toFixed(0)} с` : undefined },
+    ];
+  }
+  summary() {
+    const total = this.counted.reduce((a, v) => a + v, 0);
+    return {
+      score: clamp(100 * (total / this.n) - this.scared * 1.5 - Math.max(0, this.time - 300) / 8, 10, 100),
+      rows: [
+        ["Учтено оленей", `${total} из ${this.n}`], ["Точность учёта", `${Math.round((total / this.n) * 100)}%`],
+        ["Кадров", String(this.photos)], ["Стадо тревожилось", `${this.scared.toFixed(0)} с`], ["Время", fmtTime(this.time)],
+      ] as [string, string][],
+    };
+  }
+  drawMap(m: MapDraw) {
+    m.ring(this.center.x, this.center.y, 40, "#ffd700");
+    for (let i = 0; i < this.n; i += 2) m.dot(this.pos[i * 2], this.pos[i * 2 + 1], this.counted[i] ? "#00ffaa" : "#c8a070", 1.6);
+  }
+}
+
+// ───────────────────────────── 9. Тепловизионный аудит домов ─────────────────────────────
+
+const BLOCK = { x: 0, z: -230 };
+
+interface AuditHouse { obj: THREE.Object3D; c: THREE.Vector3; top: number; defect: string | null; shot: boolean; thermal: boolean }
+
+class HeatAuditMission extends Mission {
+  private houses: AuditHouse[] = [];
+  private smokeAcc = 0;
+
+  constructor(ctx: Ctx) {
+    super(ctx);
+    const { world, rnd } = ctx;
+    const defects = ["теплопотери через кровлю", "промерзание угла сруба", "утечка тепла через окна", "прорыв теплотрассы у фундамента"];
+    const pick = new Set<number>();
+    while (pick.size < 4) pick.add(Math.floor(rnd() * 12));
+    const hot = new THREE.MeshBasicMaterial({ color: 0xffffff, fog: false, toneMapped: false });
+    world.track(hot);
+    for (let k = 0; k < 12; k++) {
+      const gx = (k % 4) - 1.5, gz = Math.floor(k / 4) - 1;
+      const x = BLOCK.x + gx * 34 + (rnd() - 0.5) * 4, z = BLOCK.z + gz * 36 + (rnd() - 0.5) * 4;
+      const h = makeHouse(rnd, true);
+      h.rotation.y = (Math.floor(rnd() * 4) * Math.PI) / 2;
+      this.place(h, x, z);
+      h.updateMatrixWorld(true);
+      const box = new THREE.Box3().setFromObject(h);
+      const defect = pick.has(k) ? defects[Math.floor(rnd() * defects.length)] : null;
+      world.addThermal(h, defect ? 0.42 : 0.28);
+      if (defect) {
+        // горячее пятно видно только в тепловизоре
+        const sz = box.getSize(new THREE.Vector3());
+        const spot = new THREE.Mesh(new THREE.BoxGeometry(sz.x * 0.5, 0.6, sz.z * 0.5), hot);
+        const y = defect.includes("кровл") ? box.max.y - 1.2 : defect.includes("фундам") ? box.min.y + 0.3 : box.min.y + 1.6;
+        spot.position.set((box.min.x + box.max.x) / 2 + (defect.includes("угла") ? sz.x * 0.3 : 0), y, (box.min.z + box.max.z) / 2);
+        spot.layers.set(THERMAL_LAYER);
+        world.scene.add(spot);
+        if (defect.includes("фундам")) {
+          const pipe = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.2, 30), hot);
+          pipe.position.set(spot.position.x, world.groundAt(spot.position.x, spot.position.z) + 0.1, spot.position.z + 15);
+          pipe.layers.set(THERMAL_LAYER);
+          world.scene.add(pipe);
+        }
+      }
+      this.houses.push({ obj: h, c: box.getCenter(new THREE.Vector3()), top: box.max.y, defect, shot: false, thermal: false });
+    }
+    ctx.say("Квартал из 12 домов в 230 м к северу. Снимайте каждый дом в тепловизоре (T) с 10–45 м", "info");
+  }
+
+  update(dt: number, action: Action) {
+    this.time += dt;
+    const { drone, fx, rnd } = this.ctx;
+    // дымы из печных труб — зимний вечер
+    this.smokeAcc += dt;
+    if (this.smokeAcc > 0.25) {
+      this.smokeAcc = 0;
+      const h = this.houses[Math.floor(rnd() * this.houses.length)];
+      const g = 0.75 + rnd() * 0.15;
+      fx.smoke.spawn(h.c.x + (rnd() - 0.5) * 2, h.top + 0.5, h.c.z + (rnd() - 0.5) * 2, 0, 1.2, 0, 7, 1.5, g, g, g, 0.35);
+    }
+    if (!action.pressed || drone.landed) return;
+    const dir = this.ctx.camDir();
+    let best: AuditHouse | null = null, bd = 1e9;
+    for (const h of this.houses) {
+      const d = h.c.distanceTo(drone.pos);
+      const to = h.c.clone().sub(drone.pos).normalize();
+      if (to.dot(dir) > 0.8 && d < bd) { bd = d; best = h; }
+    }
+    if (!best) { this.ctx.say("Дом не в кадре: наведите нос и камеру подвеса (G) на дом", "warn"); return; }
+    if (bd > 45) { this.ctx.say(`Далеко: ${bd.toFixed(0)} м до дома (нужно 10–45 м)`, "warn"); return; }
+    if (bd < 10) { this.ctx.say("Слишком близко — дом не помещается в кадр", "warn"); return; }
+    const n = this.houses.indexOf(best) + 1;
+    if (!this.ctx.thermal()) {
+      this.ctx.say(`Дом №${n}: обычный снимок. Для энергоаудита включите тепловизор (T)`, "info");
+      return;
+    }
+    const first = !best.thermal;
+    best.shot = true; best.thermal = true;
+    if (best.defect) this.ctx.say(`Дом №${n}: ${best.defect}! Термограмма отправлена в управляющую компанию`, "good");
+    else this.ctx.say(`Дом №${n}: термограмма в норме`, first ? "good" : "info");
+    if (!this.tasksDone && this.houses.every((h) => h.thermal)) {
+      this.tasksDone = true;
+      this.ctx.say("Квартал обследован! Возвращайтесь на базу", "good");
+    }
+  }
+  refill() { return false; }
+  objectives(): Objective[] {
+    const n = this.houses.filter((h) => h.thermal).length;
+    const f = this.houses.filter((h) => h.thermal && h.defect).length;
+    return [
+      { text: "Снять каждый дом в тепловизоре", done: n === this.houses.length, progress: `${n}/${this.houses.length}` },
+      { text: "Выявить дома с теплопотерями", done: this.tasksDone, progress: `найдено ${f}` },
+    ];
+  }
+  summary() {
+    const n = this.houses.filter((h) => h.thermal).length;
+    const f = this.houses.filter((h) => h.thermal && h.defect).length;
+    return {
+      score: clamp((n / this.houses.length) * 100 - Math.max(0, this.time - 300) / 6, 10, 100),
+      rows: [
+        ["Обследовано домов", `${n} из ${this.houses.length}`], ["Найдено дефектов", `${f} из ${this.houses.filter((h) => h.defect).length}`],
+        ["Время", fmtTime(this.time)],
+      ] as [string, string][],
+    };
+  }
+  drawMap(m: MapDraw) {
+    for (const h of this.houses) m.dot(h.c.x, h.c.z, h.thermal ? (h.defect ? "#ff4444" : "#00ffaa") : "#9aa3ab", 3.5);
+  }
+}
+
 const corridor = PYLONS.slice(0, -1).map(([x, z], i) => ({ x1: x, z1: z, x2: PYLONS[i + 1][0], z2: PYLONS[i + 1][1], w: 17 }));
 
 export const MISSIONS: MissionDef[] = [
@@ -1125,6 +1612,54 @@ export const MISSIONS: MissionDef[] = [
     },
     wind: { toDeg: 250, speed: 4, gust: 0.4 }, gimbalPitch: -6, pip: true, payloadLabel: "Камера", payloadUnit: "",
     create: (c) => new PowerlineMission(c),
+  },
+  {
+    id: "oil", title: "Утечка на нефтепроводе", place: "Усинский район, Республика Коми",
+    tagline: "Поиск порыва по газоанализатору", icon: "Droplets", color: "#c084fc",
+    briefing: [
+      "Диспетчер видит падение давления на участке промыслового нефтепровода. Где порыв — неизвестно, трасса идёт через болота.",
+      "На дроне газоанализатор метана. Летите низко (до 20 м) вдоль трубы и следите за ppm: рост концентрации — вы в шлейфе. Шлейф сносит ветром, идите против него к источнику.",
+      "Не путайте с болотным газом: там метан есть, а нефти нет. Найдя пятно, наведите камеру вниз и сделайте снимок — координаты уйдут аварийной бригаде.",
+    ],
+    actionLabel: "Снимок", recommended: ["hexa", "quad"],
+    world: {
+      seed: 83, size: 1500, relief: 6, river: { z0: -480, amp: 50, wl: 200, width: 12 }, flats: [BASE_FLAT],
+      clearings: [], corridors: pipeCorridor, forestDensity: 0.22, palette: TUNDRA,
+    },
+    wind: { toDeg: 60, speed: 4, gust: 0.35 }, gimbalPitch: -90, pip: true, payloadLabel: "Датчик", payloadUnit: "",
+    create: (c) => new OilLeakMission(c),
+  },
+  {
+    id: "reindeer", title: "Учёт оленей", place: "Тундра под Интой, Республика Коми",
+    tagline: "Аэрофотоучёт стада без беспокойства животных", icon: "Binoculars", color: "#f5c27a",
+    briefing: [
+      "Оленеводческий кооператив просит пересчитать стадо после летнего выпаса: часть оленей могла отбиться.",
+      "Снимайте стадо сверху, камера строго вниз, высота 25–130 м. Олени в кадре засчитываются; чем выше — тем шире кадр, но тем легче пропустить отставших.",
+      "Ниже 30 м над стадом олени пугаются и разбегаются — это вред хозяйству и штраф к оценке.",
+    ],
+    actionLabel: "Кадр", recommended: ["quad", "hexa"],
+    world: {
+      seed: 97, size: 1500, relief: 7, river: { z0: 520, amp: 40, wl: 230, width: 10 }, flats: [BASE_FLAT],
+      clearings: [], forestDensity: 0.06, palette: TUNDRA,
+    },
+    wind: { toDeg: 200, speed: 6, gust: 0.4 }, gimbalPitch: -90, pip: true, payloadLabel: "Камера", payloadUnit: "",
+    create: (c) => new ReindeerMission(c),
+  },
+  {
+    id: "heat", title: "Тепловизионный аудит", place: "Эжва, Сыктывкар, Республика Коми",
+    tagline: "Поиск теплопотерь в частном секторе", icon: "ThermometerSnowflake", color: "#ff7a59",
+    briefing: [
+      "Управляющая компания проверяет квартал частных домов перед морозами: где уходит тепло — через кровлю, окна, промёрзшие углы, где течёт теплотрасса.",
+      "Морозный вечер, −27 °C: в тепловизоре (T) тёплые места светятся. Снимите каждый из 12 домов с 10–45 м, дом должен быть в кадре.",
+      "Над крышами печные дымы — не задерживайтесь в них, а провода и антенны во дворах держите в поле зрения.",
+    ],
+    actionLabel: "Снимок", recommended: ["quad", "hexa"],
+    world: {
+      seed: 101, size: 1400, relief: 5, river: { z0: 360, amp: 30, wl: 240, width: 18 },
+      flats: [BASE_FLAT, { x: BLOCK.x, z: BLOCK.z, rx: 80, rz: 66 }], clearings: [], forestDensity: 0.5, palette: WINTER_EVENING,
+    },
+    wind: { toDeg: 110, speed: 3, gust: 0.3 }, gimbalPitch: -25, pip: true, payloadLabel: "Камера", payloadUnit: "",
+    create: (c) => new HeatAuditMission(c),
   },
 ];
 
