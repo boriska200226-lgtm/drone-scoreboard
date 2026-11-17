@@ -92,6 +92,10 @@ export interface MissionDef {
   pip: boolean;
   payloadLabel: string;
   payloadUnit: string;
+  /** Осадки (задаются выбором погоды). */
+  precip?: "rain" | "snow";
+  /** Множитель расхода батареи: в дождь и мороз аккумулятор садится быстрее. */
+  drain?: number;
   create(ctx: Ctx): Mission;
 }
 
@@ -2715,3 +2719,38 @@ export const MISSIONS: MissionDef[] = [
 ];
 
 export const getMission = (id: string) => MISSIONS.find((m) => m.id === id) ?? MISSIONS[0];
+
+// ───────────────────────────── погода и время суток ─────────────────────────────
+
+export type Weather = "scenario" | "clear" | "overcast" | "rain" | "snow" | "fog" | "dusk" | "night";
+export const WEATHER: { id: Weather; label: string; hint: string; icon: string }[] = [
+  { id: "scenario", label: "По сценарию", hint: "как в брифинге", icon: "BookOpen" },
+  { id: "clear", label: "Ясно", hint: "солнце, лёгкая дымка", icon: "Sun" },
+  { id: "overcast", label: "Пасмурно", hint: "рассеянный свет", icon: "Cloud" },
+  { id: "rain", label: "Дождь", hint: "видимость ↓, ветер ↑, батарея −10%", icon: "CloudRain" },
+  { id: "snow", label: "Снегопад", hint: "снег на земле, мороз: батарея −20%", icon: "CloudSnow" },
+  { id: "fog", label: "Туман", hint: "видимость 200–300 м", icon: "CloudFog" },
+  { id: "dusk", label: "Сумерки", hint: "низкое солнце, длинные тени", icon: "Sunset" },
+  { id: "night", label: "Ночь", hint: "нужен тепловизор", icon: "Moon" },
+];
+
+/** Миссия с выбранной погодой: меняются небо, свет, туман, ветер, осадки и расход батареи. */
+export function withWeather(def: MissionDef, w: Weather): MissionDef {
+  if (w === "scenario") return def;
+  const p = def.world.palette;
+  let palette: Palette = p, wind = def.wind.speed, precip: MissionDef["precip"], drain = 1;
+  switch (w) {
+    case "clear": palette = { ...p, clouds: 0.18, fogDensity: p.fogDensity * 0.55, sunIntensity: Math.max(p.sunIntensity, 3), sunDir: [0.45, 0.75, 0.35], skyTop: 0x2f6db5, skyBottom: 0xb4cfe6, fog: 0xa9c3d8, exposure: 0.95, snow: p.snow }; break;
+    case "overcast": palette = { ...p, ...OVERCAST, groundA: p.groundA, groundB: p.groundB, tree: p.tree, treeVar: p.treeVar, water: p.water, snow: p.snow, grassTint: p.grassTint }; break;
+    case "rain":
+      palette = { ...p, skyTop: 0x4e5a66, skyBottom: 0x8d969e, fog: 0x868f98, fogDensity: Math.max(0.0034, p.fogDensity * 1.6), sun: 0xdde4ea, sunIntensity: 1.3, ambient: 0xaab4c0, ambientIntensity: 1.05, clouds: 0.97, exposure: 1.2, hdr: "forest_slope_1k.hdr", snow: false };
+      wind *= 1.35; precip = "rain"; drain = 1.1; break;
+    case "snow":
+      palette = { ...p, ...WINTER, fog: 0xc5ceda, fogDensity: 0.0034, clouds: 0.95, sunIntensity: 1.6, exposure: 0.9, snow: true };
+      precip = "snow"; drain = 1.2; break;
+    case "fog": palette = { ...p, fog: 0xa7afb6, skyBottom: 0xa7afb6, skyTop: 0x8d97a2, fogDensity: 0.0072, clouds: 0.9, sunIntensity: 1.2, exposure: 1.2, hdr: "kiara_1_dawn_1k.hdr" }; wind *= 0.5; break;
+    case "dusk": palette = { ...p, sunDir: [0.75, 0.09, 0.3], sun: 0xff9a5a, sunIntensity: 2.2, skyTop: 0x2c3d66, skyBottom: 0xf0a070, fog: 0xc89278, fogDensity: p.fogDensity * 1.1, ambient: 0x9a8cb0, ambientIntensity: 0.8, clouds: 0.35, exposure: 1.2, hdr: "venice_sunset_1k.hdr" }; break;
+    case "night": palette = { ...p, ...NIGHT, groundA: p.groundA, groundB: p.groundB, tree: p.tree, treeVar: p.treeVar, water: p.water, snow: p.snow, grassTint: [0.6, 0.68, 0.62] }; break;
+  }
+  return { ...def, world: { ...def.world, palette }, wind: { ...def.wind, speed: wind }, precip, drain };
+}

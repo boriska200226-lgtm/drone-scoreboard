@@ -5,7 +5,7 @@ import { AIRFRAMES, Airframe, getAirframe, hoverMinutes } from "@/sim/airframes"
 import { CAM_LABEL, CamMode, CAMS, MODES } from "@/sim/engine";
 import { LIVERIES, liveryFor } from "@/sim/droneModel";
 import { InputConfig, saveInput } from "@/sim/input";
-import { Difficulty, DIFFICULTY, getMission, MISSIONS } from "@/sim/missions";
+import { Difficulty, DIFFICULTY, getMission, MISSIONS, Weather, WEATHER } from "@/sim/missions";
 import { FlightMode, MODE_HINT, MODE_LABEL } from "@/sim/physics";
 import type { Quality } from "@/sim/world";
 import ControlsSetup from "./ControlsSetup";
@@ -16,6 +16,7 @@ const HangarPreview = lazy(() => import("./HangarPreview"));
 export interface LaunchSettings {
   mission: string; af: string; diff: Difficulty; quality: Quality; fmode: FlightMode; cam: CamMode; input: InputConfig;
   livery: string; // "auto" — штатная окраска аппарата
+  weather: Weather;
 }
 export type Best = Record<string, { score: number; stars: number }>;
 
@@ -118,7 +119,7 @@ export default function Launcher({ initial, best, onStart }: { initial: LaunchSe
             <div className="p-3 space-y-1.5 text-sm">
               <div className="font-orbitron text-xs font-bold" style={{ color: mission.color }}>{mission.title.toUpperCase()}</div>
               {[["Аппарат", af.name], ["Режим", MODE_LABEL[s.fmode]], ["Камера", CAM_LABEL[s.cam]],
-                ["Управление", s.input.device === "gamepad" ? "пульт / геймпад" : "клавиатура"], ["Сложность", DIFFICULTY[s.diff].label]].map(([k, v]) => (
+                ["Управление", s.input.device === "gamepad" ? "пульт / геймпад" : "клавиатура"], ["Погода", WEATHER.find((w) => w.id === s.weather)?.label ?? ""], ["Сложность", DIFFICULTY[s.diff].label]].map(([k, v]) => (
                 <div key={k} className="flex justify-between gap-2"><span className="text-gray-500">{k}</span><span className="text-gray-200">{v}</span></div>
               ))}
             </div>
@@ -179,6 +180,19 @@ export default function Launcher({ initial, best, onStart }: { initial: LaunchSe
                   </div>
                   <div className="text-xs text-gray-500 mt-3">Рекомендуемые аппараты: {mission.recommended.map((id) => getAirframe(id).name).join(", ")}</div>
                 </div>
+              </div>
+              <div>
+                <div className="font-orbitron text-xs font-bold mb-2">ПОГОДА И ВРЕМЯ СУТОК</div>
+                <div className="grid grid-cols-4 gap-1.5">
+                  {WEATHER.map((w) => (
+                    <button key={w.id} onClick={() => set({ weather: w.id })} title={w.hint} className="rounded-lg py-2 px-1 flex flex-col items-center gap-1 transition-all"
+                      style={{ background: s.weather === w.id ? "#00aaff1f" : surface.background, border: `1px solid ${s.weather === w.id ? "#00aaff" : "rgba(255,255,255,0.08)"}` }}>
+                      <Icon name={w.icon} size={16} style={{ color: s.weather === w.id ? "#00aaff" : "#9aa3b2" }} />
+                      <span className="text-[10px] font-orbitron font-bold leading-tight text-center" style={{ color: s.weather === w.id ? "#00aaff" : "#aab" }}>{w.label}</span>
+                    </button>
+                  ))}
+                </div>
+                <div className="text-xs text-gray-500 mt-1.5">{WEATHER.find((w) => w.id === s.weather)?.hint}</div>
               </div>
               <div>
                 <div className="font-orbitron text-xs font-bold mb-2">СЛОЖНОСТЬ</div>

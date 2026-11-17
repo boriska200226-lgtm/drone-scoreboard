@@ -89,7 +89,9 @@ export class DroneSim {
   windNow = new THREE.Vector3();
   gear: number;
   rates: Rates = { rc: 1, superRate: 0.7, expo: 0 };
-  speedLimit = Infinity; // м/с, ограничение автопилота (например, при опрыскивании)
+  speedLimit = Infinity;
+  /** Множитель расхода энергии (погода: дождь, мороз). */
+  drain = 1; // м/с, ограничение автопилота (например, при опрыскивании)
   radius: number;
 
   private yawSp = 0;
@@ -320,7 +322,7 @@ export class DroneSim {
       power += this.kP * Math.pow(this.thrust[i], 1.5);
     }
     this.powerW = power;
-    this.battery = Math.max(0, this.battery - (power * dt) / 3600);
+    this.battery = Math.max(0, this.battery - (power * this.drain * dt) / 3600);
 
     // моменты от реальных тяг
     let mx = 0, my = 0, mz = 0;

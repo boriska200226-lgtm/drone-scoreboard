@@ -282,3 +282,78 @@ export class FlameField {
     this.mat.dispose();
   }
 }
+
+// ─────────────────────────── осадки ───────────────────────────
+
+/**
+ * Дождь или снег вокруг камеры. Позиции капель анимирует видеокарта: каждая падает в своём столбе
+ * и «перематывается» сверху, когда уходит под камеру, — процессор не тратится вообще.
+ */
+export class PrecipField {
+  mesh: THREE.InstancedMesh;
+  private mat: THREE.ShaderMaterial;
+
+  constructor(scene: THREE.Scene, kind: "rain" | "snow", count: number) {
+    const rain = kind === "rain";
+    const geo = new THREE.PlaneGeometry(rain ? 0.016 : 0.05, rain ? 0.85 : 0.05);
+    const seeds = new Float32Array(count * 4);
+    for (let i = 0; i < count; i++) { seeds[i * 4] = Math.random(); seeds[i * 4 + 1] = Math.random(); seeds[i * 4 + 2] = Math.random(); seeds[i * 4 + 3] = Math.random(); }
+    geo.setAttribute("aSeed", new THREE.InstancedBufferAttribute(seeds, 4));
+    this.mat = new THREE.ShaderMaterial({
+      transparent: true, depthWrite: false, side: THREE.DoubleSide,
+      uniforms: {
+        uTime: { value: 0 }, uCam: { value: new THREE.Vector3() }, uWind: { value: new THREE.Vector3() },
+        uBox: { value: rain ? 36 : 30 }, uFall: { value: rain ? 9 : 1.1 }, uColor: { value: new THREE.Color(rain ? 0xaebfcc : 0xffffff) },
+        uAlpha: { value: rain ? 0.55 : 0.85 },
+      },
+      vertexShader: /* glsl */ `
+        attribute vec4 aSeed;
+        uniform float uTime, uBox, uFall;
+        uniform vec3 uCam, uWind;
+        varying vec2 vUv;
+        void main() {
+          vUv = uv;
+          float t = uTime * uFall * (0.8 + aSeed.w * 0.4);
+          vec3 p = vec3(aSeed.x, aSeed.y, aSeed.z) * uBox;
+          p.y -= t;
+          p.xz += uWind.xz * (uTime * (0.8 + aSeed.w * 0.4)) * (${rain ? "1.0" : "0.6"});
+          ${rain ? "" : "p.x += sin(uTime * 1.3 + aSeed.w * 30.) * 0.4; p.z += cos(uTime * 1.1 + aSeed.x * 30.) * 0.4;"}
+          // сворачиваем в куб вокруг камеры
+          vec3 rel = p - uCam;
+          rel = rel - uBox * floor(rel / uBox + 0.5);
+          vec3 c = uCam + rel;
+          // плоскость повёрнута к камере по горизонтали; дождевая черта наклонена по ветру
+          vec3 toCam = normalize(vec3(uCam.x - c.x, 0., uCam.z - c.z) + vec3(1e-4, 0., 0.));
+          vec3 right = normalize(cross(vec3(0., 1., 0.), toCam));
+          vec3 up = normalize(vec3(0., 1., 0.) ${rain ? "- uWind * 0.05" : ""});
+          vec3 world = c + right * position.x + up * position.y;
+          gl_Position = projectionMatrix * viewMatrix * vec4(world, 1.);
+        }`,
+      fragmentShader: /* glsl */ `
+        uniform vec3 uColor; uniform float uAlpha;
+        varying vec2 vUv;
+        void main() {
+          ${rain
+            ? "float a = smoothstep(0., .5, vUv.y) * (1. - vUv.y) * 2. * smoothstep(.5, .1, abs(vUv.x - .5));"
+            : "float a = smoothstep(.5, .15, length(vUv - .5));"}
+          if (a < .02) discard;
+          gl_FragColor = vec4(uColor, a * uAlpha);
+          #include <tonemapping_fragment>
+          #include <colorspace_fragment>
+        }`,
+    });
+    this.mesh = new THREE.InstancedMesh(geo, this.mat, count);
+    this.mesh.frustumCulled = false;
+    this.mesh.renderOrder = 5;
+    scene.add(this.mesh);
+  }
+
+  update(dt: number, cam: THREE.Vector3, wind: THREE.Vector3) {
+    const u = this.mat.uniforms;
+    u.uTime.value += dt;
+    u.uCam.value.copy(cam);
+    u.uWind.value.lerp(wind, Math.min(1, dt));
+  }
+
+  dispose() { this.mesh.geometry.dispose(); this.mat.dispose(); }
+}

@@ -1,7 +1,7 @@
 // Игровой цикл: ввод → физика → миссия → рендер (основной вид + окно подвесной камеры).
 import * as THREE from "three";
 import { Airframe } from "./airframes";
-import { Particles } from "./effects";
+import { Particles, PrecipField } from "./effects";
 import { Action, Ctx, Difficulty, DIFFICULTY, MapDraw, Mission, MissionDef, Objective, SayKind } from "./missions";
 import { clamp, mulberry32 } from "./noise";
 import { DroneSim, Env, FlightMode, MANUAL_THROTTLE, MODE_LABEL, Sticks } from "./physics";
@@ -29,8 +29,14 @@ export interface Hud {
   fps: number; res: number;
 }
 
+export interface FlightSample { t: number; x: number; z: number; agl: number; spd: number; soc: number }
+export interface FlightLog {
+  samples: FlightSample[]; remarks: [string, number][]; maxAgl: number; maxSpeed: number; distance: number;
+  energyWh: number; over150: number; beyondVlos: number; hardLandings: number; base: { x: number; z: number };
+}
 export interface SimResult {
   success: boolean; reason: string; score: number; stars: number; rows: [string, string][]; time: number;
+  missionId: string; log: FlightLog;
 }
 
 export interface EngineOpts {
@@ -115,6 +121,13 @@ export class SimEngine {
   private cam = new THREE.PerspectiveCamera(62, 1, 0.15, 5000);
   private pipCam = new THREE.PerspectiveCamera(50, 1.36, 0.3, 3000);
   private model!: DroneModel;
+  private precip: PrecipField | null = null;
+  private remarks = new Map<string, number>();
+  private log: FlightLog = { samples: [], remarks: [], maxAgl: 0, maxSpeed: 0, distance: 0, energyWh: 0, over150: 0, beyondVlos: 0, hardLandings: 0, base: { x: 0, z: 0 } };
+  private logAcc = 0;
+  private wasAirborne = false;
+  private lastVy = 0;
+  private swapWh = 0;
   private pr = 1;
   private maxPr = 1;
   private fpsAcc = 0;
@@ -213,12 +226,14 @@ export class SimEngine {
 
     const ctx: Ctx = {
       world: this.world, drone: this.drone, af: o.airframe, difficulty: o.difficulty, rnd: this.rnd, fx: this.fx,
-      say: (t, k = "info") => o.onSay(t, k),
+      say: (t, k = "info") => this.say(t, k),
       thermal: () => this.thermal,
       camDir: () => this.camDirV,
       camPos: () => this.cam.position,
     };
     this.mission = o.mission.create(ctx);
+    if (o.mission.precip) this.precip = new PrecipField(scene, o.mission.precip, o.quality === "low" ? 2500 : o.mission.precip === "rain" ? 9000 : 6000);
+    if (o.mission.drain) this.drone.drain = o.mission.drain;
     if (o.flightMode) this.drone.mode = o.flightMode;
     this.input = o.input ?? DEFAULT_INPUT;
     this.drone.rates = this.input.rates;
@@ -445,7 +460,7 @@ export class SimEngine {
         const i = Math.floor(this.rnd() * d.n);
         d.failMotor(i);
         this.failAt = Infinity;
-        this.o.onSay(`ОТКАЗ МОТОРА №${i + 1}! ${d.af.redundancy === "нет" ? "Резерва нет" : "Аппарат держится — садитесь"}`, "warn");
+        this.say(`ОТКАЗ МОТОРА №${i + 1}! ${d.af.redundancy === "нет" ? "Резерва нет" : "Аппарат держится — садитесь"}`, "warn");
       }
       this.rules(dt);
     } else if (this.endTimer >= 0) {
@@ -458,6 +473,7 @@ export class SimEngine {
     this.fx.fire.update(dt, windNow);
     this.fx.smoke.update(dt, windNow);
     this.fx.water.update(dt, windNow);
+    if (!this.ended) this.record(dt);
     this.syncVisuals(dt);
     let avg = 0;
     for (let i = 0; i < d.n; i++) avg += d.thrust[i] / d.af.motorThrust;
@@ -465,7 +481,7 @@ export class SimEngine {
   }
 
   private rules(dt: number) {
-    const d = this.drone, m = this.mission, say = this.o.onSay;
+    const d = this.drone, m = this.mission, say = (t: string, k: SayKind) => this.say(t, k);
     if (d.crashed) {
       this.ended = true; this.endTimer = 1.8;
       for (let i = 0; i < 60; i++) {
@@ -482,6 +498,7 @@ export class SimEngine {
       if (!this.serviced && this.baseTimer > 2) {
         this.serviced = true;
         const swapped = d.battery < d.af.batteryWh * 0.97;
+        if (swapped) this.swapWh += d.af.batteryWh - d.battery;
         d.battery = d.af.batteryWh;
         const filled = m.refill();
         if (swapped || filled) say(filled ? "Техник: АКБ заменена, бак заправлен" : "Техник: АКБ заменена", "good");
@@ -497,6 +514,41 @@ export class SimEngine {
     }
   }
 
+  /** Сообщение пилоту; предупреждения попадают в замечания разбора полёта. */
+  private say(text: string, kind: SayKind) {
+    if (kind === "warn") {
+      // одинаковые по смыслу замечания группируем: убираем числа из текста
+      const key = text.replace(/[0-9.,]+/g, "N").replace(/\s+/g, " ").trim();
+      this.remarks.set(key, (this.remarks.get(key) ?? 0) + 1);
+    }
+    this.o.onSay(text, kind);
+  }
+
+  /** Бортовой журнал: раз в полсекунды точка трека и контроль правил полётов. */
+  private record(dt: number) {
+    const d = this.drone;
+    if (d.landed && this.log.samples.length === 0) return;
+    const gh = Math.max(this.world.groundAt(d.pos.x, d.pos.z), this.world.waterLevel ?? -1e9);
+    const agl = Math.max(0, d.pos.y - d.gear - gh);
+    const spd = Math.hypot(d.vel.x, d.vel.z);
+    const L = this.log;
+    L.maxAgl = Math.max(L.maxAgl, agl);
+    L.maxSpeed = Math.max(L.maxSpeed, spd);
+    L.distance += spd * dt;
+    // ограничение высоты для БВС без разрешения на использование воздушного пространства — 150 м
+    if (agl > 150) { if (L.over150 === 0) this.say("Выше 150 м — нужен план полёта и разрешение на использование воздушного пространства", "warn"); L.over150 += dt; }
+    // полёт за пределами прямой видимости (условно — дальше 2 км от пилота)
+    if (Math.hypot(d.pos.x, d.pos.z) > 2000) L.beyondVlos += dt;
+    if (d.landed && this.wasAirborne && this.lastVy < -2.5) { L.hardLandings++; this.say("Жёсткая посадка — гасите вертикальную скорость у земли", "warn"); }
+    this.wasAirborne = !d.landed;
+    this.lastVy = d.vel.y;
+    this.logAcc += dt;
+    if (this.logAcc >= 0.5) {
+      this.logAcc = 0;
+      L.samples.push({ t: +this.mission.time.toFixed(1), x: Math.round(d.pos.x), z: Math.round(d.pos.z), agl: +agl.toFixed(1), spd: +spd.toFixed(1), soc: +d.soc.toFixed(3) });
+    }
+  }
+
   private finish(success: boolean, reason: string) {
     if (this.ended && this.endTimer >= 0) return;
     this.ended = true; this.endTimer = -1;
@@ -507,6 +559,11 @@ export class SimEngine {
     this.o.onEnd({
       success, reason, score, stars: !success ? 0 : score >= 85 ? 3 : score >= 60 ? 2 : 1,
       rows: rows.filter((r, i) => rows.findIndex((x) => x[0] === r[0]) === i), time: this.mission.time,
+      missionId: this.o.mission.id,
+      log: {
+        ...this.log, energyWh: +(this.drone.af.batteryWh * (1 - this.drone.soc) + this.swapWh).toFixed(1),
+        remarks: [...this.remarks.entries()].sort((a, b) => b[1] - a[1]),
+      },
     });
   }
 
@@ -564,6 +621,7 @@ export class SimEngine {
     }
     cam.updateProjectionMatrix();
     this.world.update(dt, d.pos, cam.position);
+    this.precip?.update(dt, cam.position, d.windNow);
     if (this.world.grass) {
       let thr = 0;
       for (let i = 0; i < d.n; i++) thr += d.thrust[i];
@@ -788,6 +846,7 @@ export class SimEngine {
     window.removeEventListener("resize", this.resize);
     window.removeEventListener("blur", this.onBlur);
     this.audio.dispose();
+    this.precip?.dispose();
     releaseModels();
     this.mission.dispose();
     this.fx.fire.dispose(); this.fx.smoke.dispose(); this.fx.water.dispose();

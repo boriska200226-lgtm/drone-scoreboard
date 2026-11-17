@@ -208,6 +208,41 @@ def handler(event: dict, context) -> dict:
                        "net_xp": net_xp, "bonus_xp": bonus_xp,
                        "total_xp": new_total_xp, "new_achievements": new_achs})
 
+        # POST ?action=sim — результат миссии симулятора (сам ученик, по своему токену)
+        if method == "POST" and action == "sim":
+            sess = get_session(cur, token)
+            if not sess or sess[1] != "student" or not sess[2]:
+                return err(403, "Войдите в БАС Арену учеником, чтобы результаты шли в зачёт")
+            player_id = sess[2]
+            body = json.loads(event.get("body") or "{}")
+            mission_id = str(body.get("mission_id", ""))[:40]
+            title = str(body.get("mission_title", "Миссия"))[:60]
+            if not mission_id or not body.get("success"):
+                return err(400, "Засчитываются только выполненные миссии")
+            # значения ограничиваем на сервере: клиенту не доверяем
+            score = max(0, min(100, int(body.get("score", 0))))
+            stars = max(0, min(3, int(body.get("stars", 0))))
+            minutes = max(1, min(60, round(int(body.get("duration_sec", 0)) / 60)))
+            level = f"СИМ · {title}"
+            # опыт начисляется за улучшение лучшего результата этой миссии за сегодня — без «фарма» повторами
+            cur.execute(
+                f"SELECT COALESCE(MAX(accuracy), -1) FROM {SCHEMA}.sessions WHERE player_id = %s AND level = %s AND played_at::date = CURRENT_DATE",
+                (player_id, level),
+            )
+            best_today = cur.fetchone()[0]
+            xp = 20 + int(score * 1.5) + stars * 20 if score > best_today else 0
+            cur.execute(
+                f"INSERT INTO {SCHEMA}.sessions (player_id, score, duration, accuracy, level, xp_earned, penalty_xp) VALUES (%s, %s, %s, %s, %s, %s, 0)",
+                (player_id, score * 10, minutes, score, level, xp),
+            )
+            stats = get_player_stats(cur, player_id)
+            new_achs, bonus_xp = check_achievements(cur, player_id, {"score": score * 10, "accuracy": score}, stats)
+            cur.execute(f"UPDATE {SCHEMA}.players SET xp = GREATEST(0, xp + %s) WHERE player_id = %s RETURNING xp", (xp + bonus_xp, player_id))
+            row = cur.fetchone()
+            conn.commit()
+            return ok({"xp_earned": xp, "bonus_xp": bonus_xp, "total_xp": row[0] if row else None,
+                       "new_achievements": new_achs, "improved": xp > 0})
+
         # POST ?action=penalty — отдельный штраф (только преподаватель)
         if method == "POST" and action == "penalty":
             if not is_teacher(cur, token):

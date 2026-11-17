@@ -16,7 +16,27 @@
       "name": "POST session no auth returns 403",
       "method": "POST",
       "path": "/",
-      "body": {"player_id": "ИГРОК_001", "score": 600, "duration": 15, "accuracy": 88, "level": "Средний"},
+      "body": {
+        "player_id": "ИГРОК_001",
+        "score": 600,
+        "duration": 15,
+        "accuracy": 88,
+        "level": "Средний"
+      },
+      "expectedStatus": 403
+    },
+    {
+      "name": "POST sim result without auth returns 403",
+      "method": "POST",
+      "path": "/?action=sim",
+      "body": {
+        "mission_id": "training",
+        "mission_title": "Учебный полигон",
+        "success": true,
+        "score": 90,
+        "stars": 3,
+        "duration_sec": 180
+      },
       "expectedStatus": 403
     }
   ]

@@ -1,13 +1,15 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Icon from "@/components/ui/icon";
 import { Airframe, getAirframe } from "@/sim/airframes";
 import { CAM_LABEL, CamMode, CAMS, Command, Hud, MODES, SimEngine, SimResult } from "@/sim/engine";
 import { InputConfig, loadInput } from "@/sim/input";
 import { loadModels } from "@/sim/models";
 import { FlightMode, MODE_HINT, MODE_LABEL } from "@/sim/physics";
-import { Difficulty, DIFFICULTY, getMission, MissionDef, SayKind } from "@/sim/missions";
+import { Difficulty, DIFFICULTY, getMission, MissionDef, SayKind, withWeather } from "@/sim/missions";
 import type { Quality } from "@/sim/world";
 import Launcher, { Best, LaunchSettings, Stars } from "./sim/Launcher";
+import Debrief from "./sim/Debrief";
+import { BAS_API, loadAuth } from "./arena/constants";
 
 function loadQuality(): Quality {
   try {
@@ -139,6 +141,26 @@ function Loading({ mission }: { mission: MissionDef }) {
   );
 }
 
+/** Отправка результата в БАС Арену: опыт начисляет сервер (только ученику и только за улучшение результата за день). */
+async function sendResult(r: SimResult, title: string): Promise<{ ok: boolean; text: string } | null> {
+  if (import.meta.env.VITE_STANDALONE) return null;
+  const user = loadAuth();
+  if (!user) return { ok: false, text: "Войдите в БАС Арену учеником — выполненные миссии будут приносить XP" };
+  if (user.role !== "student") return null;
+  try {
+    const res = await fetch(`${BAS_API}?action=sim`, {
+      method: "POST", headers: { "Content-Type": "application/json", "X-Token": user.token },
+      body: JSON.stringify({ mission_id: r.missionId, mission_title: title, success: r.success, score: r.score, stars: r.stars, duration_sec: Math.round(r.time) }),
+    });
+    const d = await res.json();
+    if (!res.ok) return { ok: false, text: d.error ?? "Не удалось отправить результат в БАС Арену" };
+    if (!d.improved) return { ok: false, text: "Результат записан в журнал. XP — только за улучшение лучшего результата за день" };
+    return { ok: true, text: `+${d.xp_earned + (d.bonus_xp ?? 0)} XP в БАС Арене${d.new_achievements?.length ? " · новое достижение!" : ""}` };
+  } catch {
+    return { ok: false, text: "Нет связи с БАС Ареной — результат не отправлен" };
+  }
+}
+
 function Flight({ mission, af, difficulty, quality, flightMode, camMode, input, livery, onExit, onRestart }: {
   mission: MissionDef; af: Airframe; difficulty: Difficulty; quality: Quality; flightMode: FlightMode; camMode: CamMode; input: InputConfig; livery: string;
   onExit: () => void; onRestart: () => void;
@@ -150,11 +172,13 @@ function Flight({ mission, af, difficulty, quality, flightMode, camMode, input, 
   const [hud, setHud] = useState<Hud | null>(null);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [result, setResult] = useState<SimResult | null>(null);
+  const [xpNote, setXpNote] = useState<{ ok: boolean; text: string } | null>(null);
   const [paused, setPaused] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [touch] = useState(() => window.matchMedia("(pointer: coarse)").matches);
   const toastId = useRef(0);
+  const submitToArena = (r: SimResult) => { sendResult(r, mission.title).then(setXpNote); };
 
   useEffect(() => {
     let e: SimEngine | null = null, alive = true;
@@ -172,7 +196,7 @@ function Flight({ mission, af, difficulty, quality, flightMode, camMode, input, 
           setToasts((t) => [...t.slice(-2), { id, text, kind }]);
           setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 6500);
         },
-        onEnd: (r) => { if (r.success) saveBest(mission.id, r); setResult(r); },
+        onEnd: (r) => { if (r.success) { saveBest(mission.id, r); submitToArena(r); } setResult(r); },
       });
      } catch (err) {
       setError(err instanceof Error ? err.message : "WebGL недоступен");
@@ -359,8 +383,9 @@ function Flight({ mission, af, difficulty, quality, flightMode, camMode, input, 
 
       {/* итог */}
       {result && (
-        <div className="absolute inset-0 flex items-center justify-center p-4" style={{ background: "rgba(0,0,0,0.65)" }}>
-          <div className="rounded-2xl p-6 w-[380px] max-w-full text-center animate-fade-in" style={{ ...panel, background: "rgba(10,13,22,0.96)", borderColor: result.success ? "#00ffaa66" : "#ff444466" }}>
+        <div className="absolute inset-0 flex items-center justify-center p-4 overflow-y-auto" style={{ background: "rgba(0,0,0,0.65)" }}>
+          <div className="rounded-2xl p-6 w-[920px] max-w-full my-auto text-center animate-fade-in grid lg:grid-cols-[300px_minmax(0,1fr)] gap-6" style={{ ...panel, background: "rgba(10,13,22,0.96)", borderColor: result.success ? "#00ffaa66" : "#ff444466" }}>
+           <div>
             <div className="font-orbitron text-xs" style={{ color: mission.color }}>{mission.title.toUpperCase()}</div>
             <div className="font-orbitron text-2xl font-black mt-1" style={{ color: result.success ? "#00ffaa" : "#ff4444" }}>
               {result.success ? "МИССИЯ ВЫПОЛНЕНА" : "МИССИЯ ПРОВАЛЕНА"}
@@ -372,10 +397,16 @@ function Flight({ mission, af, difficulty, quality, flightMode, camMode, input, 
                 <div key={k} className="flex justify-between text-[15px] border-b border-white/5 py-0.5"><span className="text-gray-400">{k}</span><span className="text-white font-semibold">{v}</span></div>
               ))}
             </div>
+            {xpNote && <div className="mt-3 text-sm rounded-lg px-3 py-2" style={{ background: xpNote.ok ? "#00ffaa14" : "#ffffff0a", color: xpNote.ok ? "#00ffaa" : "#9aa3b2" }}>{xpNote.text}</div>}
             <div className="grid grid-cols-2 gap-2 mt-5">
               <button onClick={onRestart} className="py-3 rounded-lg font-orbitron font-bold text-sm" style={{ background: "#00ffaa", color: "#0a0d16" }}>ЕЩЁ РАЗ</button>
               <button onClick={onExit} className="py-3 rounded-lg font-orbitron text-sm text-white" style={{ background: "#ffffff14" }}>МИССИИ</button>
             </div>
+           </div>
+           <div className="min-w-0">
+            <div className="font-orbitron text-xs text-gray-400 mb-3 text-left">РАЗБОР ПОЛЁТА</div>
+            <Debrief log={result.log} time={result.time} />
+           </div>
           </div>
         </div>
       )}
@@ -387,14 +418,15 @@ function Flight({ mission, af, difficulty, quality, flightMode, camMode, input, 
 
 export default function Simulator() {
   const [settings, setSettings] = useState<LaunchSettings>(() => ({
-    mission: "training", af: "quad", diff: "pilot", quality: loadQuality(), fmode: "POS", cam: "chase", input: loadInput(), livery: "auto",
+    mission: "training", af: "quad", diff: "pilot", quality: loadQuality(), fmode: "POS", cam: "chase", input: loadInput(), livery: "auto", weather: "scenario",
   }));
   const [run, setRun] = useState(0);
   const [best, setBest] = useState<Best>(loadBest);
   useEffect(() => { document.title = "БАС Симулятор — миссии беспилотников"; }, []);
+  const mission = useMemo(() => withWeather(getMission(settings.mission), settings.weather), [settings.mission, settings.weather]);
   if (!run) return <Launcher initial={settings} best={best} onStart={(st) => { setSettings(st); setRun(1); }} />;
   return (
-    <Flight key={run} mission={getMission(settings.mission)} af={getAirframe(settings.af)} difficulty={settings.diff} quality={settings.quality}
+    <Flight key={run} mission={mission} af={getAirframe(settings.af)} difficulty={settings.diff} quality={settings.quality}
       flightMode={settings.fmode} camMode={settings.cam} input={settings.input} livery={settings.livery}
       onExit={() => { setBest(loadBest()); setRun(0); }} onRestart={() => setRun(run + 1)} />
   );
