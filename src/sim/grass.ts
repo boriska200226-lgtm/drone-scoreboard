@@ -94,9 +94,11 @@ export class GrassField {
           float gh = texture2D(tHeight, tuv).r;
           float dens = texture2D(tDens, tuv).r;
           float dist = length(p);
-          float scale = aRand.y * step(aRand.z, dens) * smoothstep(uTile * .5, uTile * .3, dist);
+          float scale = aRand.y * step(aRand.z, dens) * smoothstep(uTile * .46, uTile * .22, dist);
           float c = cos(aRand.x), s = sin(aRand.x);
           vec3 lp = vec3(c * position.x - s * position.z, position.y, s * position.x + c * position.z) * scale;
+          // вдали стебли толще: тоньше пикселя они мерцают («рябь»)
+          lp.xz *= 1. + dist * .09;
           float t = uv.y; vT = t; vShade = .75 + .5 * fract(aRand.z * 13.7);
           // ветер: волны по полю + мелкая дрожь
           float gust = sin(dot(wp, uWind) * .08 - uTime * 1.6) * .5 + .5;

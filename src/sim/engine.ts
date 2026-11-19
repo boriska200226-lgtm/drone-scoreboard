@@ -140,6 +140,7 @@ export class SimEngine {
   private wasAirborne = false;
   private lastVy = 0;
   private lastBumps = 0;
+  private lowSec = 0; private highSec = 0;
   private swapWh = 0;
   private pr = 1;
   private maxPr = 1;
@@ -527,9 +528,12 @@ export class SimEngine {
     this.fps = this.fpsN / this.fpsAcc;
     this.fpsAcc = 0; this.fpsN = 0;
     if (!this.autoRes || this.paused) return;
+    // с гистерезисом: частая смена разрешения сама по себе выглядит как мерцание картинки
     let pr = this.pr;
-    if (this.fps < 45) pr = Math.max(0.6, pr - (this.fps < 30 ? 0.2 : 0.1));
-    else if (this.fps > 58 && pr < this.maxPr) pr = Math.min(this.maxPr, pr + 0.05);
+    this.lowSec = this.fps < 40 ? this.lowSec + 1 : 0;
+    this.highSec = this.fps > 58 ? this.highSec + 1 : 0;
+    if (this.lowSec >= 2) { pr = Math.max(0.6, pr - (this.fps < 28 ? 0.2 : 0.1)); this.lowSec = 0; }
+    else if (this.highSec >= 6 && pr < this.maxPr) { pr = Math.min(this.maxPr, pr + 0.1); this.highSec = 0; }
     if (Math.abs(pr - this.pr) > 0.01) {
       this.pr = pr;
       this.renderer.setPixelRatio(pr);
@@ -806,7 +810,7 @@ export class SimEngine {
     if (this.composer) {
       const u = this.grade!.uniforms, fpv = this.camMode === "fpv";
       u.uTime.value = (u.uTime.value + 0.017) % 100;
-      u.uGrain.value = 0.012 + (fpv ? Math.max(0, 0.45 - this.linkQ) * 0.6 : 0); // помехи только при слабом сигнале
+      u.uGrain.value = fpv ? Math.max(0, 0.45 - this.linkQ) * 0.6 : 0; // шум только как помехи при слабом сигнале
       u.uVignette.value = fpv ? 0.55 : 0.32;
       this.composer.render();
     } else r.render(scene, this.cam);

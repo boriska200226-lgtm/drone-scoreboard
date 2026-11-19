@@ -8,6 +8,7 @@ import { GrassField } from "./grass";
 import { BIRCH, ForestKit, PINE, SPRUCE } from "./forest";
 import { instanceModel } from "./models";
 
+const _sr = new THREE.Vector3(), _su = new THREE.Vector3();
 const ASSET = (p: string) => `${import.meta.env.BASE_URL}sim/${p}`;
 
 export const THERMAL_LAYER = 1;
@@ -239,10 +240,13 @@ export class World {
     if (this.water) (this.water.material as THREE.ShaderMaterial).uniforms.time.value += dt * 0.6;
     this.sky.position.copy(camPos);
     if (this.sun.castShadow) {
-      const texel = (this.sun.shadow.camera.right * 2) / this.sun.shadow.mapSize.x * 4;
-      const fx = Math.round(focus.x / texel) * texel, fz = Math.round(focus.z / texel) * texel;
-      this.sun.target.position.set(fx, this.groundAt(fx, fz), fz);
-      this.sun.position.copy(this.sun.target.position).addScaledVector(this.skyParams.sunDir, 420);
+      // привязка теневой камеры к сетке текселей в пространстве света — тени не дрожат при движении
+      const texel = (this.sun.shadow.camera.right * 2) / this.sun.shadow.mapSize.x;
+      const L = this.skyParams.sunDir;
+      const right = _sr.set(0, 1, 0).cross(L).normalize(), up = _su.copy(L).cross(right).normalize();
+      const a = Math.round(focus.dot(right) / texel) * texel, b = Math.round(focus.dot(up) / texel) * texel, c = focus.dot(L);
+      const tgt = this.sun.target.position.set(0, 0, 0).addScaledVector(right, a).addScaledVector(up, b).addScaledVector(L, c);
+      this.sun.position.copy(tgt).addScaledVector(L, 420);
     }
     this.lodAcc += dt;
     if (this.lodAcc > 0.3) {

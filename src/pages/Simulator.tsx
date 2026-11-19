@@ -525,7 +525,7 @@ function Flight({ mission, af, difficulty, quality, flightMode, camMode, input, 
 
 export default function Simulator() {
   const [settings, setSettings] = useState<LaunchSettings>(() => ({
-    mission: "training", af: "quad", diff: "pilot", quality: loadQuality(), fmode: "POS", cam: "fpv", input: loadInput(), livery: "auto", weather: "scenario", failures: false, builds: loadBuilds(),
+    mission: "training", af: "quad", diff: "pilot", quality: loadQuality(), fmode: "ACRO", cam: "fpv", input: loadInput(), livery: "auto", weather: "scenario", failures: false, builds: loadBuilds(),
   }));
   const [run, setRun] = useState(0);
   const [best, setBest] = useState<Best>(loadBest);
