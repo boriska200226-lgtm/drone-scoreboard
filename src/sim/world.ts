@@ -843,7 +843,7 @@ export function makePerson(jacket: number): THREE.Group {
 
 export function makeAnimal(kind: "moose" | "bear"): THREE.Group {
   const model = instanceModel(kind);
-  if (model) return model;
+  if (model) { model.userData.kind = kind; return model; }
   const g = new THREE.Group();
   const fur = std(kind === "moose" ? 0x4a3526 : 0x2a1f18, 1);
   const L = kind === "moose" ? 2.2 : 1.6, H = kind === "moose" ? 1.45 : 0.85, R = kind === "moose" ? 0.42 : 0.46;

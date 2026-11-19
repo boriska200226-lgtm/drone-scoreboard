@@ -449,14 +449,19 @@ export class SimEngine {
     this.linkAcc = 0;
     const px = -5, pz = 6, py = this.world.groundAt(px, pz) + 1.7;
     const dist = Math.hypot(d.pos.x - px, d.pos.y - py, d.pos.z - pz);
-    let q = clamp(1 - Math.pow(dist / 2600, 2.2), 0, 1);
-    // рельеф и лес на линии «пульт — дрон» ослабляют сигнал
-    for (let k = 1; k < 15; k++) {
+    // запас по дальности как у ELRS/Crossfire: уверенно до ~4 км в прямой видимости
+    let q = clamp(1 - Math.pow(dist / 5000, 2.4), 0, 1);
+    // рельеф и лес на линии «пульт — дрон» ослабляют сигнал; рядом с пилотом лес не мешает (антенна выше)
+    let hill = 0, wood = 0, n = 0;
+    for (let k = 2; k < 15; k++) {
       const t = k / 15, x = px + (d.pos.x - px) * t, z = pz + (d.pos.z - pz) * t, y = py + (d.pos.y - py) * t;
       const gh = this.world.groundAt(x, z);
-      if (y < gh + 0.5) q *= 0.45;
-      else if (y < gh + 18 && this.world.treesNear(x, z, 3, this.nearTrees).length) q *= 0.88;
+      n++;
+      if (y < gh - 1) hill++;
+      else if (dist > 300 && y < gh + 12 && this.world.treesNear(x, z, 3, this.nearTrees).length) wood++;
     }
+    q *= 1 - 0.85 * Math.min(1, (hill / n) * 2.5); // холм между пилотом и дроном
+    q *= 1 - 0.3 * (wood / n); // лес глушит умеренно
     if (d.time < this.jamUntil) q = 0;
     this.linkQ += (q - this.linkQ) * 0.6;
   }
@@ -967,7 +972,7 @@ export class SimEngine {
     const aglW = d.pos.y - d.gear - gh;
     if (!d.landed && aglW < 6 && d.vel.y < -3) warnings.push("БЫСТРОЕ СНИЖЕНИЕ У ЗЕМЛИ");
     if (!d.gpsOk) warnings.push("НЕТ GPS — РЕЖИМ ATTI");
-    if (this.linkQ < 0.3 && this.linkLostT <= 1) warnings.push("СЛАБЫЙ СИГНАЛ ПУЛЬТА");
+    if (this.linkQ < 0.22 && this.linkLostT <= 1) warnings.push("СЛАБЫЙ СИГНАЛ ПУЛЬТА");
     const objectives = [...m.objectives(), { text: "Вернуться и сесть на площадку базы", done: false }];
     const heading = ((-d.yaw * 180) / Math.PI + 360) % 360;
     const windFrom = ((Math.atan2(-d.windNow.x, d.windNow.z) * 180) / Math.PI + 360) % 360;

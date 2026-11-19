@@ -5,6 +5,7 @@ import { FlameField, Particles } from "./effects";
 import { clamp, mulberry32 } from "./noise";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { DroneSim, FlightMode } from "./physics";
+import { instanceModel } from "./models";
 import type { Fault } from "./engine";
 import {
   makeAnimal, makeBeam, makeHelipad, makeHouse, makePerson, makePylon, makeRing, makeVan,
@@ -1289,7 +1290,9 @@ class ReindeerMission extends Mission {
   private counted: Uint8Array;
   private center = new THREE.Vector2();
   private drift = 0;
-  private herd: THREE.InstancedMesh;
+  private herd: THREE.InstancedMesh | null = null;
+  /** Анимированные модели оленей (если загружены). */
+  private deer: THREE.Group[] = [];
   private scared = 0;
   private scareSaid = -20;
   private photos = 0;
@@ -1310,28 +1313,54 @@ class ReindeerMission extends Mission {
       this.pos[i * 2] = this.center.x + Math.cos(a) * r; this.pos[i * 2 + 1] = this.center.y + Math.sin(a) * r;
       this.head[i] = rnd() * 6.283;
     }
-    const geo = world.track(deerGeometry());
-    this.herd = new THREE.InstancedMesh(geo, world.track(new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.95 })), this.n);
-    const col = new THREE.Color();
     for (let i = 0; i < this.n; i++) {
-      // северные олени: от бурых до почти белых
-      const w = rnd();
-      this.herd.setColorAt(i, w > 0.85 ? col.setRGB(0.82, 0.8, 0.76) : col.setRGB(0.36 + w * 0.12, 0.31 + w * 0.1, 0.26 + w * 0.08));
+      const d = instanceModel("reindeer", rnd());
+      if (!d) break;
+      d.scale.setScalar(0.85 + rnd() * 0.3); // телята и крупные быки
+      world.scene.add(d);
+      world.addThermal(d, 0.85);
+      this.deer.push(d);
     }
-    this.herd.castShadow = true; this.herd.receiveShadow = true;
-    this.herd.frustumCulled = false;
-    world.scene.add(this.herd);
-    const th = new THREE.InstancedMesh(geo, world.track(new THREE.MeshBasicMaterial({ color: new THREE.Color(0.85, 0.85, 0.85), fog: false, toneMapped: false })), this.n);
-    th.instanceMatrix = this.herd.instanceMatrix;
-    th.frustumCulled = false;
-    th.layers.set(THERMAL_LAYER);
-    world.scene.add(th);
+    if (!this.deer.length) {
+      const geo = world.track(deerGeometry());
+      const herd = new THREE.InstancedMesh(geo, world.track(new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.95 })), this.n);
+      const col = new THREE.Color();
+      for (let i = 0; i < this.n; i++) {
+        // северные олени: от бурых до почти белых
+        const w = rnd();
+        herd.setColorAt(i, w > 0.85 ? col.setRGB(0.82, 0.8, 0.76) : col.setRGB(0.36 + w * 0.12, 0.31 + w * 0.1, 0.26 + w * 0.08));
+      }
+      herd.castShadow = true; herd.receiveShadow = true;
+      herd.frustumCulled = false;
+      world.scene.add(herd);
+      const th = new THREE.InstancedMesh(geo, world.track(new THREE.MeshBasicMaterial({ color: new THREE.Color(0.85, 0.85, 0.85), fog: false, toneMapped: false })), this.n);
+      th.instanceMatrix = herd.instanceMatrix;
+      th.frustumCulled = false;
+      th.layers.set(THERMAL_LAYER);
+      world.scene.add(th);
+      this.herd = herd;
+    }
     this.sync();
     ctx.say("Стадо пасётся в 300–500 м к северу. Снимайте сверху с высоты 30–120 м, камера вниз", "info");
   }
 
   private sync() {
     const w = this.ctx.world, s = new THREE.Vector3(1, 1, 1);
+    if (this.deer.length) {
+      for (let i = 0; i < this.deer.length; i++) {
+        const d = this.deer[i], x = this.pos[i * 2], z = this.pos[i * 2 + 1], sp = this.speed[i];
+        d.position.set(x, w.groundAt(x, z), z);
+        d.rotation.y = this.head[i];
+        const play = d.userData.play as ((k: string, s?: number) => void) | undefined;
+        if (play) {
+          if (sp > 3.5) play("run", sp / 6);
+          else if (sp > 0.7) play("walk", sp / 1.3);
+          else play(i % 5 === 0 ? "idle" : "graze");
+        }
+      }
+      return;
+    }
+    if (!this.herd) return;
     for (let i = 0; i < this.n; i++) {
       const x = this.pos[i * 2], z = this.pos[i * 2 + 1];
       this.q.setFromAxisAngle(THREE.Object3D.DEFAULT_UP, this.head[i] + Math.PI);
@@ -1339,6 +1368,8 @@ class ReindeerMission extends Mission {
     }
     this.herd.instanceMatrix.needsUpdate = true;
   }
+
+  dispose() { this.deer.forEach((d) => d.removeFromParent()); }
 
   update(dt: number, action: Action) {
     this.time += dt;
@@ -2423,7 +2454,9 @@ class BearMission extends Mission {
     this.head += Math.atan2(Math.sin(want - this.head), Math.cos(want - this.head)) * Math.min(1, dt * (hazing ? 2 : 0.4));
     const sp = hazing ? 4.5 : 0.9;
     b.x += Math.sin(this.head) * sp * dt; b.z += Math.cos(this.head) * sp * dt;
-    b.y = world.groundAt(b.x, b.z) + Math.abs(Math.sin(this.time * sp * 2)) * 0.05;
+    const play = this.bear.userData.play as ((k: string, s?: number) => void) | undefined;
+    if (play) { play(hazing ? "run" : "walk", hazing ? 0.9 : 0.7); b.y = world.groundAt(b.x, b.z); }
+    else b.y = world.groundAt(b.x, b.z) + Math.abs(Math.sin(this.time * sp * 2)) * 0.05;
     this.bear.rotation.y = this.head;
     if (dh < 4 && agl < 3) drone.crashed = "Медведь сбил аппарат лапой";
     const inFrame = dh < 80 && this.ctx.camDir().dot(new THREE.Vector3(b.x, b.y + 0.8, b.z).sub(drone.pos).normalize()) > 0.85;
