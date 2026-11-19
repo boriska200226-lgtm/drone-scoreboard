@@ -40,14 +40,6 @@
 .sp-card { transition: transform 0.18s ease, filter 0.18s ease; }
 .sp-card:hover { transform: translateY(-3px); filter: brightness(1.12); }
 
-.sp-scan::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background: repeating-linear-gradient(0deg, rgba(0, 0, 0, 0.12) 0 1px, transparent 1px 3px);
-  pointer-events: none;
-  z-index: 1;
-}
 .sp-stripes {
   background: repeating-linear-gradient(135deg, var(--sp-c, #00ffaa) 0 6px, transparent 6px 12px);
 }
