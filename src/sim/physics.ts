@@ -107,6 +107,10 @@ export class DroneSim {
   private cmd: Float32Array;
   private dlt: Float32Array;
   private tick = 0;
+  /** Последняя точка без касания препятствий: туда отбрасывает после лёгкого удара. */
+  private safe = new THREE.Vector3();
+  /** Счётчик лёгких касаний веток и построек (без разрушения). */
+  bumps = 0;
   yawLost = false; // после отказа канал рыскания может стать неуправляемым
   private effN = 0; // моторов, реально создающих подъёмную силу
 
@@ -138,6 +142,7 @@ export class DroneSim {
     this.altSp = this.pos.y;
     this.landed = true;
     this.crashed = null;
+    this.safe.set(0, 0, 0); this.bumps = 0;
     this.thrust.fill(0);
   }
 
@@ -220,7 +225,7 @@ export class DroneSim {
         // ручной газ без компенсации наклона: накренился — теряешь высоту, как на настоящем FPV
         const hover = m * G, top = fMax * this.effN * 0.94;
         const t = st.throttle, curve = 0.3 * t + 0.7 * t * t * t; // экспо газа: точнее у висения
-        T = t >= 0 ? hover + curve * (top - hover) : hover * (1 + curve * 0.85);
+        T = t >= 0 ? hover + curve * (top - hover) : hover * (1 + curve * 0.65);
         this.altSp = this.pos.y; this.iZ = 0;
       }
       if (this.mode === "ACRO") {
@@ -237,7 +242,7 @@ export class DroneSim {
           vzDes = st.throttle > 0 ? st.throttle * af.climb : st.throttle * af.climb * 0.75;
           // помощь при посадке: у земли автопилот гасит вертикальную скорость
           const aglNow = this.pos.y - this.gear - env.groundAt(this.pos.x, this.pos.z);
-          vzDes = Math.max(vzDes, -Math.max(0.7, aglNow * 0.7));
+          vzDes = Math.max(vzDes, -Math.max(0.6, aglNow * 0.55));
           this.altSp = this.pos.y + this.vel.y * 0.35;
         } else vzDes = clamp(1.6 * (this.altSp - this.pos.y), -af.climb * 0.75, af.climb);
         if (!manual) {
@@ -363,14 +368,16 @@ export class DroneSim {
       return;
     }
     if (bottom <= gh) {
-      const hs = Math.hypot(this.vel.x, this.vel.z);
-      if (-this.vel.y > 4.2 || _up.y < 0.72 || hs > 5.5) {
+      const hs = Math.hypot(this.vel.x, this.vel.z), vs = -this.vel.y;
+      // шасси и рама гасят удар: разрушение только при падении, кувырке на скорости или «посадке» на ходу
+      if (vs > 6.5 || hs > 9 || (_up.y < 0.45 && vs + hs > 2)) {
         this.pos.y = gh + this.gear * 0.5;
         this.crashed = _up.y < 0.72 ? "Опрокидывание при касании земли" : "Жёсткое столкновение с землёй";
         return;
       }
       this.pos.y = gh + this.gear;
-      if (this.vel.y < 0) this.vel.y = 0;
+      // жёсткое касание — отскок, а не взрыв
+      if (this.vel.y < 0) this.vel.y = vs > 3 ? vs * 0.22 : 0;
       const fr = Math.max(0, 1 - 9 * dt);
       this.vel.x *= fr; this.vel.z *= fr;
       if (total < m * G) {
@@ -385,7 +392,15 @@ export class DroneSim {
 
     if (++this.tick % 4 === 0) {
       const hit = env.collide(this.pos, this.radius);
-      if (hit) this.crashed = hit;
+      const sp = this.vel.length();
+      if (hit && sp < 4.5 && this.safe.lengthSq() > 0) {
+        // задели ветку или стену на малой скорости — отбрасывает назад
+        this.pos.copy(this.safe);
+        this.vel.multiplyScalar(-0.35);
+        this.omega.multiplyScalar(0.3);
+        this.bumps++;
+      } else if (hit) this.crashed = hit;
+      else this.safe.copy(this.pos);
     }
   }
 }

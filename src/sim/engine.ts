@@ -139,6 +139,7 @@ export class SimEngine {
   private logAcc = 0;
   private wasAirborne = false;
   private lastVy = 0;
+  private lastBumps = 0;
   private swapWh = 0;
   private pr = 1;
   private maxPr = 1;
@@ -343,6 +344,8 @@ export class SimEngine {
       roll: ax("ArrowRight", "ArrowLeft"), pitch: ax("ArrowUp", "ArrowDown"),
       yaw: ax("KeyD", "KeyA"), throttle: ax("KeyW", "KeyS"),
     };
+    // с клавиатуры газ «вниз до упора» в ручных режимах — это свободное падение; ограничиваем плавным снижением
+    if (MANUAL_THROTTLE[this.drone.mode] && target.throttle < 0) target.throttle = -0.45;
     const s = this.sticks;
     (Object.keys(target) as (keyof Sticks)[]).forEach((a) => {
       const rate = target[a] === 0 ? 7 : 4.5;
@@ -654,6 +657,7 @@ export class SimEngine {
     // полёт за пределами прямой видимости (условно — дальше 2 км от пилота)
     if (Math.hypot(d.pos.x, d.pos.z) > 2000) L.beyondVlos += dt;
     if (d.landed && this.wasAirborne && this.lastVy < -2.5) { L.hardLandings++; this.say("Жёсткая посадка — гасите вертикальную скорость у земли", "warn"); }
+    if (d.bumps !== this.lastBumps) { this.lastBumps = d.bumps; this.say("Задели препятствие — аккуратнее", "warn"); }
     this.wasAirborne = !d.landed;
     this.lastVy = d.vel.y;
     this.logAcc += dt;
@@ -938,6 +942,8 @@ export class SimEngine {
     if (d.motorOk.some((x) => !x)) warnings.push("ОТКАЗ МОТОРА");
     if (d.soc < 0.2) warnings.push("НИЗКИЙ ЗАРЯД");
     if (d.windNow.length() > 9) warnings.push("СИЛЬНЫЙ ВЕТЕР");
+    const aglW = d.pos.y - d.gear - gh;
+    if (!d.landed && aglW < 6 && d.vel.y < -3) warnings.push("БЫСТРОЕ СНИЖЕНИЕ У ЗЕМЛИ");
     if (!d.gpsOk) warnings.push("НЕТ GPS — РЕЖИМ ATTI");
     if (this.linkQ < 0.3 && this.linkLostT <= 1) warnings.push("СЛАБЫЙ СИГНАЛ ПУЛЬТА");
     const objectives = [...m.objectives(), { text: "Вернуться и сесть на площадку базы", done: false }];

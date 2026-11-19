@@ -103,6 +103,7 @@ function FpvOsd({ hud }: { hud: Hud }) {
         <div className="w-5 h-[2px] bg-white" style={{ boxShadow: "0 0 3px #000" }} />
       </div>
       {t(`${hud.agl.toFixed(1)}m`, { left: "62%", top: "50%", transform: "translateY(-50%)" })}
+      {hud.agl < 8 && o.armed && t(`${hud.vs >= 0 ? "↑" : "↓"}${Math.abs(hud.vs).toFixed(1)}`, { left: "62%", top: "calc(50% + 22px)", color: hud.vs < -2.5 ? "#ff5555" : hud.vs < -1.2 ? "#ffd166" : "#7dffb0" })}
       {t(`${(hud.speed * 3.6).toFixed(0)}km/h`, { right: "62%", top: "50%", transform: "translateY(-50%)" })}
       {t(o.armed ? (hud.rth ? "RTH" : hud.modeId === "POS" ? "GPS" : hud.modeId) : "DISARMED", { left: "50%", top: "22%", transform: "translateX(-50%)", color: o.armed ? "#fff" : "#ff5555" })}
       {t(`${o.volts.toFixed(1)}V`, { left: "18%", bottom: "16%", color: lowV ? "#ff5555" : "#fff" })}
