@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Icon from "@/components/ui/icon";
-import { Airframe, getAirframe } from "@/sim/airframes";
+import { Airframe } from "@/sim/airframes";
+import { assemble, loadBuilds } from "@/sim/build";
 import { CAM_LABEL, CamMode, CAMS, Command, Fault, Hud, MODES, SimEngine, SimResult } from "@/sim/engine";
 import { findMission } from "@/sim/course";
 import { InputConfig, loadInput } from "@/sim/input";
@@ -491,15 +492,16 @@ function Flight({ mission, af, difficulty, quality, flightMode, camMode, input, 
 
 export default function Simulator() {
   const [settings, setSettings] = useState<LaunchSettings>(() => ({
-    mission: "training", af: "quad", diff: "pilot", quality: loadQuality(), fmode: "POS", cam: "chase", input: loadInput(), livery: "auto", weather: "scenario", failures: false,
+    mission: "training", af: "quad", diff: "pilot", quality: loadQuality(), fmode: "POS", cam: "chase", input: loadInput(), livery: "auto", weather: "scenario", failures: false, builds: loadBuilds(),
   }));
   const [run, setRun] = useState(0);
   const [best, setBest] = useState<Best>(loadBest);
   useEffect(() => { document.title = "БАС Симулятор — миссии беспилотников"; }, []);
+  const af = useMemo(() => assemble(settings.af, settings.builds[settings.af]), [settings.af, settings.builds]);
   const mission = useMemo(() => withWeather(findMission(settings.mission), settings.weather), [settings.mission, settings.weather]);
   if (!run) return <Launcher initial={settings} best={best} onStart={(st) => { setSettings(st); setRun(1); }} />;
   return (
-    <Flight key={run} mission={mission} af={getAirframe(settings.af)} difficulty={settings.diff} quality={settings.quality}
+    <Flight key={run} mission={mission} af={af} difficulty={settings.diff} quality={settings.quality}
       flightMode={settings.fmode} camMode={settings.cam} input={settings.input} livery={settings.livery} failures={settings.failures}
       onExit={() => { setBest(loadBest()); setRun(0); }} onRestart={() => setRun(run + 1)} />
   );

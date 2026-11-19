@@ -1,0 +1,60 @@
+/* Спортивно-геймерский стиль лаунчера: срезанные углы, скосы, неон, бегущие блики. */
+.sp-root {
+  background-color: #07090e;
+  background-image:
+    radial-gradient(1100px 520px at 85% -10%, rgba(0, 255, 170, 0.10), transparent 60%),
+    radial-gradient(900px 600px at -10% 110%, rgba(0, 140, 255, 0.10), transparent 60%),
+    repeating-linear-gradient(115deg, rgba(255, 255, 255, 0.018) 0 2px, transparent 2px 46px),
+    linear-gradient(rgba(255, 255, 255, 0.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.025) 1px, transparent 1px);
+  background-size: auto, auto, auto, 48px 48px, 48px 48px;
+}
+.sp-title {
+  font-family: "Russo One", "Orbitron", sans-serif;
+  font-style: italic;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  line-height: 1;
+}
+.sp-label {
+  font-family: "Russo One", "Orbitron", sans-serif;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: 11px;
+}
+.sp-skew { transform: skewX(-14deg); }
+.sp-unskew { transform: skewX(14deg); display: inline-flex; align-items: center; gap: 0.5rem; }
+
+.sp-shine { position: relative; overflow: hidden; }
+.sp-shine::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(105deg, transparent 35%, rgba(255, 255, 255, 0.55) 50%, transparent 65%);
+  transform: translateX(-130%);
+  animation: sp-shine 3.2s ease-in-out infinite;
+  pointer-events: none;
+}
+@keyframes sp-shine { 55%, 100% { transform: translateX(130%); } }
+
+.sp-card { transition: transform 0.18s ease, filter 0.18s ease; }
+.sp-card:hover { transform: translateY(-3px); filter: brightness(1.12); }
+
+.sp-scan::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.035) 0 1px, transparent 1px 3px);
+  pointer-events: none;
+  z-index: 1;
+}
+.sp-stripes {
+  background: repeating-linear-gradient(135deg, var(--sp-c, #00ffaa) 0 6px, transparent 6px 12px);
+}
+.sp-pulse { animation: sp-pulse 2.4s ease-in-out infinite; }
+@keyframes sp-pulse { 50% { opacity: 0.45; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .sp-shine::after, .sp-pulse { animation: none; }
+  .sp-card, .sp-card:hover { transition: none; transform: none; }
+}

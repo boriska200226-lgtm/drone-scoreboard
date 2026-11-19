@@ -4,6 +4,7 @@ import { MemoryRouter } from "react-router-dom";
 import Simulator from "@/pages/Simulator";
 import "@/index.css";
 // шрифты интерфейса вшиты в сборку — настольная версия работает без интернета
+import "@fontsource/russo-one/400.css";
 import "@fontsource/orbitron/400.css";
 import "@fontsource/orbitron/700.css";
 import "@fontsource/orbitron/900.css";
