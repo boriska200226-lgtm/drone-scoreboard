@@ -35,7 +35,7 @@ const TIER = { 1: "#8a93a3", 2: BLUE, 3: "#ff3d8b" } as const;
 
 export const QUALITY: Record<Quality, { label: string; hint: string }> = {
   high: { label: "Ультра", hint: "тени 4K, сглаживание MSAA, свечение, детальный лес до 230 м" },
-  medium: { label: "Средняя", hint: "тени 2K, свечение, детальный лес до 150 м" },
+  medium: { label: "Средняя", hint: "тени 2K, сглаживание MSAA 2×, свечение, детальный лес до 150 м" },
   low: { label: "Низкая", hint: "без теней и постобработки — для ноутбуков и телефонов" },
 };
 

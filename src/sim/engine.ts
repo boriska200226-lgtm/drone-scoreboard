@@ -268,7 +268,7 @@ export class SimEngine {
 
     if (o.quality !== "low") {
       const size = new THREE.Vector2(o.canvas.clientWidth || window.innerWidth, o.canvas.clientHeight || window.innerHeight);
-      const rt = new THREE.WebGLRenderTarget(size.x, size.y, { type: THREE.HalfFloatType, samples: o.quality === "high" ? 4 : 0 });
+      const rt = new THREE.WebGLRenderTarget(size.x, size.y, { type: THREE.HalfFloatType, samples: o.quality === "high" ? 4 : 2 });
       this.composer = new EffectComposer(this.renderer, rt);
       this.composer.addPass(new RenderPass(scene, this.cam));
       this.bloom = new UnrealBloomPass(size.clone().multiplyScalar(0.5), 0.32, 0.55, 1.1);
@@ -784,7 +784,7 @@ export class SimEngine {
     if (this.composer) {
       const u = this.grade!.uniforms, fpv = this.camMode === "fpv";
       u.uTime.value = (u.uTime.value + 0.017) % 100;
-      u.uGrain.value = (fpv ? 0.075 : 0.035) + (fpv ? (1 - this.linkQ) * 0.35 : 0);
+      u.uGrain.value = 0.012 + (fpv ? Math.max(0, 0.45 - this.linkQ) * 0.6 : 0); // помехи только при слабом сигнале
       u.uVignette.value = fpv ? 0.55 : 0.32;
       this.composer.render();
     } else r.render(scene, this.cam);

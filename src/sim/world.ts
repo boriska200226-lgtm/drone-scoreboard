@@ -399,7 +399,7 @@ export class World {
     const rnd = mulberry32(cfg.seed * 31 + 5);
     const noise = makeNoise2D(cfg.seed + 99);
     const kit = new ForestKit({
-      snow, time: this.time, a2c: this.quality === "high", variantsPerSpecies: this.quality === "low" ? 2 : 3,
+      snow, time: this.time, a2c: this.quality !== "low", variantsPerSpecies: this.quality === "low" ? 2 : 3,
       leafTint: new THREE.Color(...(pal.grassTint ?? [0.86, 0.9, 0.74])).lerp(new THREE.Color(1, 1, 1), 0.5),
     });
     this.kit = kit;

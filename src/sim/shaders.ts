@@ -272,7 +272,7 @@ export const GradeShader = {
   vertexShader: /* glsl */ `varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.); }`,
   fragmentShader: /* glsl */ `
     uniform sampler2D tDiffuse; uniform float uTime, uGrain, uVignette, uSat, uContrast; varying vec2 vUv;
-    float h(vec2 p){ return fract(sin(dot(p, vec2(12.9898, 78.233)) + uTime) * 43758.5453); }
+    float h(vec2 p){ vec3 q = fract(vec3(p.xyx) * .1031 + uTime * .37); q += dot(q, q.yzx + 33.33); return fract((q.x + q.y) * q.z); }
     void main(){
       vec4 c = texture2D(tDiffuse, vUv);
       float l = dot(c.rgb, vec3(.2126, .7152, .0722));
@@ -280,7 +280,7 @@ export const GradeShader = {
       c.rgb = clamp((c.rgb - .5) * uContrast + .5, 0., 1.);
       vec2 q = vUv - .5;
       c.rgb *= 1. - uVignette * smoothstep(.25, .85, length(q) * 1.25);
-      c.rgb += (h(vUv * 911.) - .5) * uGrain;
+      c.rgb += (h(gl_FragCoord.xy) - .5) * uGrain;
       gl_FragColor = c;
     }`,
 };
