@@ -158,6 +158,8 @@ export class SimEngine {
   private keys = new Set<string>();
   private sticks: Sticks = { roll: 0, pitch: 0, yaw: 0, throttle: 0 };
   private camMode: CamMode = "chase";
+  /** Ракурс съёмки обложки: позиция, цель, угол обзора. */
+  shotCam: { p: [number, number, number]; t: [number, number, number]; fov: number } | null = null;
   private input: InputConfig = DEFAULT_INPUT;
   private switchPrev = -1;
   padName = "";
@@ -767,6 +769,11 @@ export class SimEngine {
     const scale = (cam: THREE.PerspectiveCamera, px: number) => (px * pr) / (2 * Math.tan((cam.fov * Math.PI) / 360));
     const setScale = (v: number) => { this.fx.fire.setScale(v); this.fx.smoke.setScale(v); this.fx.water.setScale(v); };
 
+    // фиксированный ракурс для обложек миссий (задаётся скриптом съёмки)
+    if (this.shotCam) {
+      const sc = this.shotCam;
+      this.cam.position.set(...sc.p); this.cam.up.set(0, 1, 0); this.cam.fov = sc.fov; this.cam.lookAt(...sc.t); this.cam.updateProjectionMatrix();
+    }
     this.model.group.visible = this.camMode !== "fpv";
     r.setScissorTest(false);
     r.setViewport(0, 0, w, h);

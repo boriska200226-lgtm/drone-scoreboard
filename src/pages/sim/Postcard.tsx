@@ -1,11 +1,23 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { MissionDef } from "@/sim/missions";
 import { mulberry32 } from "@/sim/noise";
 
 const hex = (n: number) => `#${n.toString(16).padStart(6, "0")}`;
 
-/** Рисованная «открытка» локации: небо по палитре миссии, увалы, кромка тайги, река. */
+/** Обложка миссии: кадр из самого симулятора (public/sim/covers), при его отсутствии — рисованная открытка. */
 export default function Postcard({ mission, className }: { mission: MissionDef; className?: string }) {
+  const [failed, setFailed] = useState<string | null>(null);
+  if (failed !== mission.id) {
+    return (
+      <img src={`${import.meta.env.BASE_URL}sim/covers/${mission.id}.jpg`} alt="" loading="lazy" decoding="async" draggable={false}
+        className={`${className ?? ""} object-cover`} onError={() => setFailed(mission.id)} />
+    );
+  }
+  return <DrawnCard mission={mission} className={className} />;
+}
+
+/** Рисованная «открытка» локации: небо по палитре миссии, увалы, кромка тайги, река. */
+function DrawnCard({ mission, className }: { mission: MissionDef; className?: string }) {
   const ref = useRef<HTMLCanvasElement>(null);
   useEffect(() => {
     const cv = ref.current!;
