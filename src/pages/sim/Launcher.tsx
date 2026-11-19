@@ -265,8 +265,8 @@ export default function Launcher({ initial, best, onStart }: { initial: LaunchSe
                       style={{ ...cut(14), padding: on ? 2 : 1, background: on ? `linear-gradient(135deg, ${m.color}, ${m.color}55)` : "rgba(255,255,255,0.08)", filter: on ? `drop-shadow(0 8px 24px ${m.color}44)` : undefined }}>
                       <div style={{ ...cut(14), background: "#0c1018" }}>
                         <div className="relative sp-scan">
-                          <Postcard mission={m} className="w-full h-28 block" />
-                          <div className="absolute inset-0" style={{ background: `linear-gradient(180deg, transparent 25%, #0c1018), linear-gradient(90deg, ${m.color}22, transparent 60%)` }} />
+                          <Postcard mission={m} className="w-full h-32 block" />
+                          <div className="absolute inset-0" style={{ background: `linear-gradient(180deg, rgba(12,16,24,0.35) 0%, transparent 30%, transparent 55%, #0c1018 100%)` }} />
                           <div className="absolute top-2 left-3 sp-title text-3xl" style={{ color: `${m.color}`, opacity: 0.85, textShadow: "0 2px 8px #000" }}>{String(i + 1).padStart(2, "0")}</div>
                           <div className="absolute top-2.5 right-2.5 w-8 h-8 flex items-center justify-center sp-skew" style={{ background: "rgba(8,11,18,0.75)", border: `1px solid ${m.color}88` }}>
                             <Icon name={m.icon} size={15} className="sp-unskew" style={{ color: m.color }} />
@@ -289,7 +289,7 @@ export default function Launcher({ initial, best, onStart }: { initial: LaunchSe
               <Cut border={`${mission.color}66`} c={16}>
                 <div className="relative sp-scan">
                   <Postcard mission={mission} className="w-full h-40 block" />
-                  <div className="absolute inset-0" style={{ background: "linear-gradient(180deg, transparent 35%, rgba(13,17,25,1))" }} />
+                  <div className="absolute inset-0" style={{ background: "linear-gradient(180deg, transparent 55%, rgba(13,17,25,1))" }} />
                   <div className="absolute left-5 bottom-3 right-5 z-[2]">
                     <div className="sp-label" style={{ color: mission.color }}>БРИФИНГ</div>
                     <div className="sp-title text-2xl mt-1">{mission.title}</div>
