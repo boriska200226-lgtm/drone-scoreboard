@@ -376,7 +376,7 @@ function Flight({ mission, af, difficulty, quality, flightMode, camMode, input, 
         {hud?.pip && (
           <div className="absolute rounded" style={{ top: hud.pipRect.top, right: hud.pipRect.right, width: hud.pipRect.w, height: hud.pipRect.h, border: `1px solid ${hud.thermal ? "#ff8800" : "rgba(255,255,255,0.35)"}` }}>
             <span className="absolute top-1 left-1.5 font-orbitron text-[10px] px-1 rounded" style={{ background: "rgba(0,0,0,0.55)", color: hud.thermal ? "#ff8800" : "#fff" }}>
-              {hud.thermal ? "ТЕПЛОВИЗОР" : "КАМЕРА ПОДВЕСА"}
+              {hud.thermal ? "ТЕПЛОВИЗОР" : "КАМЕРА ПОДВЕСА"} · {hud.gimbal}°
             </span>
             <span className="absolute left-1/2 top-1/2 w-4 h-4 -ml-2 -mt-2 rounded-full" style={{ border: "1px solid rgba(255,255,255,0.7)" }} />
           </div>
@@ -386,6 +386,7 @@ function Flight({ mission, af, difficulty, quality, flightMode, camMode, input, 
         <div className="absolute flex gap-1.5" style={touch ? { bottom: 158, right: 12, flexDirection: "column" } : { bottom: 12, right: 12 }}>
           {btn("Тепловизор (T)", "Thermometer", "thermal", hud?.thermal)}
           {btn("Окно камеры (V)", "PictureInPicture2", "pip", hud?.pip)}
+          {btn("Автопосадка (L)", "PlaneLanding", "land", hud?.landing)}
           {btn("Автовозврат (H)", "Home", "rth", hud?.rth)}
           {btn("Звук (N)", "Volume2", "mute")}
         </div>

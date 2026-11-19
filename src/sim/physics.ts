@@ -227,6 +227,9 @@ export class DroneSim {
         const t = st.throttle, curve = 0.3 * t + 0.7 * t * t * t; // экспо газа: точнее у висения
         T = t >= 0 ? hover + curve * (top - hover) : hover * (1 + curve * 0.65);
         this.altSp = this.pos.y; this.iZ = 0;
+        // помощь у земли и в ручных режимах: ниже 4 м не даём снижаться быстрее ~2 м/с
+        const aglM = this.pos.y - this.gear - env.groundAt(this.pos.x, this.pos.z);
+        if (aglM < 4 && this.vel.y < -1.8 && _up.y > 0.5) T = Math.max(T, m * (G + (-1.8 - this.vel.y) * 4) / _up.y);
       }
       if (this.mode === "ACRO") {
         // рейты с экспо: мягко в центре, до ~400°/с у квадрокоптера на краю
@@ -370,7 +373,7 @@ export class DroneSim {
     if (bottom <= gh) {
       const hs = Math.hypot(this.vel.x, this.vel.z), vs = -this.vel.y;
       // шасси и рама гасят удар: разрушение только при падении, кувырке на скорости или «посадке» на ходу
-      if (vs > 6.5 || hs > 9 || (_up.y < 0.45 && vs + hs > 2)) {
+      if (vs > 8 || hs > 11 || (_up.y < 0.35 && vs + hs > 3)) {
         this.pos.y = gh + this.gear * 0.5;
         this.crashed = _up.y < 0.72 ? "Опрокидывание при касании земли" : "Жёсткое столкновение с землёй";
         return;

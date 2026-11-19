@@ -1008,7 +1008,7 @@ class PowerlineMission extends Mission {
       if (bd > 22) this.ctx.say(`Далеко: до опоры ${bd.toFixed(0)} м (нужно 5–22 м)`, "warn");
       else if (bd < 5) this.ctx.say("Слишком близко к опоре", "warn");
       else if (to.dot(dir) < 0.9) this.ctx.say("Опора не в кадре — разверните нос на траверсу", "warn");
-      else if (drone.vel.length() > 2.5) this.ctx.say("Смаз: зависните перед съёмкой", "warn");
+      else if (blurred(this.ctx, bd)) this.ctx.say("Смаз: притормозите перед съёмкой", "warn");
       else {
         const first = !this.shot[k];
         this.shot[k] = true;
@@ -1382,7 +1382,7 @@ class ReindeerMission extends Mission {
       const dir = this.ctx.camDir();
       if (dir.y > -0.9) this.ctx.say("Для учёта камера смотрит строго вниз (G)", "warn");
       else if (agl < 25 || agl > 130) this.ctx.say(`Высота ${agl.toFixed(0)} м: снимайте с 25–130 м`, "warn");
-      else if (drone.vel.length() > 4) this.ctx.say("Смаз: замедлитесь перед кадром", "warn");
+      else if (blurred(this.ctx, agl)) this.ctx.say("Смаз: замедлитесь перед кадром", "warn");
       else {
         // кадр камеры подвеса: прямоугольник на земле, повёрнутый по курсу
         const hx = agl * 0.634, hz = agl * 0.466;
@@ -1542,13 +1542,22 @@ class HeatAuditMission extends Mission {
 // ═════════════════════════════ Общие помощники для миссий 10–18 ═════════════════════════════
 
 /** Проверка кадра: цель в поле зрения камеры подвеса, на нужной дистанции, без смаза. Возвращает текст ошибки или null. */
+/**
+ * Смаз кадра: при выдержке ~1/250 с важна не скорость дрона, а то, как быстро цель «плывёт» в кадре —
+ * угловая скорость (скорость / дистанция) и вращение самого аппарата.
+ */
+function blurred(ctx: Ctx, dist: number): boolean {
+  const d = ctx.drone;
+  return d.vel.length() / Math.max(5, dist) > 0.45 || d.omega.length() > 1.2;
+}
+
 function frameCheck(ctx: Ctx, target: THREE.Vector3, minD: number, maxD: number, what: string): string | null {
   const d = ctx.drone.pos.distanceTo(target);
   if (d > maxD) return `Далеко: до цели «${what}» ${d.toFixed(0)} м (нужно ${minD}–${maxD} м)`;
   if (d < minD) return `Слишком близко к цели «${what}» — не помещается в кадр`;
   const to = target.clone().sub(ctx.drone.pos).normalize();
   if (to.dot(ctx.camDir()) < 0.82) return `«${what}» не в кадре — разверните нос, наклон подвеса — G`;
-  if (ctx.drone.vel.length() > 3) return "Смаз: зависните перед снимком";
+  if (blurred(ctx, d)) return "Смаз: аппарат движется слишком быстро — притормозите перед снимком";
   return null;
 }
 

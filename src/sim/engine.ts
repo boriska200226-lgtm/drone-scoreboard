@@ -26,7 +26,7 @@ export interface Hud {
   objectives: Objective[]; motors: boolean[]; warnings: string[];
   pipRect: { right: number; top: number; w: number; h: number }; mapSize: number;
   modeId: FlightMode; camId: CamMode; manual: boolean; osd: Osd;
-  gpsSats: number; link: number; failsafe: string | null;
+  gpsSats: number; link: number; failsafe: string | null; landing: boolean; gimbal: number;
   fps: number; res: number;
 }
 
@@ -59,7 +59,7 @@ export interface EngineOpts {
   onEnd(r: SimResult): void;
 }
 
-export type Command = "cam" | "thermal" | "pip" | "gimbal" | "mode" | "rth" | "mute";
+export type Command = "cam" | "thermal" | "pip" | "gimbal" | "mode" | "rth" | "mute" | "land";
 /** Отказы, которые вводит инструктор (или случайный сценарий). */
 export type Fault = "motor" | "gps" | "link" | "gust" | "battery" | "clear";
 export const CAMS = ["chase", "fpv", "los", "top"] as const;
@@ -130,7 +130,7 @@ export class SimEngine {
   // радиосвязь, навигация и защитные режимы
   private linkQ = 1; private linkLostT = 0; private jamUntil = -1; private linkAcc = 0;
   private failsafe: null | "rth" | "land" | "hover" = null; private hoverT = 0;
-  private autoLand = false; private lowBatHandled = false; private gpsUntil = -1;
+  private autoLand = false; private landReq = false; private lowBatHandled = false; private gpsUntil = -1;
   private gust = new THREE.Vector3();
   private faultPlan: { t: number; kind: Fault }[] = [];
   private nearTrees: number[] = [];
@@ -298,7 +298,7 @@ export class SimEngine {
     if (["Space", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.code)) e.preventDefault();
     if (e.repeat) return;
     this.keys.add(e.code);
-    const map: Record<string, Command> = { KeyC: "cam", KeyT: "thermal", KeyV: "pip", KeyG: "gimbal", KeyM: "mode", KeyH: "rth", KeyN: "mute" };
+    const map: Record<string, Command> = { KeyC: "cam", KeyT: "thermal", KeyV: "pip", KeyG: "gimbal", KeyM: "mode", KeyH: "rth", KeyN: "mute", KeyL: "land" };
     if (e.code === "Space") this.actionPressed = true;
     else if (map[e.code]) this.command(map[e.code]);
   };
@@ -311,9 +311,21 @@ export class SimEngine {
     if (c === "cam") this.camMode = CAMS[(CAMS.indexOf(this.camMode) + 1) % CAMS.length];
     else if (c === "thermal") { this.thermal = !this.thermal; if (this.thermal) this.pip = true; }
     else if (c === "pip") this.pip = !this.pip;
-    else if (c === "gimbal") this.gimbalPitch = this.gimbalPitch < -45 ? -6 : -90;
+    else if (c === "gimbal") {
+      // фиксированные положения подвеса: от надира до горизонта
+      const steps = [-90, -60, -45, -30, -15, 0];
+      const i = steps.findIndex((v) => v > this.gimbalPitch + 1);
+      this.gimbalPitch = i < 0 ? steps[0] : steps[i];
+      say(`Подвес: ${this.gimbalPitch === -90 ? "строго вниз" : this.gimbalPitch === 0 ? "по горизонту" : `${-this.gimbalPitch}° вниз`}`, "info");
+    }
     else if (c === "mute") this.audio.muted = !this.audio.muted;
     else if (c === "mode") this.setMode(MODES[(MODES.indexOf(this.drone.mode) + 1) % MODES.length]);
+    else if (c === "land") {
+      if (this.drone.landed && !this.landReq) return;
+      this.landReq = !this.landReq;
+      if (this.landReq) this.rth = false;
+      say(this.landReq ? "Автопосадка: аппарат снижается сам, стиками ведите его на площадку. Газ вверх — отмена" : "Автопосадка отменена", "info");
+    }
     else if (c === "rth") {
       if (!this.rth && !this.drone.gpsOk) { say("Автовозврат недоступен без GPS", "warn"); return; }
       this.rth = !this.rth;
@@ -558,12 +570,18 @@ export class SimEngine {
     if (d.soc < 0.07 && !d.landed && !this.autoLand) { this.autoLand = true; this.rth = false; this.say("КРИТИЧЕСКИЙ ЗАРЯД — принудительная посадка", "warn"); }
     if (this.failsafe === "rth") this.rth = true;
     if (this.rth && !d.crashed) st = this.autopilot(st);
-    const needsAssist = this.failsafe === "land" || this.failsafe === "hover" || this.autoLand;
+    if (this.landReq && st.throttle > 0.3) { this.landReq = false; this.o.onSay("Автопосадка отменена", "info"); }
+    const needsAssist = this.failsafe === "land" || this.failsafe === "hover" || this.autoLand || this.landReq;
     if (needsAssist && MANUAL_THROTTLE[d.mode]) d.mode = "ATTI"; // контроллер сам переходит в режим с удержанием высоты
     if (this.failsafe === "hover") { this.hoverT += dt; if (this.hoverT > 20) { this.failsafe = "land"; this.say("Связи нет 20 с — посадка на месте", "warn"); } }
     if (this.failsafe === "land" || this.autoLand) { st = { ...st, throttle: Math.min(st.throttle, -0.55) }; }
+    if (this.landReq) {
+      // плавное снижение, у самой земли — медленно; горизонталь у пилота, но мягче
+      const agl = d.pos.y - d.gear - this.world.groundAt(d.pos.x, d.pos.z);
+      st = { ...st, roll: st.roll * 0.5, pitch: st.pitch * 0.5, throttle: agl > 8 ? -0.7 : agl > 2.5 ? -0.45 : -0.25 };
+    }
     if (d.landed && (this.failsafe === "land" || this.failsafe === "hover")) this.failsafe = null;
-    if (d.landed) this.autoLand = false;
+    if (d.landed) { this.autoLand = false; if (this.landReq) { this.landReq = false; this.o.onSay("Посадка выполнена", "good"); } }
     const action: Action = { held: input.held, pressed: this.actionPressed };
     this.actionPressed = false;
 
@@ -608,7 +626,7 @@ export class SimEngine {
       return;
     }
     if (m.failed) { this.finish(false, m.failed); return; }
-    const atBase = Math.hypot(d.pos.x, d.pos.z) < 4.6;
+    const atBase = Math.hypot(d.pos.x, d.pos.z) < 6;
     if (d.landed && atBase) {
       this.baseTimer += dt;
       if (m.tasksDone && this.baseTimer > 1) { this.finish(true, "Задача выполнена"); return; }
@@ -957,12 +975,13 @@ export class SimEngine {
       payloadText: m.capacity > 1 ? `${m.amount.toFixed(def.payloadUnit === "шт" ? 0 : 1)} ${def.payloadUnit}` : m.capacity === 1 ? (m.amount > 0 ? "на борту" : "доставлен") : "—",
       payloadFrac: m.capacity > 0 ? m.amount / m.capacity : 0,
       wind: d.windNow.length(), windFrom,
-      mode: this.rth ? "Автовозврат" : MODE_LABEL[d.mode], cam: CAM_LABEL[this.camMode],
+      mode: this.rth ? "Автовозврат" : this.landReq ? "Автопосадка" : MODE_LABEL[d.mode], cam: CAM_LABEL[this.camMode],
       modeId: d.mode, camId: this.camMode, manual: MANUAL_THROTTLE[d.mode], osd: this.osd(),
       fps: this.fps, res: this.pr,
       gpsSats: d.gpsOk ? 14 + Math.round(Math.sin(d.time * 0.05) * 2) : 0, link: this.linkQ,
       failsafe: this.linkLostT > 1 ? (this.failsafe === "rth" ? "НЕТ СВЯЗИ · ВОЗВРАТ" : this.failsafe === "land" ? "НЕТ СВЯЗИ · ПОСАДКА" : this.failsafe === "hover" ? "НЕТ СВЯЗИ · ЗАВИСАНИЕ" : "НЕТ СВЯЗИ")
         : this.autoLand ? "ПРИНУДИТЕЛЬНАЯ ПОСАДКА" : this.failsafe ? "FAILSAFE" : null,
+      landing: this.landReq, gimbal: Math.round(this.gimbalPitch),
       thermal: this.thermal, pip: this.pip, rth: this.rth,
       distHome: Math.hypot(d.pos.x, d.pos.z), time: m.time, objectives, motors: [...d.motorOk], warnings,
       ...layout(w),
