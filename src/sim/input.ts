@@ -22,6 +22,12 @@ export interface InputConfig {
   rates: Rates;
   fpvTilt: number | null; // градусы; null — по режиму
   fpvFov: number;
+  /** Действие при потере радиосвязи. */
+  failsafe: "rth" | "land" | "hover";
+  /** Автовозврат при заряде ниже 20%. */
+  lowBatRth: boolean;
+  /** Высота возврата над точкой взлёта, м. */
+  rthAlt: number;
 }
 
 const axis = (n: number, invert = false): AxisMap => ({ axis: n, invert, min: -1, max: 1, center: 0 });
@@ -56,6 +62,9 @@ export const DEFAULT_INPUT: InputConfig = {
   rates: { rc: 1.0, superRate: 0.7, expo: 0.0 },
   fpvTilt: null,
   fpvFov: 110,
+  failsafe: "rth",
+  lowBatRth: true,
+  rthAlt: 45,
 };
 
 const KEY = "bas-sim-input";

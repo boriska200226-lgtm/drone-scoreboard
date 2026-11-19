@@ -348,12 +348,36 @@ export default function ControlsSetup({ cfg, onChange }: { cfg: InputConfig; onC
         <RateCurve rates={cfg.rates} />
       </div>
 
+      <div className="rounded-xl p-4 space-y-3" style={box}>
+        <div className="font-orbitron text-xs font-bold text-white">ЗАЩИТНЫЕ РЕЖИМЫ <span className="text-gray-500 font-normal">· failsafe</span></div>
+        <div>
+          <div className="text-sm text-gray-300 mb-1.5">При потере связи с пультом дольше 3 с</div>
+          <div className="grid grid-cols-3 gap-2">
+            {([["rth", "Возврат на базу", "набор высоты возврата и посадка на H; без GPS — посадка"], ["land", "Посадка", "плавное снижение на месте"], ["hover", "Зависание", "20 с ожидания связи, затем посадка"]] as const).map(([id, label, hint]) => (
+              <button key={id} onClick={() => set({ failsafe: id })} className="rounded-lg p-2 text-left"
+                style={{ background: cfg.failsafe === id ? "#00ffaa14" : "rgba(255,255,255,0.03)", border: `1px solid ${cfg.failsafe === id ? "#00ffaa" : "rgba(255,255,255,0.08)"}` }}>
+                <div className="font-orbitron text-xs font-bold" style={{ color: cfg.failsafe === id ? "#00ffaa" : "#ddd" }}>{label}</div>
+                <div className="text-[11px] text-gray-500 leading-tight mt-0.5">{hint}</div>
+              </button>
+            ))}
+          </div>
+        </div>
+        <label htmlFor="lowbat" className="flex items-center gap-2 text-sm text-gray-300">
+          <input id="lowbat" type="checkbox" className="accent-[#00ffaa] w-4 h-4" checked={cfg.lowBatRth} onChange={(e) => set({ lowBatRth: e.target.checked })} />
+          Автовозврат при заряде 20% (при 7% — принудительная посадка всегда)
+        </label>
+        <div className="max-w-sm">
+          <Slider id="rth-alt" label="Высота возврата" value={cfg.rthAlt} min={20} max={120} step={5} onChange={(v) => set({ rthAlt: v })} fmt={(v) => `${v} м`} />
+        </div>
+        <div className="text-xs text-gray-500">Дальность связи зависит от расстояния и прямой видимости: холмы и лес между пилотом и аппаратом ослабляют сигнал.</div>
+      </div>
+
       <div className="rounded-xl p-4" style={box}>
         <div className="font-orbitron text-xs font-bold text-white mb-3">КЛАВИАТУРА</div>
         <div className="grid sm:grid-cols-2 gap-x-8 gap-y-1.5 text-sm text-gray-400">
           {[["W / S", "газ / набор и снижение"], ["A / D", "рыскание"], ["↑ ↓ ← →", "тангаж и крен"], ["Пробел", "сброс воды, набора, снимок"],
             ["C", "камера: сзади / FPV / с земли / сверху"], ["M", "режим: GPS / ATTI / Angle / Acro"], ["T", "тепловизор"], ["V / G", "окно подвеса / наклон подвеса"],
-            ["H", "автовозврат на базу"], ["N", "звук"], ["Esc", "пауза"]].map(([k, v]) => (
+            ["H", "автовозврат на базу"], ["N", "звук"], ["I", "панель инструктора"], ["Shift + 1…5", "ввести отказ (0 — сброс)"], ["Esc", "пауза"]].map(([k, v]) => (
             <div key={k} className="flex gap-3"><kbd className="px-1.5 rounded text-white text-xs font-mono shrink-0 text-center" style={{ background: "#ffffff14", minWidth: 70, lineHeight: "20px" }}>{k}</kbd><span>{v}</span></div>
           ))}
         </div>

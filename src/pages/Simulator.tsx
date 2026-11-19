@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Icon from "@/components/ui/icon";
 import { Airframe, getAirframe } from "@/sim/airframes";
-import { CAM_LABEL, CamMode, CAMS, Command, Hud, MODES, SimEngine, SimResult } from "@/sim/engine";
+import { CAM_LABEL, CamMode, CAMS, Command, Fault, Hud, MODES, SimEngine, SimResult } from "@/sim/engine";
+import { findMission } from "@/sim/course";
 import { InputConfig, loadInput } from "@/sim/input";
 import { loadModels } from "@/sim/models";
 import { FlightMode, MODE_HINT, MODE_LABEL } from "@/sim/physics";
-import { Difficulty, DIFFICULTY, getMission, MissionDef, SayKind, withWeather } from "@/sim/missions";
+import { Difficulty, DIFFICULTY, MissionDef, SayKind, withWeather } from "@/sim/missions";
 import type { Quality } from "@/sim/world";
 import Launcher, { Best, LaunchSettings, Stars } from "./sim/Launcher";
 import Debrief from "./sim/Debrief";
@@ -108,6 +109,9 @@ function FpvOsd({ hud }: { hud: Hud }) {
       {t(fmt(hud.time), { right: "18%", bottom: "11%" })}
       {t(`H ${hud.distHome.toFixed(0)}m`, { left: "18%", bottom: "11%" })}
       {t(`${Math.round(hud.heading)}°`, { left: "50%", top: "17%", transform: "translateX(-50%)" })}
+      {t(`LQ ${Math.round(hud.link * 100)}`, { left: "18%", top: "16%", color: hud.link < 0.3 ? "#ff5555" : "#fff" })}
+      {t(hud.gpsSats ? `SAT ${hud.gpsSats}` : "NO GPS", { right: "18%", top: "16%", color: hud.gpsSats ? "#fff" : "#ff5555" })}
+      {hud.failsafe && t(hud.failsafe.startsWith("НЕТ") ? "FAILSAFE" : "LAND", { left: "50%", top: "30%", transform: "translateX(-50%)", color: "#ff5555", fontSize: 26 })}
       {hud.payloadText !== "—" && t(`${hud.payloadLabel.toUpperCase()} ${hud.payloadText}`, { left: "50%", bottom: "11%", transform: "translateX(-50%)" })}
     </div>
   );
@@ -161,8 +165,28 @@ async function sendResult(r: SimResult, title: string): Promise<{ ok: boolean; t
   }
 }
 
-function Flight({ mission, af, difficulty, quality, flightMode, camMode, input, livery, onExit, onRestart }: {
-  mission: MissionDef; af: Airframe; difficulty: Difficulty; quality: Quality; flightMode: FlightMode; camMode: CamMode; input: InputConfig; livery: string;
+const FAULTS: { id: Fault; label: string; icon: string; key: string }[] = [
+  { id: "motor", label: "Отказ мотора", icon: "Fan", key: "1" },
+  { id: "gps", label: "Потеря GPS", icon: "SatelliteDish", key: "2" },
+  { id: "link", label: "Глушение пульта 15 с", icon: "WifiOff", key: "3" },
+  { id: "gust", label: "Порыв ветра", icon: "Wind", key: "4" },
+  { id: "battery", label: "Просадка АКБ", icon: "BatteryWarning", key: "5" },
+  { id: "clear", label: "Сбросить отказы", icon: "RotateCcw", key: "0" },
+];
+
+/** Индикатор качества радиоканала: четыре столбика. */
+function LinkBars({ q }: { q: number }) {
+  const n = q > 0.75 ? 4 : q > 0.5 ? 3 : q > 0.3 ? 2 : q > 0.08 ? 1 : 0;
+  const c = n >= 3 ? "#00ffaa" : n === 2 ? "#ffd700" : "#ff4444";
+  return (
+    <span className="inline-flex items-end gap-[2px] h-3">
+      {[0, 1, 2, 3].map((i) => <span key={i} className="w-[3px] rounded-sm" style={{ height: 4 + i * 2.5, background: i < n ? c : "rgba(255,255,255,0.18)" }} />)}
+    </span>
+  );
+}
+
+function Flight({ mission, af, difficulty, quality, flightMode, camMode, input, livery, failures, onExit, onRestart }: {
+  mission: MissionDef; af: Airframe; difficulty: Difficulty; quality: Quality; flightMode: FlightMode; camMode: CamMode; input: InputConfig; livery: string; failures: boolean;
   onExit: () => void; onRestart: () => void;
 }) {
   const canvas = useRef<HTMLCanvasElement>(null);
@@ -174,6 +198,7 @@ function Flight({ mission, af, difficulty, quality, flightMode, camMode, input, 
   const [result, setResult] = useState<SimResult | null>(null);
   const [xpNote, setXpNote] = useState<{ ok: boolean; text: string } | null>(null);
   const [paused, setPaused] = useState(false);
+  const [instr, setInstr] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [touch] = useState(() => window.matchMedia("(pointer: coarse)").matches);
@@ -189,7 +214,7 @@ function Flight({ mission, af, difficulty, quality, flightMode, camMode, input, 
      if (!alive) return;
      try {
       e = new SimEngine({
-        canvas: canvas.current!, mapCanvas: map.current!, horizonCanvas: horizon.current!, mission, airframe: af, difficulty, quality, flightMode, camMode, input, livery,
+        canvas: canvas.current!, mapCanvas: map.current!, horizonCanvas: horizon.current!, mission, airframe: af, difficulty, quality, flightMode, camMode, input, livery, failures,
         onHud: setHud,
         onSay: (text, kind) => {
           const id = ++toastId.current;
@@ -213,7 +238,14 @@ function Flight({ mission, af, difficulty, quality, flightMode, camMode, input, 
   }, [mission, af, difficulty, quality]);
 
   useEffect(() => {
-    const onKey = (ev: KeyboardEvent) => { if (ev.code === "Escape") setPaused((p) => !p); };
+    const onKey = (ev: KeyboardEvent) => {
+      if (ev.code === "Escape") setPaused((p) => !p);
+      if (ev.code === "KeyI") setInstr((v) => !v);
+      if (ev.shiftKey && /^Digit[0-5]$/.test(ev.code)) {
+        const f = FAULTS.find((x) => x.key === ev.code.slice(5));
+        if (f) engine.current?.instructor(f.id);
+      }
+    };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
@@ -295,6 +327,47 @@ function Flight({ mission, af, difficulty, quality, flightMode, camMode, input, 
             {Math.round(hud.fps)} FPS · {Math.round(hud.res * 100)}%
           </div>
         )}
+        {hud && (
+          <div className="absolute font-mono text-[11px] px-1.5 py-0.5 rounded flex items-center gap-2" style={{ top: 12 + hud.mapSize + 22, right: 14, background: "rgba(0,0,0,0.45)",
+            transform: hud.pip ? `translateY(${hud.pipRect.h + 10}px)` : undefined }}>
+            <span className="flex items-center gap-1" style={{ color: hud.gpsSats ? "#c8ced8" : "#ff5555" }}><Icon name="Satellite" size={11} />{hud.gpsSats ? hud.gpsSats : "НЕТ"}</span>
+            <span className="flex items-center gap-1 text-[#c8ced8]">RC <LinkBars q={hud.link} /></span>
+          </div>
+        )}
+
+        {/* failsafe */}
+        {hud?.failsafe && (
+          <div className="absolute left-1/2 top-[30%] -translate-x-1/2 font-orbitron font-black text-lg sm:text-2xl px-5 py-2 rounded-lg animate-pulse text-center"
+            style={{ background: "rgba(120,0,0,0.55)", border: "2px solid #ff4444", color: "#ffdddd" }}>
+            {hud.failsafe}
+          </div>
+        )}
+
+        {/* панель инструктора */}
+        <div className="absolute pointer-events-auto" style={touch ? { bottom: 158, right: 64 } : { bottom: 62, right: 12 }}>
+          {instr ? (
+            <div className="rounded-xl p-2.5 w-[220px]" style={panel}>
+              <div className="flex items-center justify-between mb-1.5">
+                <span className="font-orbitron text-[11px] font-bold text-[#ffd166]">ИНСТРУКТОР</span>
+                <button onClick={() => setInstr(false)} className="text-gray-400 hover:text-white" aria-label="Закрыть панель инструктора"><Icon name="X" size={14} /></button>
+              </div>
+              <div className="space-y-1">
+                {FAULTS.map((f) => (
+                  <button key={f.id} onClick={() => engine.current?.instructor(f.id)} className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-sm text-left hover:bg-white/10"
+                    style={{ color: f.id === "clear" ? "#9ee7c9" : "#e5e7eb", background: "rgba(255,255,255,0.04)" }}>
+                    <Icon name={f.icon} size={14} />
+                    <span className="flex-1">{f.label}</span>
+                    {!touch && <span className="text-[10px] font-mono text-gray-500">⇧{f.key}</span>}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <button onClick={() => setInstr(true)} title="Панель инструктора (I)" className="h-8 px-2.5 rounded-lg flex items-center gap-1.5 text-[11px] font-orbitron font-bold text-[#ffd166]" style={panel}>
+              <Icon name="ClipboardList" size={14} />{touch ? "" : "ИНСТРУКТОР · I"}
+            </button>
+          )}
+        </div>
 
         {/* карта и окно камеры */}
         <canvas ref={map} className="absolute rounded-xl" style={{ top: 12, right: 12, width: hud?.mapSize ?? 176, height: hud?.mapSize ?? 176, border: "1px solid rgba(255,255,255,0.14)" }} />
@@ -418,16 +491,16 @@ function Flight({ mission, af, difficulty, quality, flightMode, camMode, input, 
 
 export default function Simulator() {
   const [settings, setSettings] = useState<LaunchSettings>(() => ({
-    mission: "training", af: "quad", diff: "pilot", quality: loadQuality(), fmode: "POS", cam: "chase", input: loadInput(), livery: "auto", weather: "scenario",
+    mission: "training", af: "quad", diff: "pilot", quality: loadQuality(), fmode: "POS", cam: "chase", input: loadInput(), livery: "auto", weather: "scenario", failures: false,
   }));
   const [run, setRun] = useState(0);
   const [best, setBest] = useState<Best>(loadBest);
   useEffect(() => { document.title = "БАС Симулятор — миссии беспилотников"; }, []);
-  const mission = useMemo(() => withWeather(getMission(settings.mission), settings.weather), [settings.mission, settings.weather]);
+  const mission = useMemo(() => withWeather(findMission(settings.mission), settings.weather), [settings.mission, settings.weather]);
   if (!run) return <Launcher initial={settings} best={best} onStart={(st) => { setSettings(st); setRun(1); }} />;
   return (
     <Flight key={run} mission={mission} af={getAirframe(settings.af)} difficulty={settings.diff} quality={settings.quality}
-      flightMode={settings.fmode} camMode={settings.cam} input={settings.input} livery={settings.livery}
+      flightMode={settings.fmode} camMode={settings.cam} input={settings.input} livery={settings.livery} failures={settings.failures}
       onExit={() => { setBest(loadBest()); setRun(0); }} onRestart={() => setRun(run + 1)} />
   );
 }

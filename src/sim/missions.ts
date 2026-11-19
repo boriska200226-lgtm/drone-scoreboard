@@ -4,7 +4,8 @@ import { Airframe } from "./airframes";
 import { FlameField, Particles } from "./effects";
 import { clamp, mulberry32 } from "./noise";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
-import { DroneSim } from "./physics";
+import { DroneSim, FlightMode } from "./physics";
+import type { Fault } from "./engine";
 import {
   makeAnimal, makeBeam, makeHelipad, makeHouse, makePerson, makePylon, makeRing, makeVan,
   Palette, THERMAL_LAYER, World, WorldCfg,
@@ -37,6 +38,10 @@ export interface Ctx {
   thermal(): boolean;
   camDir(): THREE.Vector3;
   camPos(): THREE.Vector3;
+  /** Ввести отказ (для упражнений курса). */
+  fault?(kind: Fault, dur?: number): void;
+  /** Состояние радиоканала. */
+  link?(): { lost: boolean; failsafe: string | null; q: number };
 }
 
 export interface Action { held: boolean; pressed: boolean }
@@ -96,6 +101,10 @@ export interface MissionDef {
   precip?: "rain" | "snow";
   /** Множитель расхода батареи: в дождь и мороз аккумулятор садится быстрее. */
   drain?: number;
+  /** Упражнение «Курса пилота». */
+  course?: boolean;
+  /** Режим полёта, в котором начинается упражнение. */
+  startMode?: FlightMode;
   create(ctx: Ctx): Mission;
 }
 

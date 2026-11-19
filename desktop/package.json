@@ -14,7 +14,8 @@
   },
   "devDependencies": {
     "electron": "33.2.1",
-    "electron-builder": "25.1.8"
+    "electron-builder": "25.1.8",
+    "resedit": "^2.0.3"
   },
   "build": {
     "appId": "ru.basarena.simulator",
@@ -40,7 +41,7 @@
         "portable"
       ],
       "icon": "build/icon.ico",
-      "signAndEditExecutable": true,
+      "signAndEditExecutable": false,
       "legalTrademarks": "БАС Симулятор"
     },
     "nsis": {
@@ -66,6 +67,7 @@
       "category": "Game"
     },
     "publish": null,
-    "copyright": "© 2026 БАС Арена"
+    "copyright": "© 2026 БАС Арена",
+    "afterPack": "build/afterPack.cjs"
   }
 }

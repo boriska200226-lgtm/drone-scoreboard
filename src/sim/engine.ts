@@ -26,6 +26,7 @@ export interface Hud {
   objectives: Objective[]; motors: boolean[]; warnings: string[];
   pipRect: { right: number; top: number; w: number; h: number }; mapSize: number;
   modeId: FlightMode; camId: CamMode; manual: boolean; osd: Osd;
+  gpsSats: number; link: number; failsafe: string | null;
   fps: number; res: number;
 }
 
@@ -51,12 +52,16 @@ export interface EngineOpts {
   input?: InputConfig;
   camMode?: CamMode;
   livery?: string;
+  /** Случайные отказы во время полёта. */
+  failures?: boolean;
   onHud(h: Hud): void;
   onSay(text: string, kind: SayKind): void;
   onEnd(r: SimResult): void;
 }
 
 export type Command = "cam" | "thermal" | "pip" | "gimbal" | "mode" | "rth" | "mute";
+/** Отказы, которые вводит инструктор (или случайный сценарий). */
+export type Fault = "motor" | "gps" | "link" | "gust" | "battery" | "clear";
 export const CAMS = ["chase", "fpv", "los", "top"] as const;
 export type CamMode = (typeof CAMS)[number];
 export const CAM_LABEL: Record<CamMode, string> = { chase: "Сзади", fpv: "FPV", los: "С земли", top: "Сверху" };
@@ -122,6 +127,13 @@ export class SimEngine {
   private pipCam = new THREE.PerspectiveCamera(50, 1.36, 0.3, 3000);
   private model!: DroneModel;
   private precip: PrecipField | null = null;
+  // радиосвязь, навигация и защитные режимы
+  private linkQ = 1; private linkLostT = 0; private jamUntil = -1; private linkAcc = 0;
+  private failsafe: null | "rth" | "land" | "hover" = null; private hoverT = 0;
+  private autoLand = false; private lowBatHandled = false; private gpsUntil = -1;
+  private gust = new THREE.Vector3();
+  private faultPlan: { t: number; kind: Fault }[] = [];
+  private nearTrees: number[] = [];
   private remarks = new Map<string, number>();
   private log: FlightLog = { samples: [], remarks: [], maxAgl: 0, maxSpeed: 0, distance: 0, energyWh: 0, over150: 0, beyondVlos: 0, hardLandings: 0, base: { x: 0, z: 0 } };
   private logAcc = 0;
@@ -230,11 +242,18 @@ export class SimEngine {
       thermal: () => this.thermal,
       camDir: () => this.camDirV,
       camPos: () => this.cam.position,
+      fault: (k, dur) => this.instructor(k, false, dur),
+      link: () => ({ lost: this.linkLostT > 1, failsafe: this.failsafe, q: this.linkQ }),
     };
     this.mission = o.mission.create(ctx);
     if (o.mission.precip) this.precip = new PrecipField(scene, o.mission.precip, o.quality === "low" ? 2500 : o.mission.precip === "rain" ? 9000 : 6000);
     if (o.mission.drain) this.drone.drain = o.mission.drain;
+    if (o.failures) {
+      const kinds: Fault[] = ["gps", "link", "gust", ...(o.airframe.motors.length > 4 ? ["motor" as Fault] : [])];
+      for (let k = 0; k < 2; k++) this.faultPlan.push({ t: 35 + k * 70 + this.rnd() * 50, kind: kinds[Math.floor(this.rnd() * kinds.length)] });
+    }
     if (o.flightMode) this.drone.mode = o.flightMode;
+    if (o.mission.startMode) this.drone.mode = o.mission.startMode;
     this.input = o.input ?? DEFAULT_INPUT;
     this.drone.rates = this.input.rates;
     if (o.camMode) this.camMode = o.camMode;
@@ -293,6 +312,7 @@ export class SimEngine {
     else if (c === "mute") this.audio.muted = !this.audio.muted;
     else if (c === "mode") this.setMode(MODES[(MODES.indexOf(this.drone.mode) + 1) % MODES.length]);
     else if (c === "rth") {
+      if (!this.rth && !this.drone.gpsOk) { say("Автовозврат недоступен без GPS", "warn"); return; }
       this.rth = !this.rth;
       if (this.rth) this.drone.mode = "POS";
       say(this.rth ? "Автовозврат на базу включён" : "Автовозврат отменён", "info");
@@ -373,17 +393,74 @@ export class SimEngine {
     return { st: out, held };
   }
 
+  /** Отказ или нештатная ситуация по команде инструктора. */
+  instructor(kind: Fault, random = false, dur = 50) {
+    if (this.ended) return;
+    const d = this.drone, pre = random ? "Внезапно: " : "Инструктор: ";
+    if (kind === "motor") {
+      const ok = d.motorOk.map((v, i) => (v ? i : -1)).filter((i) => i >= 0);
+      if (ok.length) { const i = ok[Math.floor(this.rnd() * ok.length)]; d.failMotor(i); this.say(`${pre}ОТКАЗ МОТОРА №${i + 1}! ${d.af.redundancy === "нет" ? "Резерва нет" : "Аппарат держится — садитесь"}`, "warn"); }
+    } else if (kind === "gps") {
+      if (d.gpsOk) {
+        d.gpsOk = false; this.gpsUntil = d.time + dur;
+        if (this.rth) { this.rth = false; if (this.failsafe === "rth") this.failsafe = "land"; }
+        this.say(`${pre}ПОТЕРЯ GPS! Режим ATTI — аппарат сносит ветром, держите его стиками. Автовозврат недоступен`, "warn");
+      } else { d.gpsOk = true; this.gpsUntil = -1; this.say("GPS восстановлен", "good"); }
+    } else if (kind === "link") {
+      this.jamUntil = d.time + 15;
+      if (!random) this.o.onSay("Инструктор: глушение канала управления на 15 с", "info");
+    } else if (kind === "gust") {
+      const a = this.rnd() * Math.PI * 2;
+      this.gust.set(Math.sin(a), 0, Math.cos(a)).multiplyScalar(9 + this.rnd() * 4);
+      this.say(`${pre}сильный порыв ветра!`, "warn");
+    } else if (kind === "battery") {
+      d.battery *= 0.5;
+      this.say(`${pre}просадка напряжения: одна из банок АКБ деградировала, заряд упал вдвое`, "warn");
+    } else {
+      d.gpsOk = true; this.gpsUntil = -1; this.jamUntil = -1; this.gust.set(0, 0, 0);
+      this.failsafe = null; this.autoLand = false;
+      this.o.onSay("Инструктор: отказы сброшены", "info");
+    }
+  }
+
+  /** Качество радиосвязи: дальность и прямая видимость между пилотом (у машины на базе) и дроном. */
+  private updateLink(dt: number) {
+    const d = this.drone;
+    this.linkAcc += dt;
+    if (this.linkAcc < 0.25) return;
+    this.linkAcc = 0;
+    const px = -5, pz = 6, py = this.world.groundAt(px, pz) + 1.7;
+    const dist = Math.hypot(d.pos.x - px, d.pos.y - py, d.pos.z - pz);
+    let q = clamp(1 - Math.pow(dist / 2600, 2.2), 0, 1);
+    // рельеф и лес на линии «пульт — дрон» ослабляют сигнал
+    for (let k = 1; k < 15; k++) {
+      const t = k / 15, x = px + (d.pos.x - px) * t, z = pz + (d.pos.z - pz) * t, y = py + (d.pos.y - py) * t;
+      const gh = this.world.groundAt(x, z);
+      if (y < gh + 0.5) q *= 0.45;
+      else if (y < gh + 18 && this.world.treesNear(x, z, 3, this.nearTrees).length) q *= 0.88;
+    }
+    if (d.time < this.jamUntil) q = 0;
+    this.linkQ += (q - this.linkQ) * 0.6;
+  }
+
   /** Автовозврат: набор безопасной высоты → полёт к базе → посадка. */
   private autopilot(st: Sticks): Sticks {
     const d = this.drone;
-    if (Math.hypot(st.roll, st.pitch) > 0.3 || Math.abs(st.throttle) > 0.3) {
+    if (this.linkLostT <= 1 && (Math.hypot(st.roll, st.pitch) > 0.3 || Math.abs(st.throttle) > 0.3)) {
       this.rth = false;
+      if (this.failsafe) this.failsafe = null;
       this.o.onSay("Автовозврат отменён — управление у пилота", "info");
       return st;
     }
     const dist = Math.hypot(d.pos.x, d.pos.z);
     const agl = d.pos.y - d.gear - this.world.groundAt(d.pos.x, d.pos.z);
-    const safe = this.world.groundAt(0, 0) + 45;
+    if (!d.gpsOk) {
+      this.rth = false;
+      if (this.failsafe === "rth") this.failsafe = "land";
+      this.say("Автовозврат невозможен без GPS — ведите аппарат вручную", "warn");
+      return st;
+    }
+    const safe = this.world.groundAt(0, 0) + this.input.rthAlt;
     const out: Sticks = { roll: 0, pitch: 0, yaw: 0, throttle: 0 };
     if (d.landed && dist < 4) { this.rth = false; return out; }
     if (dist > 2.5) {
@@ -406,6 +483,7 @@ export class SimEngine {
     const agl = p.y - this.world.groundAt(p.x, p.z);
     const hf = clamp(0.35 + (0.65 * agl) / 25, 0.3, 1.15);
     out.set(Math.sin(ang) * s * gust * hf, 0, -Math.cos(ang) * s * gust * hf);
+    out.add(this.gust);
     this.mission.extraWind(p, out);
     return out;
   }
@@ -446,7 +524,41 @@ export class SimEngine {
     const d = this.drone;
     const input = this.readSticks(dt);
     let st = input.st;
+    this.updateLink(dt);
+    this.gust.multiplyScalar(Math.exp(-dt / 4));
+    if (this.gpsUntil > 0 && d.time > this.gpsUntil) { d.gpsOk = true; this.gpsUntil = -1; this.say("GPS восстановлен", "good"); }
+    for (const f of this.faultPlan) if (f.t > 0 && d.time > f.t && !d.landed) { f.t = -1; this.instructor(f.kind, true); }
+    // потеря связи: команды пульта до дрона не доходят, через 3 с срабатывает failsafe
+    if (this.linkQ < 0.08) this.linkLostT += dt;
+    else if (this.linkLostT > 0) { if (this.linkLostT > 1) this.say("Связь восстановлена — отклоните стики, чтобы вернуть управление", "good"); this.linkLostT = 0; }
+    const lost = this.linkLostT > 1;
+    if (lost) {
+      st = { roll: 0, pitch: 0, yaw: 0, throttle: 0 };
+      input.held = false; this.actionPressed = false;
+      if (!this.failsafe && this.linkLostT > 3 && !d.landed) {
+        this.failsafe = this.input.failsafe === "rth" && !d.gpsOk ? "land" : this.input.failsafe;
+        this.hoverT = 0;
+        this.say(`ПОТЕРЯ СВЯЗИ — failsafe: ${this.failsafe === "rth" ? "возврат на базу" : this.failsafe === "land" ? "посадка на месте" : "зависание"}`, "warn");
+      }
+    } else if (this.failsafe && this.failsafe !== "rth" && (Math.hypot(st.roll, st.pitch) > 0.3 || Math.abs(st.throttle) > 0.3)) {
+      this.failsafe = null;
+      this.o.onSay("Управление у пилота", "info");
+    }
+    // защита по заряду
+    const homeDist = Math.hypot(d.pos.x, d.pos.z);
+    if (d.soc < 0.2 && !this.lowBatHandled && this.input.lowBatRth && !d.landed && d.gpsOk && homeDist > 25) {
+      this.lowBatHandled = true; this.rth = true;
+      this.say("Заряд 20% — автоматический возврат на базу. Отменить — отклоните стики", "warn");
+    }
+    if (d.soc < 0.07 && !d.landed && !this.autoLand) { this.autoLand = true; this.rth = false; this.say("КРИТИЧЕСКИЙ ЗАРЯД — принудительная посадка", "warn"); }
+    if (this.failsafe === "rth") this.rth = true;
     if (this.rth && !d.crashed) st = this.autopilot(st);
+    const needsAssist = this.failsafe === "land" || this.failsafe === "hover" || this.autoLand;
+    if (needsAssist && MANUAL_THROTTLE[d.mode]) d.mode = "ATTI"; // контроллер сам переходит в режим с удержанием высоты
+    if (this.failsafe === "hover") { this.hoverT += dt; if (this.hoverT > 20) { this.failsafe = "land"; this.say("Связи нет 20 с — посадка на месте", "warn"); } }
+    if (this.failsafe === "land" || this.autoLand) { st = { ...st, throttle: Math.min(st.throttle, -0.55) }; }
+    if (d.landed && (this.failsafe === "land" || this.failsafe === "hover")) this.failsafe = null;
+    if (d.landed) this.autoLand = false;
     const action: Action = { held: input.held, pressed: this.actionPressed };
     this.actionPressed = false;
 
@@ -665,7 +777,7 @@ export class SimEngine {
     if (this.composer) {
       const u = this.grade!.uniforms, fpv = this.camMode === "fpv";
       u.uTime.value = (u.uTime.value + 0.017) % 100;
-      u.uGrain.value = fpv ? 0.075 : 0.035;
+      u.uGrain.value = (fpv ? 0.075 : 0.035) + (fpv ? (1 - this.linkQ) * 0.35 : 0);
       u.uVignette.value = fpv ? 0.55 : 0.32;
       this.composer.render();
     } else r.render(scene, this.cam);
@@ -819,6 +931,8 @@ export class SimEngine {
     if (d.motorOk.some((x) => !x)) warnings.push("ОТКАЗ МОТОРА");
     if (d.soc < 0.2) warnings.push("НИЗКИЙ ЗАРЯД");
     if (d.windNow.length() > 9) warnings.push("СИЛЬНЫЙ ВЕТЕР");
+    if (!d.gpsOk) warnings.push("НЕТ GPS — РЕЖИМ ATTI");
+    if (this.linkQ < 0.3 && this.linkLostT <= 1) warnings.push("СЛАБЫЙ СИГНАЛ ПУЛЬТА");
     const objectives = [...m.objectives(), { text: "Вернуться и сесть на площадку базы", done: false }];
     const heading = ((-d.yaw * 180) / Math.PI + 360) % 360;
     const windFrom = ((Math.atan2(-d.windNow.x, d.windNow.z) * 180) / Math.PI + 360) % 360;
@@ -833,6 +947,9 @@ export class SimEngine {
       mode: this.rth ? "Автовозврат" : MODE_LABEL[d.mode], cam: CAM_LABEL[this.camMode],
       modeId: d.mode, camId: this.camMode, manual: MANUAL_THROTTLE[d.mode], osd: this.osd(),
       fps: this.fps, res: this.pr,
+      gpsSats: d.gpsOk ? 14 + Math.round(Math.sin(d.time * 0.05) * 2) : 0, link: this.linkQ,
+      failsafe: this.linkLostT > 1 ? (this.failsafe === "rth" ? "НЕТ СВЯЗИ · ВОЗВРАТ" : this.failsafe === "land" ? "НЕТ СВЯЗИ · ПОСАДКА" : this.failsafe === "hover" ? "НЕТ СВЯЗИ · ЗАВИСАНИЕ" : "НЕТ СВЯЗИ")
+        : this.autoLand ? "ПРИНУДИТЕЛЬНАЯ ПОСАДКА" : this.failsafe ? "FAILSAFE" : null,
       thermal: this.thermal, pip: this.pip, rth: this.rth,
       distHome: Math.hypot(d.pos.x, d.pos.z), time: m.time, objectives, motors: [...d.motorOk], warnings,
       ...layout(w),

@@ -90,6 +90,8 @@ export class DroneSim {
   gear: number;
   rates: Rates = { rc: 1, superRate: 0.7, expo: 0 };
   speedLimit = Infinity;
+  /** Есть ли спутниковая навигация: без неё режим GPS работает как ATTI (сносит ветром). */
+  gpsOk = true;
   /** Множитель расхода энергии (погода: дождь, мороз). */
   drain = 1; // м/с, ограничение автопилота (например, при опрыскивании)
   radius: number;
@@ -251,7 +253,7 @@ export class DroneSim {
         const aMax = G * Math.tan(af.maxTilt * (degraded ? 0.55 : 1));
         let ax = 0, az = 0;
         const sm = Math.hypot(st.roll, st.pitch);
-        if (this.mode === "POS") {
+        if (this.mode === "POS" && this.gpsOk) {
           let vx = 0, vz = 0;
           if (sm > 0.05) {
             const k = Math.min(af.maxSpeed * 0.9, this.speedLimit) / Math.max(1, sm);

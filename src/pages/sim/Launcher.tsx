@@ -5,7 +5,8 @@ import { AIRFRAMES, Airframe, getAirframe, hoverMinutes } from "@/sim/airframes"
 import { CAM_LABEL, CamMode, CAMS, MODES } from "@/sim/engine";
 import { LIVERIES, liveryFor } from "@/sim/droneModel";
 import { InputConfig, saveInput } from "@/sim/input";
-import { Difficulty, DIFFICULTY, getMission, MISSIONS, Weather, WEATHER } from "@/sim/missions";
+import { Difficulty, DIFFICULTY, MISSIONS, Weather, WEATHER } from "@/sim/missions";
+import { COURSE, findMission } from "@/sim/course";
 import { FlightMode, MODE_HINT, MODE_LABEL } from "@/sim/physics";
 import type { Quality } from "@/sim/world";
 import ControlsSetup from "./ControlsSetup";
@@ -17,6 +18,8 @@ export interface LaunchSettings {
   mission: string; af: string; diff: Difficulty; quality: Quality; fmode: FlightMode; cam: CamMode; input: InputConfig;
   livery: string; // "auto" — штатная окраска аппарата
   weather: Weather;
+  /** Случайные отказы в полёте. */
+  failures: boolean;
 }
 export type Best = Record<string, { score: number; stars: number }>;
 
@@ -32,6 +35,7 @@ export const QUALITY: Record<Quality, { label: string; hint: string }> = {
 
 const TABS = [
   { id: "missions", label: "Миссии", icon: "Map" },
+  { id: "course", label: "Курс пилота", icon: "GraduationCap" },
   { id: "hangar", label: "Ангар", icon: "Warehouse" },
   { id: "controls", label: "Управление", icon: "Gamepad2" },
   { id: "graphics", label: "Графика", icon: "MonitorCog" },
@@ -81,7 +85,7 @@ export default function Launcher({ initial, best, onStart }: { initial: LaunchSe
       return nx;
     });
   };
-  const mission = getMission(s.mission);
+  const mission = findMission(s.mission);
   const af = getAirframe(s.af);
   const afColor = hex(af.color);
   const w = mission.wind;
@@ -194,6 +198,13 @@ export default function Launcher({ initial, best, onStart }: { initial: LaunchSe
                 </div>
                 <div className="text-xs text-gray-500 mt-1.5">{WEATHER.find((w) => w.id === s.weather)?.hint}</div>
               </div>
+              <label htmlFor="rnd-fail" className="flex items-start gap-2.5 rounded-lg p-3 cursor-pointer" style={surface}>
+                <input id="rnd-fail" type="checkbox" className="accent-[#ff6a10] w-4 h-4 mt-0.5" checked={s.failures} onChange={(e) => set({ failures: e.target.checked })} />
+                <span>
+                  <span className="font-orbitron text-xs font-bold block">СЛУЧАЙНЫЕ ОТКАЗЫ</span>
+                  <span className="text-xs text-gray-500 leading-snug block mt-0.5">В полёте может пропасть GPS, связь с пультом, налететь порыв или отказать мотор. Отказы можно вводить и вручную — панель инструктора (I).</span>
+                </span>
+              </label>
               <div>
                 <div className="font-orbitron text-xs font-bold mb-2">СЛОЖНОСТЬ</div>
                 <div className="grid grid-cols-3 gap-2">
@@ -209,6 +220,79 @@ export default function Launcher({ initial, best, onStart }: { initial: LaunchSe
             </aside>
           </div>
         )}
+
+        {tab === "course" && (() => {
+          const passed = COURSE.filter((c) => best[c.id]);
+          const avg = passed.length ? Math.round(passed.reduce((a, c) => a + best[c.id].score, 0) / passed.length) : 0;
+          const stars = passed.reduce((a, c) => a + best[c.id].stars, 0);
+          const done = passed.length === COURSE.length;
+          const cur = COURSE.find((c) => c.id === s.mission) ?? COURSE[0];
+          return (
+            <div className="grid xl:grid-cols-[1fr_380px] gap-6">
+              <section className="min-w-0">
+                <h1 className="font-orbitron text-xl font-black">КУРС ПИЛОТА</h1>
+                <p className="text-gray-400 mt-1 mb-4">Шесть упражнений по программе подготовки внешних пилотов БВС: от висения без GPS до действий при потере связи. Зачёт — успешное выполнение с посадкой на H.</p>
+                <div className="rounded-xl p-4 mb-4 flex items-center gap-4" style={surface}>
+                  <div className="flex-1">
+                    <div className="flex justify-between text-sm mb-1.5"><span className="text-gray-400">Пройдено</span><span className="font-semibold tabular-nums">{passed.length} из {COURSE.length}</span></div>
+                    <div className="h-2 rounded-full bg-white/10"><div className="h-2 rounded-full transition-all" style={{ width: `${(passed.length / COURSE.length) * 100}%`, background: "#7dd3fc" }} /></div>
+                  </div>
+                  <div className="text-center"><div className="text-[10px] font-orbitron text-gray-500">СР. БАЛЛ</div><div className="font-bold tabular-nums">{avg || "—"}</div></div>
+                  <div className="text-center"><div className="text-[10px] font-orbitron text-gray-500">ЗВЁЗДЫ</div><div className="font-bold tabular-nums">{stars}/{COURSE.length * 3}</div></div>
+                </div>
+                <div className="space-y-2">
+                  {COURSE.map((c, i) => {
+                    const on = c.id === cur.id, b = best[c.id], open = i === 0 || best[COURSE[i - 1].id] || b;
+                    return (
+                      <button key={c.id} onClick={() => set({ mission: c.id, af: s.af })} className="w-full text-left rounded-xl p-3 flex items-center gap-3 transition-all"
+                        style={{ background: on ? "#7dd3fc12" : surface.background, border: `1px solid ${on ? "#7dd3fc" : "rgba(255,255,255,0.08)"}`, opacity: open ? 1 : 0.55 }}>
+                        <div className="w-10 h-10 rounded-lg flex items-center justify-center shrink-0" style={{ background: b ? "#00ffaa1a" : "rgba(255,255,255,0.05)" }}>
+                          <Icon name={b ? "CheckCircle2" : open ? c.icon : "Lock"} size={18} style={{ color: b ? ACCENT : "#7dd3fc" }} />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="font-orbitron text-sm font-bold">{c.title}</div>
+                          <div className="text-sm text-gray-400 truncate">{c.tagline}{c.startMode ? ` · режим ${MODE_LABEL[c.startMode]}` : ""}</div>
+                        </div>
+                        {b ? <div className="text-right"><Stars n={b.stars} size={12} /><div className="text-xs text-gray-400 tabular-nums">{Math.round(b.score)} баллов</div></div>
+                          : !open && <span className="text-[11px] text-gray-500">после упр. {i}</span>}
+                      </button>
+                    );
+                  })}
+                </div>
+              </section>
+              <aside className="space-y-4 min-w-0">
+                <div className="rounded-xl p-5" style={{ border: "1px solid #7dd3fc44", background: "#7dd3fc08" }}>
+                  <div className="font-orbitron text-[11px] tracking-widest text-[#7dd3fc]">УПРАЖНЕНИЕ</div>
+                  <div className="font-orbitron text-lg font-black mt-1">{cur.title}</div>
+                  <div className="space-y-2 text-[15px] leading-snug text-gray-300 mt-3">{cur.briefing.map((b) => <p key={b}>{b}</p>)}</div>
+                  <button onClick={() => onStart({ ...s, mission: cur.id, weather: "scenario" })} className="mt-4 w-full py-3 rounded-lg font-orbitron font-black text-sm tracking-widest"
+                    style={{ background: "#7dd3fc", color: "#0a0d16" }}>НАЧАТЬ УПРАЖНЕНИЕ</button>
+                </div>
+                <div className="rounded-xl p-5 relative overflow-hidden" style={{ border: `1px solid ${done ? "#ffd70088" : "rgba(255,255,255,0.08)"}`, background: done ? "linear-gradient(135deg, #2a2410, #12151c)" : surface.background }}>
+                  <div className="flex items-center gap-2 font-orbitron text-xs font-bold" style={{ color: done ? "#ffd700" : "#9aa3b2" }}>
+                    <Icon name="Award" size={16} />УДОСТОВЕРЕНИЕ ПИЛОТА
+                  </div>
+                  {done ? (
+                    <>
+                      <div className="font-orbitron text-xl font-black mt-3">Курс пройден</div>
+                      <div className="text-sm text-gray-300 mt-1">Внешний пилот БВС · базовый уровень</div>
+                      <div className="grid grid-cols-2 gap-2 mt-3 text-sm">
+                        <div><div className="text-[10px] font-orbitron text-gray-500">СРЕДНИЙ БАЛЛ</div><div className="font-bold">{avg}</div></div>
+                        <div><div className="text-[10px] font-orbitron text-gray-500">ЗВЁЗДЫ</div><div className="font-bold">{stars} / {COURSE.length * 3}</div></div>
+                      </div>
+                      <div className="text-xs text-gray-500 mt-3">БАС·SIM, Республика Коми · {new Date().toLocaleDateString("ru-RU")}</div>
+                      <button onClick={() => window.print()} className="mt-3 text-xs font-orbitron px-3 py-1.5 rounded flex items-center gap-1.5" style={{ background: "#ffd70022", color: "#ffd700" }}>
+                        <Icon name="Printer" size={12} />РАСПЕЧАТАТЬ
+                      </button>
+                    </>
+                  ) : (
+                    <div className="text-sm text-gray-400 mt-2">Выполните все упражнения курса — осталось {COURSE.length - passed.length}. Удостоверение подтвердит навыки пилотирования без GPS и действия в нештатных ситуациях.</div>
+                  )}
+                </div>
+              </aside>
+            </div>
+          );
+        })()}
 
         {tab === "hangar" && (
           <div className="grid xl:grid-cols-[1fr_360px] gap-6">
