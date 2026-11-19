@@ -167,6 +167,14 @@ async function sendResult(r: SimResult, title: string): Promise<{ ok: boolean; t
   }
 }
 
+/** Шпаргалка клавиш для меню паузы. */
+const KEY_GROUPS = (action: string) => [
+  { title: "ПОЛЁТ", color: "#00ffaa", keys: [["W / S", "газ: вверх / вниз"], ["A / D", "поворот (рыскание)"], ["↑ ↓", "вперёд / назад"], ["← →", "влево / вправо"], ["M", "режим: GPS · ATTI · Angle · Acro"]] },
+  { title: "ПОСАДКА И ВОЗВРАТ", color: "#ffd166", keys: [["L", "автопосадка (стиками — на площадку)"], ["H", "автовозврат на базу"]] },
+  { title: "КАМЕРА", color: "#7dd3fc", keys: [["C", "вид: FPV · сзади · с земли · сверху"], ["V", "окно камеры подвеса"], ["G", "угол подвеса 0…−90°"], ["T", "тепловизор"]] },
+  { title: "МИССИЯ", color: "#ff8a5c", keys: [["Пробел", action !== "—" ? action : "действие миссии"], ["I", "панель инструктора"], ["N", "звук"], ["Esc", "пауза"]] },
+] as { title: string; color: string; keys: [string, string][] }[];
+
 const FAULTS: { id: Fault; label: string; icon: string; key: string }[] = [
   { id: "motor", label: "Отказ мотора", icon: "Fan", key: "1" },
   { id: "gps", label: "Потеря GPS", icon: "SatelliteDish", key: "2" },
@@ -447,12 +455,35 @@ function Flight({ mission, af, difficulty, quality, flightMode, camMode, input, 
 
       {/* пауза */}
       {paused && !result && (
-        <div className="absolute inset-0 flex items-center justify-center" style={{ background: "rgba(0,0,0,0.6)" }}>
-          <div className="rounded-2xl p-6 w-[320px] space-y-3 text-center" style={{ ...panel, background: "rgba(10,13,22,0.95)" }}>
-            <div className="font-orbitron text-lg font-black text-white">ПАУЗА</div>
-            <button onClick={() => setPaused(false)} className="w-full py-3 rounded-lg font-orbitron font-bold text-sm" style={{ background: "#00ffaa", color: "#0a0d16" }}>ПРОДОЛЖИТЬ</button>
-            <button onClick={onRestart} className="w-full py-3 rounded-lg font-orbitron text-sm text-white" style={{ background: "#ffffff14" }}>НАЧАТЬ ЗАНОВО</button>
-            <button onClick={onExit} className="w-full py-3 rounded-lg font-orbitron text-sm text-gray-300" style={{ background: "#ffffff0a" }}>К ВЫБОРУ МИССИИ</button>
+        <div className="absolute inset-0 flex items-center justify-center p-4 overflow-y-auto" style={{ background: "rgba(0,0,0,0.65)" }}>
+          <div className="rounded-2xl p-6 w-[860px] max-w-full my-auto grid md:grid-cols-[240px_minmax(0,1fr)] gap-6" style={{ ...panel, background: "rgba(10,13,22,0.96)" }}>
+            <div className="space-y-3">
+              <div className="sp-title text-3xl text-white">Пауза</div>
+              <div className="text-sm text-gray-400">{mission.title} · {af.name}</div>
+              <button onClick={() => setPaused(false)} className="w-full py-3 rounded-lg font-orbitron font-bold text-sm" style={{ background: "#00ffaa", color: "#0a0d16" }}>ПРОДОЛЖИТЬ</button>
+              <button onClick={onRestart} className="w-full py-3 rounded-lg font-orbitron text-sm text-white" style={{ background: "#ffffff14" }}>НАЧАТЬ ЗАНОВО</button>
+              <button onClick={onExit} className="w-full py-3 rounded-lg font-orbitron text-sm text-gray-300" style={{ background: "#ffffff0a" }}>К ВЫБОРУ МИССИИ</button>
+              {input.device === "gamepad" && <div className="text-xs text-gray-500 leading-snug pt-1">Стики пульта — полёт. Клавиши ниже работают и с пультом.</div>}
+            </div>
+            <div className="min-w-0">
+              <div className="sp-label text-gray-300 mb-3">Управление</div>
+              <div className="grid sm:grid-cols-2 gap-x-6 gap-y-4">
+                {KEY_GROUPS(mission.actionLabel).map((g) => (
+                  <div key={g.title}>
+                    <div className="text-[11px] font-orbitron tracking-wider mb-1.5" style={{ color: g.color }}>{g.title}</div>
+                    <div className="space-y-1">
+                      {g.keys.map(([k, v]) => (
+                        <div key={k} className="flex items-center gap-2.5 text-sm">
+                          <kbd className="px-1.5 rounded text-white text-xs font-mono shrink-0 text-center" style={{ background: "#ffffff14", border: "1px solid #ffffff22", minWidth: 64, lineHeight: "22px" }}>{k}</kbd>
+                          <span className="text-gray-300 leading-tight">{v}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              {hud && <div className="text-xs text-gray-500 mt-4">Режим сейчас: <span className="text-gray-300">{MODE_LABEL[hud.modeId]}</span> — {MODE_HINT[hud.modeId]}</div>}
+            </div>
           </div>
         </div>
       )}
