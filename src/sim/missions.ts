@@ -109,6 +109,14 @@ export interface MissionDef {
   create(ctx: Ctx): Mission;
 }
 
+/** «650 м на северо-восток» — направление от базы для подсказок. */
+function whereFromBase(x: number, z: number): string {
+  const d = Math.round(Math.hypot(x, z) / 50) * 50;
+  const b = ((Math.atan2(x, -z) * 180) / Math.PI + 360) % 360;
+  const dir = ["на север", "на северо-восток", "на восток", "на юго-восток", "на юг", "на юго-запад", "на запад", "на северо-запад"][Math.round(b / 45) % 8];
+  return `${d} м ${dir}`;
+}
+
 const fmtTime = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
 const BASE_FLAT = { x: 0, z: 0, rx: 16, rz: 16 };
 
@@ -143,7 +151,7 @@ const OVERCAST: Palette = {
 
 // ───────────────────────────── 1. Учебный полигон ─────────────────────────────
 
-const GATES: [number, number, number][] = [
+let GATES: [number, number, number][] = [
   [0, 10, -55], [45, 16, -125], [115, 24, -150], [165, 14, -75], [115, 9, 0], [45, 8, 35],
 ];
 
@@ -199,10 +207,12 @@ class TrainingMission extends Mission {
 
 // ───────────────────────────── 2. Лесной пожар ─────────────────────────────
 
-const VILLAGE = { x: 250, z: -430 };
+let VILLAGE = { x: 250, z: -430 };
+/** Точка возгорания; сетка пожара строится вокруг неё. */
+let FIRE = { x: 40, z: -420, west: false };
 
 class FireMission extends Mission {
-  private cs = 14; private nx = 40; private nz = 28; private x0 = -120; private z0 = -620;
+  private cs = 14; private nx = 40; private nz = 28; private x0 = FIRE.x - (FIRE.west ? 400 : 160); private z0 = FIRE.z - 200;
   private state: Uint8Array; // 0 пусто, 1 лес, 2 горит, 3 выгорело, 4 потушено
   private inten: Float32Array; private age: Float32Array; private life: Float32Array; private wet: Float32Array;
   private cellTrees: number[][] = [];
@@ -230,7 +240,7 @@ class FireMission extends Mission {
     this.spread = { cadet: 0.7, pilot: 1, ace: 1.3 }[ctx.difficulty];
     const fuel: number[] = [];
     for (let c = 0; c < n; c++) if (this.state[c] === 1) fuel.push(c);
-    fuel.sort((p, q) => Math.hypot(this.cx(p) - 40, this.cz(p) + 420) - Math.hypot(this.cx(q) - 40, this.cz(q) + 420));
+    fuel.sort((p, q) => Math.hypot(this.cx(p) - FIRE.x, this.cz(p) - FIRE.z) - Math.hypot(this.cx(q) - FIRE.x, this.cz(q) - FIRE.z));
     for (const c of fuel.slice(0, 6)) this.ignite(c, 0.9);
     this.burning = 6;
     // завеса падающей воды: конус с бегущими вниз струями
@@ -258,7 +268,7 @@ class FireMission extends Mission {
     ctx.world.scene.add(this.curtain);
     this.flames = new FlameField(ctx.world.scene, this.nx * this.nz * 8);
     this.glow = new THREE.PointLight(0xff7a2a, 0, 110, 1.6);
-    this.glow.position.set(40, ctx.world.groundAt(40, -420) + 8, -420);
+    this.glow.position.set(FIRE.x, ctx.world.groundAt(FIRE.x, FIRE.z) + 8, FIRE.z);
     ctx.world.scene.add(this.glow);
     this.capacity = ctx.af.payloadMax;
     this.amount = this.capacity;
@@ -271,7 +281,7 @@ class FireMission extends Mission {
       this.place(h, VILLAGE.x + Math.cos(a) * r, VILLAGE.z + Math.sin(a) * r);
       w.addThermal(h, 0.2);
     }
-    ctx.say("Очаг — на севере за рекой. Сброс воды: ПРОБЕЛ. Забор воды: зависните низко над рекой", "info");
+    ctx.say(`Очаг — ${whereFromBase(FIRE.x, FIRE.z)}, за рекой. Сброс воды: ПРОБЕЛ. Забор воды: зависните низко над рекой`, "info");
   }
 
   private cellAt(x: number, z: number): number {
@@ -696,7 +706,7 @@ class SearchMission extends Mission {
 
 // ───────────────────────────── 4. Агромиссия ─────────────────────────────
 
-const FIELD = { x: 0, z: -150, hx: 70, hz: 40 };
+let FIELD = { x: 0, z: -150, hx: 70, hz: 40 };
 
 class AgroMission extends Mission {
   private cs = 2.5; private nx: number; private nz: number;
@@ -842,7 +852,7 @@ class AgroMission extends Mission {
 
 // ───────────────────────────── 5. Доставка медикаментов ─────────────────────────────
 
-const HAMLET = { x: 140, z: -640 };
+let HAMLET = { x: 140, z: -640 };
 
 class DeliveryMission extends Mission {
   private delivered = false; private precision = 0; private timer = 0; private hintT = -10;
@@ -866,7 +876,7 @@ class DeliveryMission extends Mission {
     }
     this.snow = new Particles(ctx.world.scene, { max: 1400, drag: 2.5 });
     this.capacity = 1; this.amount = 1;
-    ctx.say("Деревня — 650 м на север за рекой, красный маяк. Сядьте на площадку с крестом", "info");
+    ctx.say(`Деревня — ${whereFromBase(HAMLET.x, HAMLET.z)} за рекой, красный маяк. Сядьте на площадку с крестом`, "info");
   }
   update(dt: number) {
     this.time += dt;
@@ -915,7 +925,7 @@ class DeliveryMission extends Mission {
 
 // ───────────────────────────── 6. Обследование ЛЭП ─────────────────────────────
 
-const PYLONS: [number, number][] = [0, 1, 2, 3, 4, 5].map((k) => [-90 + 88 * k, -100 - 92 * k + 22 * Math.sin(k * 1.3)]);
+let PYLONS: [number, number][] = [0, 1, 2, 3, 4, 5].map((k) => [-90 + 88 * k, -100 - 92 * k + 22 * Math.sin(k * 1.3)]);
 const PYLON_H = 26;
 
 class PowerlineMission extends Mission {
@@ -1066,8 +1076,8 @@ const WINTER_EVENING: Palette = {
 };
 
 // трасса нефтепровода: от базы на северо-восток с поворотами
-const PIPE: [number, number][] = [[30, -30], [90, -160], [70, -300], [160, -420], [230, -560], [210, -690]];
-const pipeCorridor = PIPE.slice(0, -1).map(([x, z], i) => ({ x1: x, z1: z, x2: PIPE[i + 1][0], z2: PIPE[i + 1][1], w: 11 }));
+let PIPE: [number, number][] = [[30, -30], [90, -160], [70, -300], [160, -420], [230, -560], [210, -690]];
+let pipeCorridor = () => PIPE.slice(0, -1).map(([x, z], i) => ({ x1: x, z1: z, x2: PIPE[i + 1][0], z2: PIPE[i + 1][1], w: 11 }));
 
 /** Ближайшая точка ломаной: расстояние и параметр «вдоль трассы» в метрах. */
 function nearestOnPath(path: [number, number][], x: number, z: number) {
@@ -1303,7 +1313,7 @@ class ReindeerMission extends Mission {
     super(ctx);
     const { world, rnd } = ctx;
     this.n = 38 + Math.floor(rnd() * 30);
-    const a0 = rnd() * 1.4 - 0.7, d0 = 330 + rnd() * 160;
+    const a0 = rnd() * 3.6 - 1.8, d0 = 330 + rnd() * 140;
     this.center.set(Math.sin(a0) * d0, -Math.cos(a0) * d0);
     this.drift = rnd() * 6.283;
     this.pos = new Float32Array(this.n * 2); this.head = new Float32Array(this.n); this.speed = new Float32Array(this.n);
@@ -1341,7 +1351,7 @@ class ReindeerMission extends Mission {
       this.herd = herd;
     }
     this.sync();
-    ctx.say("Стадо пасётся в 300–500 м к северу. Снимайте сверху с высоты 30–120 м, камера вниз", "info");
+    ctx.say(`Стадо пасётся ${whereFromBase(this.center.x, this.center.y)}. Снимайте сверху с высоты 30–120 м, камера вниз`, "info");
   }
 
   private sync() {
@@ -1463,7 +1473,7 @@ class ReindeerMission extends Mission {
 
 // ───────────────────────────── 9. Тепловизионный аудит домов ─────────────────────────────
 
-const BLOCK = { x: 0, z: -230 };
+let BLOCK = { x: 0, z: -230 };
 
 interface AuditHouse { obj: THREE.Object3D; c: THREE.Vector3; top: number; defect: string | null; shot: boolean; thermal: boolean }
 
@@ -1506,7 +1516,7 @@ class HeatAuditMission extends Mission {
       }
       this.houses.push({ obj: h, c: box.getCenter(new THREE.Vector3()), top: box.max.y, defect, shot: false, thermal: false });
     }
-    ctx.say("Квартал из 12 домов в 230 м к северу. Снимайте каждый дом в тепловизоре (T) с 10–45 м", "info");
+    ctx.say(`Квартал из 12 домов — ${whereFromBase(BLOCK.x, BLOCK.z)}. Снимайте каждый дом в тепловизоре (T) с 10–45 м`, "info");
   }
 
   update(dt: number, action: Action) {
@@ -1801,7 +1811,7 @@ const NIGHT: Palette = {
 
 // ───────────────────────────── 10. Ледоход и затор на Печоре ─────────────────────────────
 
-const ICE_RIVER = { z0: -260, amp: 45, wl: 240, width: 40 };
+let ICE_RIVER = { z0: -260, amp: 45, wl: 240, width: 40 };
 
 class IceJamMission extends Mission {
   private floes: THREE.InstancedMesh;
@@ -1938,7 +1948,7 @@ class LoggingMission extends Mission {
       const a = a0 + (rnd() - 0.5) * 0.9, d = d0 + rnd() * 120;
       return new THREE.Vector3(Math.sin(a) * d, 0, -Math.cos(a) * d);
     };
-    this.cut = spot(rnd() < 0.5 ? -0.6 : 0.6, 360);
+    this.cut = spot(LOG_ROT + (rnd() < 0.5 ? -0.6 : 0.6), 360);
     this.legal = spot(rnd() < 0.5 ? 2.2 : -2.2, 280);
     const near: number[] = [];
     const clear = (c: THREE.Vector3, r: number, stumps: boolean) => {
@@ -2011,7 +2021,7 @@ class LoggingMission extends Mission {
     };
   }
   drawMap(m: MapDraw) {
-    m.ring(0, -420, 230, "#ffd700");
+    m.ring(Math.sin(LOG_ROT) * 420, -Math.cos(LOG_ROT) * 420, 230, "#ffd700");
     if (this.cutShot) m.ring(this.cut.x, this.cut.z, 30, "#ff4444");
     if (this.legalChecked) m.ring(this.legal.x, this.legal.z, 26, "#00ffaa");
   }
@@ -2019,8 +2029,8 @@ class LoggingMission extends Mission {
 
 // ───────────────────────────── 12. Газовый промысел (Вуктыл) ─────────────────────────────
 
-const PADS: [number, number][] = [[60, -260], [-140, -420], [170, -520]];
-const GAS_PIPE: [number, number][] = [[0, -40], [60, -260], [-140, -420], [60, -260], [170, -520]];
+let PADS: [number, number][] = [[60, -260], [-140, -420], [170, -520]];
+let GAS_PIPE: [number, number][] = [[0, -40], [60, -260], [-140, -420], [60, -260], [170, -520]];
 
 class GasFieldMission extends Mission {
   private leak: GasSource;
@@ -2118,7 +2128,7 @@ class GasFieldMission extends Mission {
 
 class FloeRescueMission extends Mission {
   private floe: THREE.Group;
-  private s = -420;
+  private s = FLOE_S;
   private r = 9;
   private drops: Drops;
   private ok = 0; private lost = 0; private found = false;
@@ -2184,12 +2194,12 @@ class FloeRescueMission extends Mission {
   summary() {
     return { score: clamp(100 - this.lost * 12 - Math.max(0, this.time - 240) / 4, 10, 100), rows: [["Комплектов на льду", String(this.ok)], ["Мимо", String(this.lost)], ["Время", fmtTime(this.time)]] as [string, string][] };
   }
-  drawMap(m: MapDraw) { if (this.found) m.dot(this.floe.position.x, this.floe.position.z, "#ff4444", 5); else m.ring(-250, this.ctx.world.riverZ(-250), 220, "#ffd700"); }
+  drawMap(m: MapDraw) { if (this.found) m.dot(this.floe.position.x, this.floe.position.z, "#ff4444", 5); else m.ring(FLOE_S + 170, this.ctx.world.riverZ(FLOE_S + 170), 220, "#ffd700"); }
 }
 
 // ───────────────────────────── 14. ДТП на трассе: дефибриллятор ─────────────────────────────
 
-const HIGHWAY: [number, number][] = [[-650, 60], [-300, -40], [0, -120], [260, -260], [420, -520], [520, -760]];
+let HIGHWAY: [number, number][] = [[-650, 60], [-300, -40], [0, -120], [260, -260], [420, -520], [520, -760]];
 
 class AedMission extends Mission {
   private road!: ReturnType<typeof makeRoad>;
@@ -2259,7 +2269,7 @@ class AedMission extends Mission {
 
 // ───────────────────────────── 15. Почта по сёлам ─────────────────────────────
 
-const STOPS: { x: number; z: number; name: string }[] = [
+let STOPS: { x: number; z: number; name: string }[] = [
   { x: -380, z: -300, name: "Чукчино" }, { x: 120, z: -560, name: "Окунев Нос" }, { x: 430, z: -250, name: "Загривочная" }, { x: 300, z: 230, name: "Филипповская" },
 ];
 
@@ -2323,7 +2333,7 @@ class PostMission extends Mission {
 
 // ───────────────────────────── 16. Аэрофотосъёмка для кадастра ─────────────────────────────
 
-const AREA = { x: 0, z: -260, hx: 110, hz: 80 };
+let AREA = { x: 0, z: -260, hx: 110, hz: 80 };
 
 class MappingMission extends Mission {
   private cs = 4; private nx: number; private nz: number;
@@ -2389,13 +2399,14 @@ class MappingMission extends Mission {
 
 // ───────────────────────────── 17. Обработка от клещей ─────────────────────────────
 
-const CAMP = { x: 0, z: -170, hx: 50, hz: 32 };
+let CAMP = { x: 0, z: -170, hx: 50, hz: 32 };
 
 class TickMission extends AgroMission {
   constructor(ctx: Ctx) {
     super(ctx, CAMP, false);
     const r = mulberry32(23);
-    for (const [x, z] of [[-70, -150], [70, -190], [-20, -230], [40, -120]]) {
+    for (const [ox, oz] of [[-70, 20], [70, -20], [-20, -60], [40, 50]]) {
+      const x = CAMP.x + ox, z = CAMP.z + oz;
       const h = makeHouse(r, false);
       h.rotation.y = r() * 3;
       this.place(h, x, z);
@@ -2409,7 +2420,11 @@ class TickMission extends AgroMission {
 
 // ───────────────────────────── 18. Медведь у посёлка ─────────────────────────────
 
-const SETTLE = { x: 0, z: -230 };
+let SETTLE = { x: 0, z: -230 };
+/** Поворот района вырубки и стартовая точка льдины на реке. */
+let LOG_ROT = 0;
+let FLOE_S = -420;
+let FLOE_RIVER = { z0: -150, amp: 40, wl: 240, width: 44 };
 
 class BearMission extends Mission {
   private bear: THREE.Group;
@@ -2487,7 +2502,120 @@ class BearMission extends Mission {
   }
 }
 
-const corridor = PYLONS.slice(0, -1).map(([x, z], i) => ({ x1: x, z1: z, x2: PYLONS[i + 1][0], z2: PYLONS[i + 1][1], w: 17 }));
+const corridor = () => PYLONS.slice(0, -1).map(([x, z], i) => ({ x1: x, z1: z, x2: PYLONS[i + 1][0], z2: PYLONS[i + 1][1], w: 17 }));
+
+// ───────────────────────────── случайная раскладка ─────────────────────────────
+
+/** Русло реки так же, как его строит мир (нужно, чтобы не ставить объекты в воду). */
+const riverZOf = (r: { z0: number; amp: number; wl: number }, x: number) => r.z0 + r.amp * Math.sin(x / r.wl) + r.amp * 0.35 * Math.sin(x / (r.wl * 0.37) + 1.7);
+const DEG = Math.PI / 180;
+
+/**
+ * Перед каждым вылетом места заданий выбираются заново: кольца, очаг и посёлок, поле, хутор, ЛЭП,
+ * трубопровод, кусты скважин, трасса, сёла, участки — с учётом рек и рельефа.
+ */
+export function rollLayouts(R: () => number = Math.random) {
+  const rr = (a: number, b: number) => a + R() * (b - a);
+  const north = () => rr(-150, -30) * DEG; // направление «от базы на север» с разбросом
+  const at = (phi: number, d: number): [number, number] => [Math.cos(phi) * d, Math.sin(phi) * d];
+
+  // 1. учебный полигон: шесть колец по эллипсу в случайной стороне
+  {
+    const phi = north(), cx = Math.cos(phi) * 115, cz = Math.sin(phi) * 115, a = rr(80, 105), b = rr(55, 75), dir = R() < 0.5 ? 1 : -1;
+    const t0 = phi + Math.PI;
+    GATES = [0, 1, 2, 3, 4, 5].map((k) => {
+      const t = t0 + dir * (k + 0.55) * (Math.PI / 3);
+      const lx = a * Math.cos(t - phi), lz = b * Math.sin(t - phi);
+      const x = cx + lx * Math.cos(phi) - lz * Math.sin(phi), z = cz + lx * Math.sin(phi) + lz * Math.cos(phi);
+      return [Math.round(x), Math.round(rr(8, 24)), Math.round(z)] as [number, number, number];
+    });
+  }
+  // 2. пожар за рекой, посёлок по одну из сторон
+  {
+    const west = R() < 0.5;
+    FIRE = { x: rr(-140, 140), z: rr(-470, -390), west };
+    VILLAGE = { x: FIRE.x + (west ? -1 : 1) * rr(190, 235), z: FIRE.z + rr(-40, 40) };
+  }
+  // 3. поле агромиссии
+  FIELD = { ...FIELD, x: rr(-110, 110), z: rr(-185, -125) };
+  // 4. хутор за широкой рекой — не у самой воды
+  {
+    const riv = { z0: -330, amp: 55, wl: 230 };
+    for (let i = 0; i < 60; i++) {
+      const [x, z] = at(rr(-140, -40) * DEG, rr(560, 700));
+      HAMLET = { x, z };
+      if (Math.abs(z - riverZOf(riv, x)) > 130) break;
+    }
+  }
+  // 5. ЛЭП: шесть опор по ломаной в случайном направлении
+  {
+    const phi0 = north(), [sx, sz] = at(phi0, rr(105, 140)), head = phi0 + rr(-0.45, 0.45);
+    PYLONS = [0, 1, 2, 3, 4, 5].map((k) => {
+      const d = k * 125, wob = 18 * Math.sin(k * 1.3 + R() * 6);
+      return [sx + Math.cos(head) * d - Math.sin(head) * wob, sz + Math.sin(head) * d + Math.cos(head) * wob] as [number, number];
+    });
+  }
+  // 6. нефтепровод от базы с поворотами
+  {
+    let head = north(), [x, z] = at(head, 42);
+    PIPE = [[x, z]];
+    for (let k = 1; k < 6; k++) {
+      head += rr(-0.45, 0.45);
+      const L = rr(125, 150);
+      x += Math.cos(head) * L; z += Math.sin(head) * L;
+      if (z > -60) { head = -Math.PI / 2; z = Math.min(z, -60); }
+      PIPE.push([x, z]);
+    }
+  }
+  // 7. квартал для тепловизионного аудита
+  BLOCK = { x: rr(-150, 150), z: rr(-320, -200) };
+  // 8. русло ледохода
+  ICE_RIVER = { ...ICE_RIVER, z0: rr(-300, -225), amp: rr(30, 55), wl: rr(200, 280) };
+  // 9. кусты газовых скважин и трубопровод между ними
+  {
+    const phi = rr(-130, -50) * DEG, p0 = at(phi, rr(230, 300));
+    const p1: [number, number] = [p0[0] + Math.cos(phi - rr(40, 65) * DEG) * 215, p0[1] + Math.sin(phi - rr(40, 65) * DEG) * 215];
+    const p2: [number, number] = [p0[0] + Math.cos(phi + rr(40, 65) * DEG) * 290, p0[1] + Math.sin(phi + rr(40, 65) * DEG) * 290];
+    PADS = [p0, p1, p2];
+    GAS_PIPE = [at(phi, 40), p0, p1, p0, p2];
+  }
+  // 10. трасса для доставки дефибриллятора: проходит рядом с базой в случайном направлении
+  {
+    const base: [number, number][] = [[-650, 60], [-300, -40], [0, -120], [260, -260], [420, -520], [520, -760]];
+    const th = R() * Math.PI * 2, c = Math.cos(th), sn = Math.sin(th), mir = R() < 0.5 ? -1 : 1;
+    HIGHWAY = base.map(([x, z]) => [(x * mir) * c - z * sn, (x * mir) * sn + z * c] as [number, number]);
+  }
+  // 11. сёла для почты — по разным сторонам, не в реке
+  {
+    const riv = { z0: -80, amp: 60, wl: 240 }, a0 = R() * Math.PI * 2;
+    STOPS = STOPS.map((st, k) => {
+      let x = 0, z = 0;
+      for (let i = 0; i < 60; i++) {
+        [x, z] = at(a0 + k * (Math.PI / 2) + rr(-0.35, 0.35), rr(340, 640));
+        if (Math.abs(z - riverZOf(riv, x)) > 75) break;
+      }
+      return { ...st, x, z };
+    });
+  }
+  // 12. участок для картографирования, 13. база отдыха, 14. посёлок с медведем
+  AREA = { ...AREA, x: rr(-120, 120), z: rr(-320, -230) };
+  CAMP = { ...CAMP, x: rr(-110, 110), z: rr(-215, -150) };
+  SETTLE = (() => { const [x, z] = at(R() * Math.PI * 2, rr(200, 265)); return { x, z }; })();
+  // 15. вырубка — в другом секторе, 16. льдина стартует в другом месте реки
+  LOG_ROT = rr(-0.6, 0.6);
+  FLOE_S = rr(-480, -320);
+  FLOE_RIVER = { ...FLOE_RIVER, z0: rr(-185, -125), amp: rr(28, 48), wl: rr(210, 270) };
+}
+
+/** Миссия для вылета: новая раскладка заданий и новый рельеф/лес. Упражнения курса не меняются. */
+export function freshMission(def: MissionDef, R: () => number = Math.random): MissionDef {
+  if (def.course) return def;
+  rollLayouts(R);
+  const out = { ...def, world: { ...def.world, seed: def.world.seed + 1 + Math.floor(R() * 9973) } };
+  // ветер гонит пожар на посёлок, где бы они ни оказались
+  if (def.id === "fire") out.wind = { ...def.wind, toDeg: (Math.atan2(VILLAGE.x - FIRE.x, -(VILLAGE.z - FIRE.z)) * 180) / Math.PI };
+  return out;
+}
 
 export const MISSIONS: MissionDef[] = [
   {
@@ -2499,10 +2627,10 @@ export const MISSIONS: MissionDef[] = [
       "Попробуйте разные схемы: квадрокоптер резвый, октокоптер инертный — разница чувствуется сразу.",
     ],
     actionLabel: "—", recommended: ["quad"],
-    world: {
+    get world(): WorldCfg { return {
       seed: 11, size: 1400, relief: 9, river: { z0: 270, amp: 50, wl: 230, width: 14 }, flats: [BASE_FLAT],
       clearings: GATES.map(([x, , z]) => ({ x, z, r: 26 })), forestDensity: 0.4, palette: SUMMER,
-    },
+    }; },
     wind: { toDeg: 70, speed: 3, gust: 0.3 }, gimbalPitch: -90, pip: false, payloadLabel: "Груз", payloadUnit: "",
     create: (c) => new TrainingMission(c),
   },
@@ -2510,15 +2638,15 @@ export const MISSIONS: MissionDef[] = [
     id: "fire", title: "Лесной пожар", place: "Троицко-Печорский район, Республика Коми",
     tagline: "Тушение очага в тайге до подхода к посёлку", icon: "Flame", color: "#ff6a10",
     briefing: [
-      "Сухая гроза подожгла ельник в 400 м к северу от лагеря. Ветер западный — огонь идёт на посёлок лесозаготовителей.",
+      "Сухая гроза подожгла ельник за рекой. Ветер гонит огонь на посёлок лесозаготовителей. Место очага каждый раз своё — смотрите карту.",
       "Сбрасывайте воду на кромку пожара с подветренной стороны, воду забирайте зависанием над рекой (ниже 5 м).",
       "Над очагом мощные восходящие потоки, ниже 12 м аппарат перегревается. Дым тепловизору не помеха.",
     ],
     actionLabel: "Сброс воды", recommended: ["octo", "coax"],
-    world: {
+    get world(): WorldCfg { return {
       seed: 23, size: 1400, relief: 13, river: { z0: -170, amp: 42, wl: 240, width: 16 },
       flats: [BASE_FLAT, { x: VILLAGE.x, z: VILLAGE.z, rx: 46, rz: 42 }], clearings: [], forestDensity: 0.85, palette: HAZE,
-    },
+    }; },
     wind: { toDeg: 95, speed: 5, gust: 0.35 }, gimbalPitch: -90, pip: false, payloadLabel: "Вода", payloadUnit: "л",
     create: (c) => new FireMission(c),
   },
@@ -2531,10 +2659,10 @@ export const MISSIONS: MissionDef[] = [
       "Над найденным человеком сбросьте аварийный набор с рацией: он должен лечь не дальше 15 м.",
     ],
     actionLabel: "Сброс набора", recommended: ["hexa", "quad"],
-    world: {
+    get world(): WorldCfg { return {
       seed: 37, size: 1400, relief: 15, river: { z0: 280, amp: 45, wl: 210, width: 13 }, flats: [BASE_FLAT],
       clearings: [], forestDensity: 0.95, palette: DUSK_FOG,
-    },
+    }; },
     wind: { toDeg: 200, speed: 3, gust: 0.3 }, gimbalPitch: -90, pip: true, payloadLabel: "Наборы", payloadUnit: "шт",
     create: (c) => new SearchMission(c),
   },
@@ -2547,11 +2675,11 @@ export const MISSIONS: MissionDef[] = [
       "К северу река: в 30-метровой водоохранной зоне распылять запрещено. Заправка бака — посадкой на базу.",
     ],
     actionLabel: "Опрыскивание", recommended: ["octo", "coax", "hexa"],
-    world: {
+    get world(): WorldCfg { return {
       seed: 41, size: 1400, relief: 5, river: { z0: -265, amp: 12, wl: 200, width: 12 },
       flats: [BASE_FLAT, { x: FIELD.x, z: FIELD.z, rx: FIELD.hx + 8, rz: FIELD.hz + 8 }],
-      clearings: [{ x: 0, z: -60, r: 60 }], forestDensity: 0.3, palette: SUMMER,
-    },
+      clearings: [{ x: FIELD.x * 0.4, z: -60, r: 60 }], forestDensity: 0.3, palette: SUMMER,
+    }; },
     wind: { toDeg: 20, speed: 2.5, gust: 0.3 }, gimbalPitch: -90, pip: false, payloadLabel: "Препарат", payloadUnit: "л",
     create: (c) => new AgroMission(c),
   },
@@ -2560,14 +2688,14 @@ export const MISSIONS: MissionDef[] = [
     tagline: "Медикаменты в деревню, отрезанную ледоходом", icon: "HeartPulse", color: "#ff4444",
     briefing: [
       "Переправу через Печору снесло, вертолёт не поднять по погоде. В фельдшерском пункте ждут 1,5 кг препаратов.",
-      "650 м через реку при порывистом северо-западном ветре. Сядьте на площадку с красным крестом — груз заберут.",
+      "600–700 м через реку при порывистом ветре — деревня каждый раз в своём месте, маяк виден на карте. Сядьте на площадку с красным крестом.",
       "Следите за батареей: обратно лететь против ветра. Оценка зависит от точности посадки.",
     ],
     actionLabel: "—", recommended: ["quad", "coax"],
-    world: {
+    get world(): WorldCfg { return {
       seed: 53, size: 1700, relief: 16, river: { z0: -330, amp: 55, wl: 230, width: 30 },
       flats: [BASE_FLAT, { x: HAMLET.x, z: HAMLET.z, rx: 52, rz: 48 }], clearings: [], forestDensity: 0.65, palette: WINTER,
-    },
+    }; },
     wind: { toDeg: 135, speed: 7, gust: 0.5 }, gimbalPitch: -90, pip: false, payloadLabel: "Груз", payloadUnit: "",
     create: (c) => new DeliveryMission(c),
   },
@@ -2580,11 +2708,11 @@ export const MISSIONS: MissionDef[] = [
       "Провода почти не видны — держитесь сбоку от линии и не пролетайте между опорами ниже 30 м.",
     ],
     actionLabel: "Снимок", recommended: ["quad", "hexa"],
-    world: {
+    get world(): WorldCfg { return {
       seed: 67, size: 1400, relief: 11, river: { z0: 330, amp: 40, wl: 220, width: 13 },
       flats: [BASE_FLAT, ...PYLONS.map(([x, z]) => ({ x, z, rx: 6, rz: 6 }))],
-      clearings: [], corridors: corridor, forestDensity: 0.8, palette: OVERCAST,
-    },
+      clearings: [], corridors: corridor(), forestDensity: 0.8, palette: OVERCAST,
+    }; },
     wind: { toDeg: 250, speed: 4, gust: 0.4 }, gimbalPitch: -6, pip: true, payloadLabel: "Камера", payloadUnit: "",
     create: (c) => new PowerlineMission(c),
   },
@@ -2597,10 +2725,10 @@ export const MISSIONS: MissionDef[] = [
       "Не путайте с болотным газом: там метан есть, а нефти нет. Найдя пятно, наведите камеру вниз и сделайте снимок — координаты уйдут аварийной бригаде.",
     ],
     actionLabel: "Снимок", recommended: ["hexa", "quad"],
-    world: {
+    get world(): WorldCfg { return {
       seed: 83, size: 1500, relief: 6, river: { z0: -480, amp: 50, wl: 200, width: 12 }, flats: [BASE_FLAT],
-      clearings: [], corridors: pipeCorridor, forestDensity: 0.22, palette: TUNDRA,
-    },
+      clearings: [], corridors: pipeCorridor(), forestDensity: 0.22, palette: TUNDRA,
+    }; },
     wind: { toDeg: 60, speed: 4, gust: 0.35 }, gimbalPitch: -90, pip: true, payloadLabel: "Датчик", payloadUnit: "",
     create: (c) => new OilLeakMission(c),
   },
@@ -2613,10 +2741,10 @@ export const MISSIONS: MissionDef[] = [
       "Ниже 30 м над стадом олени пугаются и разбегаются — это вред хозяйству и штраф к оценке.",
     ],
     actionLabel: "Кадр", recommended: ["quad", "hexa"],
-    world: {
+    get world(): WorldCfg { return {
       seed: 97, size: 1500, relief: 7, river: { z0: 520, amp: 40, wl: 230, width: 10 }, flats: [BASE_FLAT],
       clearings: [], forestDensity: 0.06, palette: TUNDRA,
-    },
+    }; },
     wind: { toDeg: 200, speed: 6, gust: 0.4 }, gimbalPitch: -90, pip: true, payloadLabel: "Камера", payloadUnit: "",
     create: (c) => new ReindeerMission(c),
   },
@@ -2629,10 +2757,10 @@ export const MISSIONS: MissionDef[] = [
       "Над крышами печные дымы — не задерживайтесь в них, а провода и антенны во дворах держите в поле зрения.",
     ],
     actionLabel: "Снимок", recommended: ["quad", "hexa"],
-    world: {
+    get world(): WorldCfg { return {
       seed: 101, size: 1400, relief: 5, river: { z0: 360, amp: 30, wl: 240, width: 18 },
       flats: [BASE_FLAT, { x: BLOCK.x, z: BLOCK.z, rx: 80, rz: 66 }], clearings: [], forestDensity: 0.5, palette: WINTER_EVENING,
-    },
+    }; },
     wind: { toDeg: 110, speed: 3, gust: 0.3 }, gimbalPitch: -25, pip: true, payloadLabel: "Камера", payloadUnit: "",
     create: (c) => new HeatAuditMission(c),
   },
@@ -2645,7 +2773,7 @@ export const MISSIONS: MissionDef[] = [
       "Вдоль реки дует порывистый ветер, над ледяным полем тянет холодом — следите за батареей.",
     ],
     actionLabel: "Снимок", recommended: ["quad", "hexa"],
-    world: { seed: 113, size: 1500, relief: 8, river: ICE_RIVER, flats: [BASE_FLAT], clearings: [], forestDensity: 0.55, palette: SPRING },
+    get world(): WorldCfg { return { seed: 113, size: 1500, relief: 8, river: ICE_RIVER, flats: [BASE_FLAT], clearings: [], forestDensity: 0.55, palette: SPRING }; },
     wind: { toDeg: 80, speed: 6, gust: 0.45 }, gimbalPitch: -25, pip: true, payloadLabel: "Камера", payloadUnit: "",
     create: (c) => new IceJamMission(c),
   },
@@ -2658,7 +2786,7 @@ export const MISSIONS: MissionDef[] = [
       "Не перепутайте с законной лесосекой: у неё аншлаг с номером лесорубочного билета.",
     ],
     actionLabel: "Снимок", recommended: ["quad", "hexa"],
-    world: { seed: 127, size: 1400, relief: 12, river: { z0: 320, amp: 40, wl: 220, width: 13 }, flats: [BASE_FLAT], clearings: [], forestDensity: 0.95, palette: OVERCAST },
+    get world(): WorldCfg { return { seed: 127, size: 1400, relief: 12, river: { z0: 320, amp: 40, wl: 220, width: 13 }, flats: [BASE_FLAT], clearings: [], forestDensity: 0.95, palette: OVERCAST }; },
     wind: { toDeg: 150, speed: 3, gust: 0.3 }, gimbalPitch: -90, pip: true, payloadLabel: "Камера", payloadUnit: "",
     create: (c) => new LoggingMission(c),
   },
@@ -2671,11 +2799,11 @@ export const MISSIONS: MissionDef[] = [
       "Утечку ищите газоанализатором на высоте до 25 м: шлейф метана сносит ветром.",
     ],
     actionLabel: "Снимок", recommended: ["hexa", "quad"],
-    world: {
+    get world(): WorldCfg { return {
       seed: 131, size: 1400, relief: 10, river: { z0: 340, amp: 40, wl: 220, width: 14 },
       flats: [BASE_FLAT, ...PADS.map(([x, z]) => ({ x, z, rx: 24, rz: 14 })), { x: PADS[0][0] + 45, z: PADS[0][1] - 30, rx: 10, rz: 10 }],
       clearings: [], corridors: pathCorridor(GAS_PIPE, 9), forestDensity: 0.6, palette: OVERCAST,
-    },
+    }; },
     wind: { toDeg: 30, speed: 4, gust: 0.35 }, gimbalPitch: -20, pip: true, payloadLabel: "Датчик", payloadUnit: "",
     create: (c) => new GasFieldMission(c),
   },
@@ -2688,7 +2816,7 @@ export const MISSIONS: MissionDef[] = [
       "Если льдину вынесет на перекат раньше, чем рыбаки получат помощь, — задача провалена.",
     ],
     actionLabel: "Сброс", recommended: ["hexa", "coax"],
-    world: { seed: 137, size: 1500, relief: 7, river: { z0: -150, amp: 40, wl: 240, width: 44 }, flats: [BASE_FLAT], clearings: [], forestDensity: 0.6, palette: SPRING },
+    get world(): WorldCfg { return { seed: 137, size: 1500, relief: 7, river: FLOE_RIVER, flats: [BASE_FLAT], clearings: [], forestDensity: 0.6, palette: SPRING }; },
     wind: { toDeg: 100, speed: 5, gust: 0.4 }, gimbalPitch: -45, pip: true, payloadLabel: "Комплекты", payloadUnit: "шт",
     create: (c) => new FloeRescueMission(c),
   },
@@ -2701,7 +2829,7 @@ export const MISSIONS: MissionDef[] = [
       "Над трассой нет леса — летите напрямую, но помните про ветер и запас батареи.",
     ],
     actionLabel: "—", recommended: ["quad"],
-    world: { seed: 149, size: 1600, relief: 10, flats: [BASE_FLAT], clearings: [], corridors: pathCorridor(HIGHWAY, 15), forestDensity: 0.75, palette: SUMMER },
+    get world(): WorldCfg { return { seed: 149, size: 1600, relief: 10, flats: [BASE_FLAT], clearings: [], corridors: pathCorridor(HIGHWAY, 15), forestDensity: 0.75, palette: SUMMER }; },
     wind: { toDeg: 240, speed: 4, gust: 0.4 }, gimbalPitch: -30, pip: false, payloadLabel: "Груз", payloadUnit: "",
     create: (c) => new AedMission(c),
   },
@@ -2714,10 +2842,10 @@ export const MISSIONS: MissionDef[] = [
       "Каждая замена батареи на базе снижает оценку — планируйте маршрут.",
     ],
     actionLabel: "—", recommended: ["hexa", "quad"],
-    world: {
+    get world(): WorldCfg { return {
       seed: 151, size: 1500, relief: 9, river: { z0: -80, amp: 60, wl: 240, width: 22 },
       flats: [BASE_FLAT, ...STOPS.map((s) => ({ x: s.x, z: s.z, rx: 30, rz: 30 }))], clearings: [], forestDensity: 0.6, palette: SUMMER,
-    },
+    }; },
     wind: { toDeg: 300, speed: 5, gust: 0.4 }, gimbalPitch: -30, pip: false, payloadLabel: "Посылки", payloadUnit: "шт",
     create: (c) => new PostMission(c),
   },
@@ -2730,10 +2858,10 @@ export const MISSIONS: MissionDef[] = [
       "Каждая точка должна попасть минимум в два кадра (перекрытие). Летайте параллельными галсами — так и снимают настоящие планы.",
     ],
     actionLabel: "Съёмка", recommended: ["quad", "hexa"],
-    world: {
+    get world(): WorldCfg { return {
       seed: 157, size: 1400, relief: 6, river: { z0: 260, amp: 30, wl: 220, width: 14 },
       flats: [BASE_FLAT, { x: AREA.x, z: AREA.z, rx: AREA.hx + 10, rz: AREA.hz + 10 }], clearings: [], forestDensity: 0.5, palette: SUMMER,
-    },
+    }; },
     wind: { toDeg: 200, speed: 4, gust: 0.35 }, gimbalPitch: -90, pip: true, payloadLabel: "Камера", payloadUnit: "",
     create: (c) => new MappingMission(c),
   },
@@ -2746,11 +2874,11 @@ export const MISSIONS: MissionDef[] = [
       "Пропуски и двойные дозы снижают оценку, заправка — на базе.",
     ],
     actionLabel: "Опрыскивание", recommended: ["hexa", "coax"],
-    world: {
+    get world(): WorldCfg { return {
       seed: 163, size: 1400, relief: 5, flats: [BASE_FLAT],
       // лужайки между корпусами; деревья остаются группами по краям и между полянами
-      clearings: [{ x: -28, z: -170, r: 38 }, { x: 28, z: -170, r: 38 }, { x: 0, z: -170, r: 30 }], forestDensity: 0.32, palette: SUMMER,
-    },
+      clearings: [{ x: CAMP.x - 28, z: CAMP.z, r: 38 }, { x: CAMP.x + 28, z: CAMP.z, r: 38 }, { x: CAMP.x, z: CAMP.z, r: 30 }], forestDensity: 0.32, palette: SUMMER,
+    }; },
     wind: { toDeg: 70, speed: 2, gust: 0.3 }, gimbalPitch: -90, pip: false, payloadLabel: "Препарат", payloadUnit: "л",
     create: (c) => new TickMission(c),
   },
@@ -2763,7 +2891,7 @@ export const MISSIONS: MissionDef[] = [
       "Держите зверя в кадре, пока он не уйдёт на 330 м от посёлка. Не опускайтесь ниже 3 м рядом с ним.",
     ],
     actionLabel: "—", recommended: ["quad", "hexa"],
-    world: { seed: 167, size: 1400, relief: 9, flats: [BASE_FLAT, { x: SETTLE.x, z: SETTLE.z, rx: 55, rz: 55 }], clearings: [], forestDensity: 0.75, palette: NIGHT },
+    get world(): WorldCfg { return { seed: 167, size: 1400, relief: 9, flats: [BASE_FLAT, { x: SETTLE.x, z: SETTLE.z, rx: 55, rz: 55 }], clearings: [], forestDensity: 0.75, palette: NIGHT }; },
     wind: { toDeg: 120, speed: 2, gust: 0.3 }, gimbalPitch: -35, pip: true, payloadLabel: "Камера", payloadUnit: "",
     create: (c) => new BearMission(c),
   },

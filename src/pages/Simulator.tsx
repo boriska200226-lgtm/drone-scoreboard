@@ -4,10 +4,11 @@ import { Airframe } from "@/sim/airframes";
 import { assemble, loadBuilds } from "@/sim/build";
 import { CAM_LABEL, CamMode, CAMS, Command, Fault, Hud, MODES, SimEngine, SimResult } from "@/sim/engine";
 import { findMission } from "@/sim/course";
+import { mulberry32 } from "@/sim/noise";
 import { InputConfig, loadInput } from "@/sim/input";
 import { loadModels } from "@/sim/models";
 import { FlightMode, MODE_HINT, MODE_LABEL } from "@/sim/physics";
-import { Difficulty, DIFFICULTY, MissionDef, SayKind, withWeather } from "@/sim/missions";
+import { Difficulty, DIFFICULTY, freshMission, MissionDef, SayKind, withWeather } from "@/sim/missions";
 import type { Quality } from "@/sim/world";
 import Launcher, { Best, LaunchSettings, Stars } from "./sim/Launcher";
 import Debrief from "./sim/Debrief";
@@ -531,7 +532,10 @@ export default function Simulator() {
   const [best, setBest] = useState<Best>(loadBest);
   useEffect(() => { document.title = "БАС Симулятор — миссии беспилотников"; }, []);
   const af = useMemo(() => assemble(settings.af, settings.builds[settings.af]), [settings.af, settings.builds]);
-  const mission = useMemo(() => withWeather(findMission(settings.mission), settings.weather), [settings.mission, settings.weather]);
+  // каждый вылет и каждый перезапуск — новая раскладка заданий
+  const [salt] = useState(() => Math.floor(Math.random() * 1e9));
+  // детерминированно от номера вылета: повторный вызов (StrictMode) даёт ту же раскладку
+  const mission = useMemo(() => withWeather(freshMission(findMission(settings.mission), mulberry32(salt + run * 7919)), settings.weather), [settings.mission, settings.weather, run, salt]);
   if (!run) return <Launcher initial={settings} best={best} onStart={(st) => { setSettings(st); setRun(1); }} />;
   return (
     <Flight key={run} mission={mission} af={af} difficulty={settings.diff} quality={settings.quality}
