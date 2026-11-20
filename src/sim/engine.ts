@@ -889,6 +889,20 @@ export class SimEngine {
         if (fill) { g.fillStyle = color; g.fillRect(X(x0), Y(z0), (x1 - x0) * k + 0.5, (z1 - z0) * k + 0.5); }
         else { g.strokeStyle = color; g.lineWidth = 1.2; g.strokeRect(X(x0), Y(z0), (x1 - x0) * k, (z1 - z0) * k); }
       },
+      text: (x, z, label, color) => {
+        g.font = "bold 9px sans-serif"; g.textAlign = "center"; g.textBaseline = "middle";
+        g.fillStyle = "rgba(0,0,0,0.6)"; g.fillText(label, X(x) + 1, Y(z) + 1);
+        g.fillStyle = color; g.fillText(label, X(x), Y(z));
+      },
+      path: (pts, color, w, dash) => {
+        if (pts.length < 2) return;
+        g.save();
+        g.strokeStyle = color; g.lineWidth = w ? Math.max(1.5, w * k) : 1.2; g.lineCap = "round"; g.lineJoin = "round";
+        if (dash) g.setLineDash([4, 4]);
+        g.beginPath(); g.moveTo(X(pts[0][0]), Y(pts[0][1]));
+        for (let i = 1; i < pts.length; i++) g.lineTo(X(pts[i][0]), Y(pts[i][1]));
+        g.stroke(); g.restore();
+      },
     };
     this.mission.drawMap(draw);
     g.fillStyle = "#ffffff"; g.font = "bold 10px sans-serif"; g.textAlign = "center"; g.textBaseline = "middle";

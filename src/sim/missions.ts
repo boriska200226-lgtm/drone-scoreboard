@@ -26,6 +26,10 @@ export interface MapDraw {
   dot(x: number, z: number, color: string, r?: number): void;
   ring(x: number, z: number, radius: number, color: string): void;
   rect(x0: number, z0: number, x1: number, z1: number, color: string, fill?: boolean): void;
+  /** Подпись на карте. */
+  text?(x: number, z: number, label: string, color: string): void;
+  /** Ломаная (dash — пунктир), w — ширина в метрах, иначе 1.2 px. */
+  path?(pts: [number, number][], color: string, w?: number, dash?: boolean): void;
 }
 
 export interface Ctx {
@@ -548,7 +552,12 @@ class FireMission extends Mission {
 
 // ───────────────────────────── 3. Поиск людей ─────────────────────────────
 
-interface Target { x: number; z: number; y: number; seen: number; found: boolean; supplied: boolean; hx: number; hz: number; label: string }
+interface Target { x: number; z: number; y: number; seen: number; found: boolean; supplied: boolean; label: string }
+
+/** Район поиска: ПНМ (машина грибников) и сетка квадратов штаба вокруг неё. */
+let SEARCH = { car: [0, -170] as [number, number], carYaw: 0, x0: -240, z0: -470, cols: 4, rows: 3, cell: 120 };
+const SQ_COL = "АБВГДЕ";
+const SUB = 10; // шаг учёта прочёсанной площади, м
 
 class SearchMission extends Mission {
   private people: Target[] = [];
@@ -556,53 +565,117 @@ class SearchMission extends Mission {
   private parcels: { mesh: THREE.Group; vel: THREE.Vector3 }[] = [];
   private wasted = 0;
   private scratch: number[] = [];
+  /** Приоритет квадрата штаба: 0 — высокий, 1 — средний, 2 — низкий. */
+  private prio: number[] = [];
+  private seen: Uint8Array;
+  private sqSeen: number[] = [];
+  private sqDone: boolean[] = [];
+  private nsx: number; private nsz: number; private perSq: number;
+  private thermalHint = false;
 
   constructor(ctx: Ctx) {
     super(ctx);
     const { world, rnd } = ctx;
-    const spot = (a0: number, a1: number, d0: number, d1: number): [number, number] => {
-      for (let k = 0; k < 40; k++) {
-        const a = ((a0 + rnd() * (a1 - a0)) * Math.PI) / 180, d = d0 + rnd() * (d1 - d0);
-        const x = d * Math.sin(a), z = -d * Math.cos(a);
-        if (world.groundAt(x, z) > 1.2) return [x, z];
-      }
-      return [0, -d0];
-    };
+    const S = SEARCH, nSq = S.cols * S.rows;
+    this.perSq = (S.cell / SUB) ** 2;
+    this.nsx = S.cols * S.cell / SUB; this.nsz = S.rows * S.cell / SUB;
+    this.seen = new Uint8Array(this.nsx * this.nsz);
+    // приоритеты по удалённости от ПНМ: люди обычно в пределах первых сотен метров
+    const order = [...Array(nSq).keys()].sort((a, b) => this.sqDist(a) - this.sqDist(b));
+    order.forEach((q, k) => { this.prio[q] = k < 4 ? 0 : k < 8 ? 1 : 2; });
+    for (let q = 0; q < nSq; q++) { this.sqSeen[q] = 0; this.sqDone[q] = false; }
+
     const clear = (x: number, z: number, r: number) => {
       for (const i of world.treesNear(x, z, r, this.scratch)) {
         if (Math.hypot(world.treeX[i] - x, world.treeZ[i] - z) < r) world.removeTree(i);
       }
     };
+    const inSquare = (q: number): [number, number] => {
+      const cx = S.x0 + (q % S.cols) * S.cell, cz = S.z0 + Math.floor(q / S.cols) * S.cell;
+      for (let k = 0; k < 40; k++) {
+        const x = cx + 15 + rnd() * (S.cell - 30), z = cz + 15 + rnd() * (S.cell - 30);
+        if (world.groundAt(x, z) > 1.2 && Math.hypot(x - S.car[0], z - S.car[1]) > 40) return [x, z];
+      }
+      return [cx + S.cell / 2, cz + S.cell / 2];
+    };
+    const pick = (list: number[]) => list.splice(Math.floor(rnd() * list.length), 1)[0];
+    const hi = order.slice(0, 4), mid = order.slice(4, 8);
+    const squares = [pick(hi), pick(hi), pick(mid)];
+
+    // машина на лесной дороге — последнее известное место
+    const car = makeVan();
+    car.rotation.y = S.carYaw;
+    clear(S.car[0], S.car[1], 7);
+    this.place(car, S.car[0], S.car[1]);
+
     const jackets = [0xd94a2b, 0x2b6fd9, 0xd9b02b];
-    for (let i = 0; i < 3; i++) {
-      const [x, z] = spot(-72 + i * 48, -72 + (i + 1) * 48, 240, 480);
+    squares.forEach((q, i) => {
+      const [x, z] = inSquare(q);
       clear(x, z, 3.5);
       const p = makePerson(jackets[i]);
       if (i === 1) { p.rotation.z = Math.PI / 2; p.position.y = 0.3; }
       this.place(p, x, z, i === 1 ? 0.3 : 0);
       world.addThermal(p, 1);
-      const ha = rnd() * 6.28, hd = rnd() * 70;
-      this.people.push({ x, z, y: p.position.y, seen: 0, found: false, supplied: false, hx: x + Math.cos(ha) * hd, hz: z + Math.sin(ha) * hd, label: `Человек ${i + 1}` });
-    }
+      this.people.push({ x, z, y: p.position.y, seen: 0, found: false, supplied: false, label: `Человек ${i + 1}` });
+    });
     const kinds: ("moose" | "bear")[] = ["moose", "bear", "moose"];
     kinds.forEach((kind) => {
-      const [x, z] = spot(-80, 80, 150, 520);
+      const [x, z] = inSquare(Math.floor(rnd() * nSq));
       clear(x, z, 4);
       const a = makeAnimal(kind);
       a.rotation.y = rnd() * 6;
       this.place(a, x, z);
       world.addThermal(a, 0.85);
-      this.decoys.push({ x, z, y: a.position.y, seen: 0, found: false, supplied: false, hx: 0, hz: 0, label: kind === "moose" ? "лось" : "медведь" });
+      this.decoys.push({ x, z, y: a.position.y, seen: 0, found: false, supplied: false, label: kind === "moose" ? "лось" : "медведь" });
     });
-    const [fx, fz] = spot(-60, 60, 200, 420);
+    const [fx, fz] = inSquare(order[Math.floor(rnd() * 6)]);
     clear(fx, fz, 5);
     const ember = new THREE.Mesh(new THREE.SphereGeometry(0.5, 8, 6), new THREE.MeshBasicMaterial({ color: 0xff7a22 }));
     this.place(ember, fx, fz, 0.2);
     world.addThermal(ember, 1);
-    this.decoys.push({ x: fx, z: fz, y: ember.position.y, seen: 0, found: false, supplied: false, hx: 0, hz: 0, label: "брошенное кострище" });
+    this.decoys.push({ x: fx, z: fz, y: ember.position.y, seen: 0, found: false, supplied: false, label: "брошенное кострище" });
 
     this.capacity = 4; this.amount = 4;
-    ctx.say("Тепловизор: T. Ищите людей в жёлтых секторах, затем сбросьте набор: ПРОБЕЛ", "info");
+    ctx.say(`ПНМ — машина ${whereFromBase(S.car[0], S.car[1])}. Начинайте с оранжевых квадратов, тепловизор: T`, "info");
+  }
+
+  private sqName(q: number) { return `${SQ_COL[q % SEARCH.cols]}${Math.floor(q / SEARCH.cols) + 1}`; }
+  private sqCenter(q: number): [number, number] {
+    const S = SEARCH;
+    return [S.x0 + ((q % S.cols) + 0.5) * S.cell, S.z0 + (Math.floor(q / S.cols) + 0.5) * S.cell];
+  }
+  private sqDist(q: number) { const [x, z] = this.sqCenter(q); return Math.hypot(x - SEARCH.car[0], z - SEARCH.car[1]); }
+  private sqOf(x: number, z: number) {
+    const S = SEARCH, i = Math.floor((x - S.x0) / S.cell), j = Math.floor((z - S.z0) / S.cell);
+    return i < 0 || j < 0 || i >= S.cols || j >= S.rows ? -1 : j * S.cols + i;
+  }
+
+  /** Отмечает полосу земли, которую сейчас реально видит тепловизор. */
+  private sweep() {
+    const d = this.ctx.drone, dir = this.ctx.camDir(), agl = this.agl();
+    if (agl < 12 || dir.y > -0.75) return;
+    if (!this.ctx.thermal()) {
+      if (!this.thermalHint && this.sqOf(d.pos.x, d.pos.z) >= 0) { this.thermalHint = true; this.ctx.say("В тумане глазом не прочесать — включите тепловизор (T)", "warn"); }
+      return;
+    }
+    const t = agl / -dir.y, cx = d.pos.x + dir.x * t, cz = d.pos.z + dir.z * t;
+    const r = Math.min(agl * 0.39, Math.sqrt(Math.max(0, 100 * 100 - agl * agl)));
+    if (r < 3) return;
+    const S = SEARCH;
+    const i0 = Math.max(0, Math.floor((cx - r - S.x0) / SUB)), i1 = Math.min(this.nsx - 1, Math.floor((cx + r - S.x0) / SUB));
+    const j0 = Math.max(0, Math.floor((cz - r - S.z0) / SUB)), j1 = Math.min(this.nsz - 1, Math.floor((cz + r - S.z0) / SUB));
+    for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
+      const k = j * this.nsx + i;
+      if (this.seen[k]) continue;
+      const x = S.x0 + (i + 0.5) * SUB, z = S.z0 + (j + 0.5) * SUB;
+      if ((x - cx) ** 2 + (z - cz) ** 2 > r * r) continue;
+      this.seen[k] = 1;
+      const q = Math.floor(j * SUB / S.cell) * S.cols + Math.floor(i * SUB / S.cell);
+      if (++this.sqSeen[q] >= this.perSq * 0.8 && !this.sqDone[q]) {
+        this.sqDone[q] = true;
+        this.ctx.say(`Квадрат ${this.sqName(q)} прочёсан`, "info");
+      }
+    }
   }
 
   private scan(t: Target, dt: number, dir: THREE.Vector3): boolean {
@@ -621,6 +694,7 @@ class SearchMission extends Mission {
     this.time += dt;
     const { drone, world } = this.ctx;
     const dir = this.ctx.camDir();
+    this.sweep();
     for (const p of this.people) {
       if (this.scan(p, dt, dir)) {
         this.ctx.say(`${p.label} обнаружен! Сбросьте аварийный набор рядом`, "good");
@@ -683,6 +757,7 @@ class SearchMission extends Mission {
     return [
       { text: "Обнаружить пропавших", done: found === 3, progress: `${found}/3` },
       { text: "Сбросить аварийные наборы", done: sup === 3, progress: `${sup}/3` },
+      { text: "Прочёсано квадратов", done: this.sqDone.every(Boolean), progress: `${this.sqDone.filter(Boolean).length}/${this.sqDone.length}` },
     ];
   }
   summary() {
@@ -690,15 +765,31 @@ class SearchMission extends Mission {
       score: clamp(100 - Math.max(0, this.time - 330) / 7 - this.wasted * 8, 10, 100),
       rows: [
         ["Найдено людей", `${this.people.filter((p) => p.found).length}/3`],
-        ["Наборов сброшено мимо", String(this.wasted)], ["Время", fmtTime(this.time)],
+        ["Наборов сброшено мимо", String(this.wasted)],
+        ["Прочёсано площади", `${Math.round((this.seen.reduce((a, v) => a + v, 0) / this.seen.length) * 100)}%`],
+        ["Время", fmtTime(this.time)],
       ] as [string, string][],
     };
   }
   drawMap(m: MapDraw) {
+    const S = SEARCH;
+    for (let j = 0; j < this.nsz; j++) for (let i = 0; i < this.nsx; i++) {
+      if (!this.seen[j * this.nsx + i]) continue;
+      const x = S.x0 + i * SUB, z = S.z0 + j * SUB;
+      m.rect(x, z, x + SUB, z + SUB, "rgba(0,255,170,0.16)", true);
+    }
+    const col = ["#ff7a00", "#ffd700", "#7f8c99"];
+    this.prio.forEach((p, q) => {
+      const x = S.x0 + (q % S.cols) * S.cell, z = S.z0 + Math.floor(q / S.cols) * S.cell;
+      m.rect(x, z, x + S.cell, z + S.cell, this.sqDone[q] ? "#00ffaa" : col[p]);
+      const [cx, cz] = this.sqCenter(q);
+      m.text?.(cx, cz, this.sqName(q), this.sqDone[q] ? "#00ffaa" : col[p]);
+    });
+    m.dot(S.car[0], S.car[1], "#ffffff", 3);
+    m.text?.(S.car[0], S.car[1] + 12, "ПНМ", "#ffffff");
     for (const p of this.people) {
       if (p.supplied) m.dot(p.x, p.z, "#00ffaa", 4);
       else if (p.found) { m.dot(p.x, p.z, "#ff4444", 5); m.ring(p.x, p.z, 15, "#ff4444"); }
-      else m.ring(p.hx, p.hz, 110, "#ffd700");
     }
     for (const a of this.decoys) if (a.found) m.dot(a.x, a.z, "#888888", 3);
   }
@@ -1306,6 +1397,9 @@ class ReindeerMission extends Mission {
   private scared = 0;
   private scareSaid = -20;
   private photos = 0;
+  /** Последние отметки GPS-ошейников трёх вожаков (обновляются раз в 2 минуты). */
+  private fixes: [number, number][] = [];
+  private fixAt = -1e9;
   private m4 = new THREE.Matrix4();
   private q = new THREE.Quaternion();
 
@@ -1351,7 +1445,7 @@ class ReindeerMission extends Mission {
       this.herd = herd;
     }
     this.sync();
-    ctx.say(`Стадо пасётся ${whereFromBase(this.center.x, this.center.y)}. Снимайте сверху с высоты 30–120 м, камера вниз`, "info");
+    ctx.say(`По ошейникам стадо ${whereFromBase(this.center.x, this.center.y)}. Снимайте сверху с высоты 30–120 м, камера вниз`, "info");
   }
 
   private sync() {
@@ -1383,6 +1477,13 @@ class ReindeerMission extends Mission {
 
   update(dt: number, action: Action) {
     this.time += dt;
+    if (!this.fixes.length || this.time - this.fixAt >= 120) {
+      this.fixAt = this.fixes.length ? this.time : -this.ctx.rnd() * 90;
+      this.fixes = [0, 1, 2].map((k) => {
+        const j = Math.floor((k * this.n) / 3);
+        return [this.pos[j * 2], this.pos[j * 2 + 1]];
+      });
+    }
     const { drone, rnd } = this.ctx;
     const agl = this.agl();
     // стадо медленно дрейфует, олени пасутся вокруг центра
@@ -1466,8 +1567,13 @@ class ReindeerMission extends Mission {
     };
   }
   drawMap(m: MapDraw) {
-    m.ring(this.center.x, this.center.y, 40, "#ffd700");
-    for (let i = 0; i < this.n; i += 2) m.dot(this.pos[i * 2], this.pos[i * 2 + 1], this.counted[i] ? "#00ffaa" : "#c8a070", 1.6);
+    if (this.fixes.length) {
+      const cx = this.fixes.reduce((a, f) => a + f[0], 0) / this.fixes.length, cz = this.fixes.reduce((a, f) => a + f[1], 0) / this.fixes.length;
+      m.ring(cx, cz, 60, "#ffd700");
+      m.text?.(cx, cz - 70, `ошейники, ${Math.floor((this.time - this.fixAt) / 60)} мин назад`, "#ffd700");
+      for (const [x, z] of this.fixes) m.dot(x, z, "#ffd700", 2.5);
+    }
+    for (let i = 0; i < this.n; i++) if (this.counted[i]) m.dot(this.pos[i * 2], this.pos[i * 2 + 1], "#00ffaa", 1.6);
   }
 }
 
@@ -1940,16 +2046,16 @@ class IceJamMission extends Mission {
 class LoggingMission extends Mission {
   private cut!: THREE.Vector3; private legal!: THREE.Vector3; private machine!: THREE.Vector3;
   private cutShot = false; private machineShot = false; private legalChecked = false;
+  private Q!: { x0: number; z0: number; x1: number; z1: number };
 
   constructor(ctx: Ctx) {
     super(ctx);
     const { world, rnd } = ctx;
-    const spot = (a0: number, d0: number) => {
-      const a = a0 + (rnd() - 0.5) * 0.9, d = d0 + rnd() * 120;
-      return new THREE.Vector3(Math.sin(a) * d, 0, -Math.cos(a) * d);
-    };
-    this.cut = spot(LOG_ROT + (rnd() < 0.5 ? -0.6 : 0.6), 360);
-    this.legal = spot(rnd() < 0.5 ? 2.2 : -2.2, 280);
+    // лесной квартал: границы известны по лесоустройству, внутри — одна законная лесосека из реестра
+    const Q = this.Q = quarter();
+    const inQ = () => new THREE.Vector3(Q.x0 + 50 + rnd() * (Q.x1 - Q.x0 - 100), 0, Q.z0 + 50 + rnd() * (Q.z1 - Q.z0 - 100));
+    this.cut = inQ();
+    for (let k = 0; k < 40; k++) { this.legal = inQ(); if (this.legal.distanceTo(this.cut) > 170) break; }
     const near: number[] = [];
     const clear = (c: THREE.Vector3, r: number, stumps: boolean) => {
       for (const i of world.treesNear(c.x, c.z, r, near)) {
@@ -1978,7 +2084,7 @@ class LoggingMission extends Mission {
     const sign = makeSign(["ЛЕСОСЕКА № 14", "Лесорубочный билет", "№ 11-26/0387 до 31.12"]);
     sign.rotation.y = rnd() * 6.28;
     this.place(sign, this.legal.x + 20, this.legal.z);
-    ctx.say("Жалоба на рубку в квадрате к северу. Ищите свежую вырубку, проверьте законность, снимите технику", "info");
+    ctx.say(`Квартал 47 — ${whereFromBase((Q.x0 + Q.x1) / 2, (Q.z0 + Q.z1) / 2)}. Законная лесосека № 14 отмечена на карте зелёным`, "info");
   }
 
   update(dt: number, action: Action) {
@@ -2021,9 +2127,12 @@ class LoggingMission extends Mission {
     };
   }
   drawMap(m: MapDraw) {
-    m.ring(Math.sin(LOG_ROT) * 420, -Math.cos(LOG_ROT) * 420, 230, "#ffd700");
+    const Q = this.Q;
+    m.rect(Q.x0, Q.z0, Q.x1, Q.z1, "#ffd700");
+    m.text?.(Q.x0 + 30, Q.z0 + 14, "кв. 47", "#ffd700");
+    m.rect(this.legal.x - 28, this.legal.z - 28, this.legal.x + 28, this.legal.z + 28, this.legalChecked ? "#00ffaa" : "rgba(0,255,170,0.6)");
+    m.text?.(this.legal.x, this.legal.z - 36, "лесосека 14", "#00ffaa");
     if (this.cutShot) m.ring(this.cut.x, this.cut.z, 30, "#ff4444");
-    if (this.legalChecked) m.ring(this.legal.x, this.legal.z, 26, "#00ffaa");
   }
 }
 
@@ -2129,6 +2238,8 @@ class GasFieldMission extends Mission {
 class FloeRescueMission extends Mission {
   private floe: THREE.Group;
   private s = FLOE_S;
+  /** Истинная скорость дрейфа: гидропост даёт среднюю, у льдины своя. */
+  private v = FLOE_V;
   private r = 9;
   private drops: Drops;
   private ok = 0; private lost = 0; private found = false;
@@ -2161,14 +2272,16 @@ class FloeRescueMission extends Mission {
         this.ctx.say(this.ok === 1 ? "Круг и рация на льдине! Рыбаки на связи" : "Второй комплект у рыбаков. МЧС выдвигается на катере", "good");
       } else { this.lost++; this.ctx.say(`Мимо: ${(d - this.r).toFixed(1)} м от кромки, комплект унесло течением`, "warn"); }
     });
+    this.v = FLOE_V * (0.85 + ctx.rnd() * 0.3);
+    this.s = FLOE_S - FLOE_V * FLOE_AGO + this.v * FLOE_AGO;
     this.capacity = 3; this.amount = 3;
-    ctx.say("Рыбаков унесло на льдине вниз по Вычегде. Найдите их и сбросьте спасательные комплекты на лёд", "info");
+    ctx.say("Льдину уносит вниз по Вычегде. Ищите на расчётном участке реки (жёлтый на карте), затем сбросьте комплекты", "info");
   }
 
   update(dt: number, action: Action) {
     this.time += dt;
     const { world, drone } = this.ctx;
-    this.s += 0.55 * dt;
+    this.s += this.v * dt;
     const x = this.s, z = world.riverZ(x) + Math.sin(this.time * 0.05) * 6;
     this.floe.position.set(x, (world.waterLevel ?? 0) + 0.05, z);
     this.floe.rotation.y += 0.02 * dt;
@@ -2183,7 +2296,7 @@ class FloeRescueMission extends Mission {
     this.drops.update(dt);
     drone.payload = this.amount * 1.2;
     if (!this.tasksDone && this.ok >= 2) { this.tasksDone = true; this.ctx.say("Рыбаки обеспечены. Сопровождение передано катеру МЧС — возвращайтесь", "good"); }
-    if (this.s > 520 && !this.tasksDone) this.failed = "Льдину вынесло на перекат раньше, чем рыбаки получили помощь";
+    if (this.s > FLOE_FAIL && !this.tasksDone) this.failed = "Льдину вынесло на перекат раньше, чем рыбаки получили помощь";
   }
   objectives(): Objective[] {
     return [
@@ -2194,7 +2307,20 @@ class FloeRescueMission extends Mission {
   summary() {
     return { score: clamp(100 - this.lost * 12 - Math.max(0, this.time - 240) / 4, 10, 100), rows: [["Комплектов на льду", String(this.ok)], ["Мимо", String(this.lost)], ["Время", fmtTime(this.time)]] as [string, string][] };
   }
-  drawMap(m: MapDraw) { if (this.found) m.dot(this.floe.position.x, this.floe.position.z, "#ff4444", 5); else m.ring(FLOE_S + 170, this.ctx.world.riverZ(FLOE_S + 170), 220, "#ffd700"); }
+  drawMap(m: MapDraw) {
+    const w = this.ctx.world, rz = (x: number) => w.riverZ(x);
+    // место отрыва со слов очевидцев и перекат
+    const b = FLOE_S - FLOE_V * FLOE_AGO;
+    m.dot(b, rz(b), "#ffffff", 3); m.text?.(b, rz(b) - 16, "отрыв", "#ffffff");
+    m.path?.([[FLOE_FAIL - 25, rz(FLOE_FAIL - 25)], [FLOE_FAIL + 25, rz(FLOE_FAIL + 25)]], "rgba(255,68,68,0.8)", 30);
+    m.text?.(FLOE_FAIL, rz(FLOE_FAIL) - 26, "перекат", "#ff6666");
+    if (this.found) { m.dot(this.floe.position.x, this.floe.position.z, "#ff4444", 5); return; }
+    // счисление: место отрыва + течение × время; неопределённость растёт со временем
+    const t = FLOE_AGO + this.time, mid = b + FLOE_V * t, half = 40 + t * 0.12;
+    const pts: [number, number][] = [];
+    for (let x = mid - half; x <= mid + half; x += 10) pts.push([x, rz(x)]);
+    m.path?.(pts, "rgba(255,215,0,0.35)", 60);
+  }
 }
 
 // ───────────────────────────── 14. ДТП на трассе: дефибриллятор ─────────────────────────────
@@ -2423,7 +2549,14 @@ class TickMission extends AgroMission {
 let SETTLE = { x: 0, z: -230 };
 /** Поворот района вырубки и стартовая точка льдины на реке. */
 let LOG_ROT = 0;
+/** Лесной квартал (границы по линиям квартальной сети — с севера на юг и с запада на восток). */
+const quarter = () => {
+  const cx = Math.sin(LOG_ROT) * 400, cz = -Math.cos(LOG_ROT) * 400;
+  return { x0: Math.round(cx - 260), z0: Math.round(cz - 180), x1: Math.round(cx + 260), z1: Math.round(cz + 180) };
+};
 let FLOE_S = -420;
+/** Скорость течения (м/с), сколько секунд назад оторвало лёд, где перекат. */
+const FLOE_V = 0.55, FLOE_AGO = 300, FLOE_FAIL = 520;
 let FLOE_RIVER = { z0: -150, amp: 40, wl: 240, width: 44 };
 
 class BearMission extends Mission {
@@ -2535,6 +2668,11 @@ export function rollLayouts(R: () => number = Math.random) {
     const west = R() < 0.5;
     FIRE = { x: rr(-140, 140), z: rr(-470, -390), west };
     VILLAGE = { x: FIRE.x + (west ? -1 : 1) * rr(190, 235), z: FIRE.z + rr(-40, 40) };
+  }
+  // 2б. поиск: машина грибников на лесной дороге, квадраты штаба вокруг неё
+  {
+    const phi = north(), dc = rr(150, 200), [cx, cz] = at(phi, dc), [gx, gz] = at(phi, dc + rr(80, 130));
+    SEARCH = { ...SEARCH, car: [cx, cz], carYaw: Math.atan2(cx, cz), x0: Math.round(gx - 240), z0: Math.round(gz - 180) };
   }
   // 3. поле агромиссии
   FIELD = { ...FIELD, x: rr(-110, 110), z: rr(-185, -125) };
@@ -2654,14 +2792,14 @@ export const MISSIONS: MissionDef[] = [
     id: "search", title: "Поиск людей в тайге", place: "Окрестности Ухты, Республика Коми",
     tagline: "Трое грибников не вышли на связь", icon: "ScanSearch", color: "#00aaff",
     briefing: [
-      "Вечер, туман, видимость 150 м. По биллингу телефонов известны три сектора вероятного нахождения.",
-      "Включите тепловизор и прочёсывайте секторы с высоты 40–60 м. В лесу есть лоси и медведь — не перепутайте.",
+      "Вечер, туман, видимость 150 м. Машину грибников нашли на лесной дороге — это ПНМ, последнее известное место. Телефоны вне сети.",
+      "Штаб разбил лес вокруг на квадраты 120×120 м: оранжевые — высокая вероятность, жёлтые — средняя, серые — низкая. Прочёсывайте галсами с тепловизором на 40–60 м — пройденная полоса закрашивается на карте. В лесу есть лоси и медведь — не перепутайте.",
       "Над найденным человеком сбросьте аварийный набор с рацией: он должен лечь не дальше 15 м.",
     ],
     actionLabel: "Сброс набора", recommended: ["hexa", "quad"],
     get world(): WorldCfg { return {
       seed: 37, size: 1400, relief: 15, river: { z0: 280, amp: 45, wl: 210, width: 13 }, flats: [BASE_FLAT],
-      clearings: [], forestDensity: 0.95, palette: DUSK_FOG,
+      clearings: [], corridors: pathCorridor([[0, 0], SEARCH.car], 7), forestDensity: 0.95, palette: DUSK_FOG,
     }; },
     wind: { toDeg: 200, speed: 3, gust: 0.3 }, gimbalPitch: -90, pip: true, payloadLabel: "Наборы", payloadUnit: "шт",
     create: (c) => new SearchMission(c),
@@ -2736,7 +2874,7 @@ export const MISSIONS: MissionDef[] = [
     id: "reindeer", title: "Учёт оленей", place: "Тундра под Интой, Республика Коми",
     tagline: "Аэрофотоучёт стада без беспокойства животных", icon: "Binoculars", color: "#f5c27a",
     briefing: [
-      "Оленеводческий кооператив просит пересчитать стадо после летнего выпаса: часть оленей могла отбиться.",
+      "Оленеводческий кооператив просит пересчитать стадо после летнего выпаса: часть оленей могла отбиться. На трёх вожаках GPS-ошейники — их отметки на карте, обновляются раз в 2 минуты.",
       "Снимайте стадо сверху, камера строго вниз, высота 25–130 м. Олени в кадре засчитываются; чем выше — тем шире кадр, но тем легче пропустить отставших.",
       "Ниже 30 м над стадом олени пугаются и разбегаются — это вред хозяйству и штраф к оценке.",
     ],
@@ -2781,9 +2919,9 @@ export const MISSIONS: MissionDef[] = [
     id: "logging", title: "Незаконная рубка", place: "Корткеросский район, Республика Коми",
     tagline: "Поиск вырубки и фиксация техники", icon: "Axe", color: "#a3e635",
     briefing: [
-      "В лесничество пришла жалоба: в квадрате к северу слышали работу техники. Разрешена там только одна лесосека.",
-      "Найдите свежую вырубку (сверху её видно как светлую поляну с пнями, в тепловизоре — по тёплому двигателю), снимите её сверху и технику — сбоку.",
-      "Не перепутайте с законной лесосекой: у неё аншлаг с номером лесорубочного билета.",
+      "Охотник сообщил в лесничество: в квартале 47 слышна работа техники. Границы квартала известны по лесоустройству — он на карте. Где именно рубят — неизвестно.",
+      "По реестру в квартале есть одна законная лесосека (№ 14, на карте зелёным). Всё, что срублено за её пределами, — нарушение.",
+      "Найдите свежую вырубку (сверху — светлая поляна с пнями, в тепловизоре — тёплый двигатель), снимите её сверху и технику — сбоку.",
     ],
     actionLabel: "Снимок", recommended: ["quad", "hexa"],
     get world(): WorldCfg { return { seed: 127, size: 1400, relief: 12, river: { z0: 320, amp: 40, wl: 220, width: 13 }, flats: [BASE_FLAT], clearings: [], forestDensity: 0.95, palette: OVERCAST }; },
@@ -2811,7 +2949,8 @@ export const MISSIONS: MissionDef[] = [
     id: "floe", title: "Рыбаки на льдине", place: "Вычегда у Сыктывкара, Республика Коми",
     tagline: "Сброс спасательных комплектов на дрейфующий лёд", icon: "LifeBuoy", color: "#38bdf8",
     briefing: [
-      "Весенний лёд оторвался от берега, двух рыбаков уносит вниз по реке. Катер МЧС выйдет через 15 минут, связи с рыбаками нет.",
+      "5 минут назад у берега оторвало лёд, двух рыбаков уносит вниз по реке. Связи с ними нет — место отрыва известно со слов очевидцев, течение по гидропосту ≈ 0,55 м/с.",
+      "На карте — расчётный участок реки, где льдина должна быть сейчас: чем больше прошло времени, тем он длиннее. Катер МЧС выйдет через 15 минут.",
       "Найдите льдину и сбросьте на неё два комплекта: спасательный круг и рацию. Комплект на парашюте сносит ветром — делайте поправку.",
       "Если льдину вынесет на перекат раньше, чем рыбаки получат помощь, — задача провалена.",
     ],
