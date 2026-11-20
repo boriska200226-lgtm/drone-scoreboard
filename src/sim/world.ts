@@ -1,4 +1,5 @@
 // Процедурный мир: рельеф, река, тайга, постройки. Слой 0 — видимый спектр, слой 1 — тепловизор.
+import { makeBear } from "./bear";
 import * as THREE from "three";
 import { clamp, fbm, lerp, makeNoise2D, mulberry32, smoothstep } from "./noise";
 import { installAtmosphere, makeSkyMaterial, makeTerrainMaterial, makeWaterMaterial, SkyParams, TerrainTextures } from "./shaders";
@@ -12,6 +13,21 @@ const _sr = new THREE.Vector3(), _su = new THREE.Vector3();
 const ASSET = (p: string) => `${import.meta.env.BASE_URL}sim/${p}`;
 
 export const THERMAL_LAYER = 1;
+
+/** Материал для тепловой копии объекта: к краям (под скользящим углом) излучение слабее —
+ *  тело выглядит объёмным, как в настоящем тепловизоре. Работает со скелетом и инстансами. */
+export function heatMaterial(heat: number): THREE.Material {
+  const m = new THREE.MeshNormalMaterial();
+  m.onBeforeCompile = (sh) => {
+    sh.uniforms.uHeat = { value: heat };
+    sh.fragmentShader = sh.fragmentShader
+      .replace("void main() {", "uniform float uHeat;\nvoid main() {")
+      .replace("gl_FragColor = vec4( packNormalToRGB( normal ), diffuseColor.a );",
+        "float ct = clamp(abs(normal.z), 0.0, 1.0);\ngl_FragColor = vec4(vec3(uHeat * (0.22 + 0.78 * ct * ct)), 1.0);");
+  };
+  m.customProgramCacheKey = () => "heat";
+  return m;
+}
 export type Quality = "high" | "medium" | "low";
 
 export interface Palette {
@@ -281,7 +297,8 @@ export class World {
       const v = 0.88 + 0.22 * t;
       c.setRGB(v, v, v);
       colors[i * 3] = c.r; colors[i * 3 + 1] = c.g; colors[i * 3 + 2] = c.b;
-      const g = h < 0 ? 0.004 : 0.02 + 0.02 * t;
+      // тепловой фон: вода холодная, по земле — пятна (влажность, кочки, мох)
+      const g = h < 0 ? 0.005 : 0.016 + 0.02 * t + 0.012 * (fbm(noise, x / 14, z / 14, 2) * 0.5 + 0.5);
       heat[i * 3] = g; heat[i * 3 + 1] = g; heat[i * 3 + 2] = g;
     }
     this.terrainColors = new THREE.BufferAttribute(colors, 3);
@@ -601,7 +618,7 @@ export class World {
 
   /** Добавляет копию объекта в тепловой слой. heat 0..1 — яркость. */
   addThermal(obj: THREE.Object3D, heat: number) {
-    const mat = this.own(new THREE.MeshBasicMaterial({ color: new THREE.Color(heat, heat, heat), fog: false, toneMapped: false }));
+    const mat = this.own(heatMaterial(heat));
     const meshes: THREE.Mesh[] = [];
     obj.traverse((o) => { if ((o as THREE.Mesh).isMesh && o.layers.mask === 1) meshes.push(o as THREE.Mesh); });
     for (const m of meshes) {
@@ -842,6 +859,7 @@ export function makePerson(jacket: number): THREE.Group {
 }
 
 export function makeAnimal(kind: "moose" | "bear"): THREE.Group {
+  if (kind === "bear") return makeBear();
   const model = instanceModel(kind);
   if (model) { model.userData.kind = kind; return model; }
   const g = new THREE.Group();

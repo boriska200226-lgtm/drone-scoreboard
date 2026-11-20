@@ -15,5 +15,6 @@ HDR-панорамы освещения (CC0, Poly Haven, через репоз�
   models/person.glb — персонаж Soldier из примеров three.js (MIT-репозиторий; исходно Mixamo, Adobe)
 Деревья: ez-tree 1.1.0 (MIT, Daniel Greenheck), текстуры коры — texturecan.com (CC0)
 
-Животные (северный олень, лось, медведь): на основе моделей Quaternius, Ultimate Animated Animals —
+Животные (северный олень, лось): на основе моделей Quaternius, Ultimate Animated Animals —
 CC0 1.0 (общественное достояние), https://quaternius.com. Перекраска и пропорции изменены в симуляторе.
+Медведь: собственная процедурная модель симулятора (поле расстояний + свой скелет и анимации).

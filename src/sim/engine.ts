@@ -76,10 +76,12 @@ export interface Osd {
 }
 const STEP = 1 / 240;
 
-export function layout(w: number) {
+export function layout(w: number, big = false) {
   const small = w < 760;
   const mapSize = small ? 108 : 176;
-  return { mapSize, pipRect: { right: 12, top: 12 + mapSize + 8, w: small ? 168 : 264, h: small ? 124 : 194 } };
+  // тепловизор — основной инструмент поиска, его окно крупнее
+  const pw = big ? Math.round(Math.min(small ? 240 : 480, w * 0.38)) : small ? 168 : 264;
+  return { mapSize, pipRect: { right: 12, top: 12 + mapSize + 8, w: pw, h: Math.round(pw * 0.735) } };
 }
 
 class Audio {
@@ -112,6 +114,41 @@ class Audio {
     this.gain.gain.setTargetAtTime(on && !this.muted ? 0.035 + throttle * 0.05 : 0, t, 0.08);
   }
   dispose() { this.ctx?.close().catch(() => undefined); }
+}
+
+const THERMAL_SKY = new THREE.Color(0x010101);
+
+/** Обработка теплового кадра: оптика слегка размывает, электроника подчёркивает контуры (ореол),
+ *  у матрицы есть шум и полосы по столбцам; палитра «белое — горячее». */
+function makeThermalPost() {
+  const rt = new THREE.WebGLRenderTarget(4, 4, { type: THREE.HalfFloatType, depthBuffer: true });
+  const mat = new THREE.ShaderMaterial({
+    uniforms: { uTex: { value: null }, uPx: { value: new THREE.Vector2() }, uTime: { value: 0 } },
+    vertexShader: "varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0., 1.); }",
+    fragmentShader: `
+      uniform sampler2D uTex; uniform vec2 uPx; uniform float uTime; varying vec2 vUv;
+      float T(vec2 o) { return texture2D(uTex, vUv + o * uPx).r; }
+      float h(vec2 p) { vec3 q = fract(vec3(p.xyx) * .1031); q += dot(q, q.yzx + 33.33); return fract((q.x + q.y) * q.z); }
+      void main() {
+        float c = T(vec2(0.));
+        float b1 = (T(vec2(1, 0)) + T(vec2(-1, 0)) + T(vec2(0, 1)) + T(vec2(0, -1))) * .25;
+        float b3 = (T(vec2(3, 0)) + T(vec2(-3, 0)) + T(vec2(0, 3)) + T(vec2(0, -3)) + T(vec2(2, 2)) + T(vec2(-2, 2)) + T(vec2(2, -2)) + T(vec2(-2, -2))) * .125;
+        float t = mix(c, b1, .55);           // оптика
+        t += (t - b3) * .7;                  // подчёркивание контуров
+        // автоусиление: растягиваем холодный диапазон, чтобы читался фон; горячее — белое
+        float v = pow(log(1. + max(t, 0.) * 40.) / log(41.), .85);
+        v += (h(gl_FragCoord.xy + uTime * 91.) - .5) * .05;     // шум матрицы
+        v += (h(vec2(floor(gl_FragCoord.x), 7.)) - .5) * .025;  // полосы по столбцам
+        vec2 d = vUv - .5; v *= 1. - dot(d, d) * .5;            // виньетка объектива
+        gl_FragColor = vec4(vec3(clamp(v, 0., 1.)), 1.);
+      }`,
+    depthTest: false, depthWrite: false,
+  });
+  const scene = new THREE.Scene();
+  const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), mat);
+  quad.frustumCulled = false;
+  scene.add(quad);
+  return { rt, mat, scene, cam: new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1) };
 }
 
 export class SimEngine {
@@ -190,6 +227,7 @@ export class SimEngine {
   private env: Env;
   private windsock: THREE.Object3D | null = null;
   private fogSaved: THREE.FogExp2 | null = null;
+  private thermalPost: ReturnType<typeof makeThermalPost> | null = null;
 
   constructor(o: EngineOpts) {
     this.o = o;
@@ -839,7 +877,7 @@ export class SimEngine {
     } else r.render(scene, this.cam);
 
     if (this.pip) {
-      const { pipRect: p } = layout(w);
+      const { pipRect: p } = layout(w, this.thermal);
       const x = w - p.right - p.w, y = h - p.top - p.h;
       this.model.group.visible = false;
       this.shadow.visible = false;
@@ -848,15 +886,32 @@ export class SimEngine {
         this.pipCam.layers.set(THERMAL_LAYER);
         this.fogSaved = scene.fog as THREE.FogExp2;
         scene.fog = null;
-        scene.background = new THREE.Color(0x050505);
+        scene.background = THERMAL_SKY;
       } else this.pipCam.layers.set(0);
       this.pipCam.aspect = p.w / p.h;
       this.pipCam.updateProjectionMatrix();
-      r.setScissorTest(true);
-      r.setScissor(x, y, p.w, p.h);
-      r.setViewport(x, y, p.w, p.h);
       setScale(scale(this.pipCam, p.h));
-      r.render(scene, this.pipCam);
+      if (this.thermal) {
+        // тепловой кадр: сначала «температура» сцены в текстуру, затем обработка как в матрице тепловизора
+        const pr = r.getPixelRatio(), tw = Math.round(p.w * pr), th = Math.round(p.h * pr);
+        const tp = this.thermalPost ??= makeThermalPost();
+        if (tp.rt.width !== tw || tp.rt.height !== th) tp.rt.setSize(tw, th);
+        r.setRenderTarget(tp.rt);
+        r.render(scene, this.pipCam);
+        r.setRenderTarget(null);
+        tp.mat.uniforms.uTex.value = tp.rt.texture;
+        tp.mat.uniforms.uPx.value.set(1 / tw, 1 / th);
+        tp.mat.uniforms.uTime.value = (tp.mat.uniforms.uTime.value + 0.013) % 50;
+        r.setScissorTest(true);
+        r.setScissor(x, y, p.w, p.h);
+        r.setViewport(x, y, p.w, p.h);
+        r.render(tp.scene, tp.cam);
+      } else {
+        r.setScissorTest(true);
+        r.setScissor(x, y, p.w, p.h);
+        r.setViewport(x, y, p.w, p.h);
+        r.render(scene, this.pipCam);
+      }
       r.setScissorTest(false);
       if (this.thermal) { scene.fog = this.fogSaved; scene.background = bg; }
       this.model.group.visible = true;
@@ -1025,7 +1080,7 @@ export class SimEngine {
       landing: this.landReq, gimbal: Math.round(this.gimbalPitch),
       thermal: this.thermal, pip: this.pip, rth: this.rth,
       distHome: Math.hypot(d.pos.x, d.pos.z), time: m.time, objectives, motors: [...d.motorOk], warnings,
-      ...layout(w),
+      ...layout(w, this.thermal),
     });
   }
 
@@ -1036,6 +1091,7 @@ export class SimEngine {
     window.removeEventListener("resize", this.resize);
     window.removeEventListener("blur", this.onBlur);
     this.audio.dispose();
+    if (this.thermalPost) { this.thermalPost.rt.dispose(); this.thermalPost.mat.dispose(); }
     this.amb.dispose();
     this.precip?.dispose();
     releaseModels();

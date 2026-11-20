@@ -173,6 +173,7 @@ export function instanceModel(role: Role, pick = Math.random()): THREE.Group | n
   return g;
 }
 
+export function addMixer(m: THREE.AnimationMixer) { mixers.add(m); }
 export function updateModels(dt: number) { for (const m of mixers) m.update(dt); }
 export function releaseModels() { for (const m of mixers) m.stopAllAction(); mixers.clear(); }
 

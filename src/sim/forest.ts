@@ -175,8 +175,9 @@ export class ForestKit {
     };
     this.thermalMat = new THREE.MeshBasicMaterial({ map: this.atlas.texture, alphaTest: 0.5, side: THREE.DoubleSide, color: 0x0d0d0d, fog: false, toneMapped: false });
     this.thermalMat.onBeforeCompile = (sh) => {
-      // в тепловизоре деревья холодные и однотонные: из атласа берём только прозрачность
-      sh.fragmentShader = sh.fragmentShader.replace("#include <map_fragment>", "diffuseColor.a *= texture2D(map, vMapUv).a;");
+      // в тепловизоре крона чуть теплее земли и неоднородна: яркость атласа даёт фактуру ветвей
+      sh.fragmentShader = sh.fragmentShader.replace("#include <map_fragment>",
+        "vec4 tx = texture2D(map, vMapUv); diffuseColor.a *= tx.a; diffuseColor.rgb = vec3(0.03 + 0.09 * dot(tx.rgb, vec3(.3, .59, .11)));");
     };
     this.disposables.push(this.impostorMat, this.thermalMat);
     this.ready = waitImages(this.textures);
