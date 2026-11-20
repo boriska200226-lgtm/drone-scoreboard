@@ -29,6 +29,10 @@ export interface Airframe {
   pumpRate: number; // кг/с, сброс/забор жидкости
   redundancy: string;
   color: number;
+  /** Тип: мультикоптер (по умолчанию) или самолёт. */
+  kind?: "multi" | "plane";
+  /** Самолёт: площадь крыла м², размах м, крейсерская и скорость сваливания м/с. */
+  wing?: { area: number; span: number; cruise: number; stall: number };
 }
 
 function ring(n: number, arm: number, offsetDeg: number): MotorDef[] {
@@ -94,10 +98,28 @@ export const AIRFRAMES: Airframe[] = [
   },
 ];
 
-export const getAirframe = (id: string) => AIRFRAMES.find((a) => a.id === id) ?? AIRFRAMES[0];
+/** Самолётные БАС: держатся в воздухе за счёт скорости, взлёт с катапульты, посадка на парашюте. */
+export const PLANES: Airframe[] = [
+  {
+    id: "krechet",
+    name: "Кречет",
+    scheme: "Самолёт, толкающий винт, V-хвост",
+    description: "Разведчик лесоохраны: 3 часа в воздухе, 90 км/ч, камера и тепловизор на подвесе. Не умеет висеть: ниже 55 км/ч сваливается. Старт с катапульты, посадка на парашюте.",
+    motors: [{ x: 0, z: 0.62, y: 0.05, dir: 1 }],
+    arm: 1.55, propR: 0.22, mass: 14, payloadMax: 1.5, motorThrust: 62, motorTau: 0.35,
+    batteryWh: 1500, efficiency: 0.55, maxTilt: 0.75, maxSpeed: 36, climb: 5, yawRate: 0.5,
+    sprayWidth: 0, pumpRate: 0, redundancy: "парашют", color: 0x7dd3fc,
+    kind: "plane", wing: { area: 0.85, span: 3.1, cruise: 24, stall: 14.5 },
+  },
+];
+
+export const isPlane = (a: Airframe) => a.kind === "plane";
+export const getAirframe = (id: string) => AIRFRAMES.find((a) => a.id === id) ?? PLANES.find((a) => a.id === id) ?? AIRFRAMES[0];
 
 /** Расчётное время висения, мин. */
 export function hoverMinutes(af: Airframe, payload: number): number {
+  // самолёт не висит: время в воздухе на крейсерской скорости
+  if (af.kind === "plane") return (af.batteryWh / 560) * 60;
   const m = af.mass + payload;
   const t = (m * 9.81) / af.motors.length;
   const area = Math.PI * af.propR * af.propR;

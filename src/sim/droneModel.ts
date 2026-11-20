@@ -388,10 +388,64 @@ function buildOcto(af: Airframe, k: Kit, gearH: number, tank: boolean): Built {
   return { group: g, rotors, liquid, strobe };
 }
 
+/** Самолётный БАС: сигарообразный фюзеляж, высокоплан с законцовками, V-хвост, толкающий винт, подвес под брюхом. */
+function buildPlane(af: Airframe, k: Kit): Built {
+  const g = new THREE.Group();
+  const span = af.wing?.span ?? 3, L = span * 0.62;
+  // фюзеляж: тело вращения по профилю (нос — капля, хвост — сужение к винту)
+  const prof: THREE.Vector2[] = [];
+  for (let i = 0; i <= 24; i++) {
+    const t = i / 24, r = 0.13 * Math.pow(Math.sin(Math.PI * Math.min(1, t * 1.25)), 0.55) * (t > 0.8 ? 1 - (t - 0.8) * 2.4 : 1) + 0.02;
+    prof.push(new THREE.Vector2(Math.max(0.005, r), -L / 2 + t * L));
+  }
+  const fus = mesh(new THREE.LatheGeometry(prof, 24), k.shell, g);
+  fus.rotation.x = Math.PI / 2; // ось тела вдоль Z, нос в −Z
+  fus.rotation.z = Math.PI;
+  // крыло: тонкий профиль с сужением и небольшим поперечным V, наклейка с бортовым номером
+  const wingGeo = (side: number) => {
+    const sh = new THREE.Shape();
+    const root = 0.34, tip = 0.2, half = span / 2;
+    const e = side * half;
+    sh.moveTo(0, -root / 2); sh.lineTo(e, -tip / 2 + 0.05); sh.lineTo(e, tip / 2 + 0.05); sh.lineTo(0, root / 2); sh.closePath();
+    const geo = new THREE.ExtrudeGeometry(sh, { depth: 0.035, bevelEnabled: true, bevelThickness: 0.012, bevelSize: 0.012, bevelSegments: 2 });
+    geo.rotateX(Math.PI / 2);
+    return geo;
+  };
+  for (const sd of [1, -1]) {
+    const w = mesh(wingGeo(sd), sd > 0 ? k.decal : k.shell, g, 0, 0.14, -0.05);
+    w.rotation.z = sd * 0.05; // поперечное V
+    // законцовка и элерон другим цветом
+    const tipM = mesh(new THREE.BoxGeometry(0.05, 0.12, 0.24), k.shell2, g, sd * span / 2, 0.19, 0);
+    tipM.rotation.z = sd * 0.05;
+    mesh(new THREE.BoxGeometry(span * 0.3, 0.022, 0.06), k.accent, g, sd * span * 0.33, 0.165, 0.15);
+  }
+  // V-хвост на хвостовой балке
+  for (const sd of [1, -1]) {
+    const tail = mesh(new THREE.BoxGeometry(0.62, 0.025, 0.2), k.shell2, g, sd * 0.24, 0.12, L / 2 - 0.12);
+    tail.rotation.z = sd * 0.62;
+  }
+  // мотогондола и толкающий винт
+  mesh(new THREE.CylinderGeometry(0.06, 0.075, 0.14, 16), k.dark, g, 0, 0.05, L / 2 + 0.02).rotation.x = Math.PI / 2;
+  const hold = new THREE.Group();
+  hold.position.set(0, 0.05, L / 2 + 0.11);
+  hold.rotation.x = Math.PI / 2;
+  g.add(hold);
+  const r = rotor(hold, k, af.propR, 1, 2, 1.2);
+  // подвес с камерой и тепловизором под брюхом
+  const gb = gimbal(g, k, 0.2, true);
+  gb.position.set(0, -0.12, -L * 0.22);
+  // огни: красный — левая законцовка, зелёный — правая, белый проблесковый — на киле
+  navLight(g, 0xff2020, 0.025, -span / 2, 0.2, 0);
+  navLight(g, 0x20ff40, 0.025, span / 2, 0.2, 0);
+  const strobe = navLight(g, 0xffffff, 0.03, 0, 0.16, L / 2 - 0.3);
+  return { group: g, rotors: [r], liquid: null, strobe };
+}
+
 export function buildDrone(af: Airframe, opts: { tank: boolean; boom: number; livery?: string }): DroneModel {
   const k = kit(af, liveryFor(af.id, opts.livery));
   const gearH = 0.16 + af.arm * 0.28;
-  const b = af.id === "quad" ? buildQuad(af, k, gearH)
+  const b = af.kind === "plane" ? buildPlane(af, k)
+    : af.id === "quad" ? buildQuad(af, k, gearH)
     : af.id === "hexa" ? buildHexa(af, k, gearH)
     : af.id === "coax" ? buildCoax(af, k, gearH)
     : buildOcto(af, k, gearH, opts.tank);

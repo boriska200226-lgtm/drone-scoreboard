@@ -1,7 +1,7 @@
 import { CSSProperties, lazy, ReactNode, Suspense, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import Icon from "@/components/ui/icon";
-import { AIRFRAMES, Airframe, getAirframe } from "@/sim/airframes";
+import { AIRFRAMES, Airframe, getAirframe, isPlane, PLANES } from "@/sim/airframes";
 import { assemble, DroneBuild, partOf, PARTS, perf, saveBuilds, SLOTS, STOCK } from "@/sim/build";
 import { CAM_LABEL, CamMode, CAMS, MODES } from "@/sim/engine";
 import { LIVERIES, liveryFor } from "@/sim/droneModel";
@@ -106,6 +106,14 @@ export const Stars = ({ n, size = 14 }: { n: number; size?: number }) => (
 function AirframeIcon({ af, size = 56 }: { af: Airframe; size?: number }) {
   const k = 34 / (af.arm + af.propR);
   const color = hex(af.color);
+  if (isPlane(af)) return (
+    <svg width={size} height={size} viewBox="-40 -40 80 80" aria-hidden>
+      <rect x={-36} y={-6} width={72} height={9} rx={3} fill={color} />
+      <rect x={-4} y={-30} width={8} height={58} rx={4} fill="#9aa4b2" />
+      <path d="M0 22 L-14 32 M0 22 L14 32" stroke={color} strokeWidth={4} strokeLinecap="round" />
+      <path d="M0 -36 L4 -28 L-4 -28 Z" fill="#ff4444" />
+    </svg>
+  );
   return (
     <svg width={size} height={size} viewBox="-40 -40 80 80" aria-hidden>
       {af.motors.map((m, i) => <line key={`l${i}`} x1={0} y1={0} x2={m.x * k} y2={m.z * k} stroke="#667" strokeWidth={2.5} />)}
@@ -176,8 +184,10 @@ export default function Launcher({ initial, best, onStart }: { initial: LaunchSe
     });
   };
   const mission = findMission(s.mission);
-  const build = s.builds[s.af] ?? STOCK;
-  const af = assemble(s.af, build);
+  // самолётные миссии — только самолёт, остальные — только коптеры
+  const afId = isPlane(getAirframe(s.af)) === isPlane(getAirframe(mission.recommended[0])) ? s.af : mission.recommended[0];
+  const build = s.builds[afId] ?? STOCK;
+  const af = assemble(afId, build);
   const afColor = hex(af.color);
   const w = mission.wind;
   const visibility = Math.round(Math.min(10, 2.3 / mission.world.palette.fogDensity / 1000) * 10) / 10;
@@ -259,7 +269,7 @@ export default function Launcher({ initial, best, onStart }: { initial: LaunchSe
               ))}
             </div>
           </Cut>
-          <Launch onClick={() => onStart(s)} className="mt-3" />
+          <Launch onClick={() => onStart({ ...s, af: afId })} className="mt-3" />
         </div>
       </aside>
 
@@ -384,7 +394,7 @@ export default function Launcher({ initial, best, onStart }: { initial: LaunchSe
                   <div className="text-gray-300">{AUTHOR.role}</div>
                 </div>
                 <div className="text-sm text-gray-300 leading-relaxed">
-                  18 миссий, курс пилота, конструктор дронов, тепловизор, повтор полёта с разбором ошибок. Управление с клавиатуры, геймпада или настоящего пульта.
+                  19 миссий (включая самолётный БАС), курс пилота, конструктор дронов, тепловизор, повтор полёта с разбором ошибок. Управление с клавиатуры, геймпада или настоящего пульта.
                 </div>
                 <div>
                   <div className="sp-label text-gray-400 mb-1">Использованы открытые материалы</div>
@@ -457,7 +467,7 @@ export default function Launcher({ initial, best, onStart }: { initial: LaunchSe
           <div className="sp-title text-sm truncate" style={{ color: mission.color }}>{mission.title}</div>
           <div className="text-gray-400 truncate">{af.name} · {MODE_LABEL[s.fmode]} · {CAM_LABEL[s.cam]}</div>
         </div>
-        <div className="w-40"><Launch onClick={() => onStart(s)} /></div>
+        <div className="w-40"><Launch onClick={() => onStart({ ...s, af: afId })} /></div>
       </div>
     </div>
   );
@@ -468,12 +478,13 @@ export default function Launcher({ initial, best, onStart }: { initial: LaunchSe
 function Constructor({ s, set, af, build, color, tank }: {
   s: LaunchSettings; set: (p: Partial<LaunchSettings>) => void; af: Airframe; build: DroneBuild; color: string; tank: boolean;
 }) {
-  const stock = assemble(s.af);
+  const stock = assemble(af.id);
   const p = perf(af), b = perf(stock);
-  const setPart = (slot: keyof DroneBuild, id: string) => set({ builds: { ...s.builds, [s.af]: { ...build, [slot]: id } } });
-  const idx = AIRFRAMES.findIndex((a) => a.id === s.af);
+  const setPart = (slot: keyof DroneBuild, id: string) => set({ builds: { ...s.builds, [af.id]: { ...build, [slot]: id } } });
+  const plane = isPlane(af), list = plane ? PLANES : AIRFRAMES;
+  const idx = list.findIndex((a) => a.id === af.id);
   const custom = SLOTS.some((sl) => build[sl.id] !== "std");
-  const cls = af.motors.length <= 4 ? "ЛЁГКИЙ" : af.mass < 12 ? "СРЕДНИЙ" : af.mass < 20 ? "ТЯЖЁЛЫЙ" : "СВЕРХТЯЖ.";
+  const cls = plane ? "САМОЛЁТ" : af.motors.length <= 4 ? "ЛЁГКИЙ" : af.mass < 12 ? "СРЕДНИЙ" : af.mass < 20 ? "ТЯЖЁЛЫЙ" : "СВЕРХТЯЖ.";
   return (
     <div className="space-y-6">
       <Heading kicker="Ангар" title="Конструктор" sub="Соберите аппарат под задачу: моторы, винты, батарея и прошивка меняют реальные параметры полёта — тягу, массу, время в воздухе и отклик." />
@@ -490,7 +501,7 @@ function Constructor({ s, set, af, build, color, tank }: {
                   {custom && <span className="sp-label !text-[10px] px-2 py-0.5 sp-skew" style={{ background: "#ff3d8b", color: "#fff" }}><span className="sp-unskew">ТЮНИНГ</span></span>}
                 </div>
                 <div className="sp-title text-4xl sm:text-5xl mt-2" style={{ textShadow: `0 0 30px ${color}55` }}>{af.name}</div>
-                <div className="text-gray-300 mt-1">{af.scheme} · {af.motors.length} моторов · {af.mass.toFixed(1)} кг</div>
+                <div className="text-gray-300 mt-1">{af.scheme} · {plane ? `размах ${af.wing?.span} м` : `${af.motors.length} моторов`} · {af.mass.toFixed(1)} кг</div>
               </div>
               <div className="absolute right-4 top-4 hidden sm:flex flex-col items-end gap-1 pointer-events-none">
                 <span className="sp-label !text-[9px] text-gray-500">ТЯГА / ВЕС</span>
@@ -514,8 +525,8 @@ function Constructor({ s, set, af, build, color, tank }: {
 
           {/* выбор рамы */}
           <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
-            {AIRFRAMES.map((a, i) => {
-              const on = a.id === s.af, c = hex(a.color), pa = perf(assemble(a.id, s.builds[a.id]));
+            {list.map((a, i) => {
+              const on = a.id === af.id, c = hex(a.color), pa = perf(assemble(a.id, s.builds[a.id]));
               return (
                 <button key={a.id} onClick={() => set({ af: a.id })} className="sp-card text-left"
                   style={{ ...cut(12), padding: on ? 2 : 1, background: on ? c : "rgba(255,255,255,0.08)", filter: on ? `drop-shadow(0 6px 18px ${c}55)` : undefined }}>
@@ -526,7 +537,7 @@ function Constructor({ s, set, af, build, color, tank }: {
                     <div className="text-xs text-gray-400">{a.scheme}</div>
                     <div className="flex gap-3 mt-2 text-xs text-gray-300 tabular-nums">
                       <span title="Полезная нагрузка"><Icon name="Package" size={11} className="inline -mt-0.5 mr-0.5" />{pa.payload.toFixed(0)} кг</span>
-                      <span title="Висение без груза"><Icon name="Timer" size={11} className="inline -mt-0.5 mr-0.5" />{pa.hover.toFixed(0)} мин</span>
+                      <span title={isPlane(a) ? "Время в воздухе" : "Висение без груза"}><Icon name="Timer" size={11} className="inline -mt-0.5 mr-0.5" />{pa.hover.toFixed(0)} мин</span>
                     </div>
                   </div>
                 </button>
@@ -542,12 +553,23 @@ function Constructor({ s, set, af, build, color, tank }: {
               <div className="sp-label text-gray-300">Характеристики</div>
               <div className="text-xs text-gray-500 flex items-center gap-1.5"><span className="w-2.5 h-2.5 sp-skew" style={{ background: ACCENT }} />прирост от тюнинга</div>
             </div>
+            {plane ? (
+              <div className="space-y-2 text-sm">
+                {([["Крейсерская скорость", `${Math.round((af.wing?.cruise ?? 0) * 3.6)} км/ч`], ["Скорость сваливания", `${Math.round((af.wing?.stall ?? 0) * 3.6)} км/ч`],
+                  ["Максимальная скорость", `${Math.round(af.maxSpeed * 3.6)} км/ч`], ["Время в воздухе", `${(p.hover / 60).toFixed(1)} ч`],
+                  ["Размах крыла", `${af.wing?.span} м`], ["Старт / посадка", "катапульта / парашют"]] as [string, string][]).map(([k, v]) => (
+                  <div key={k} className="flex justify-between border-b border-white/5 py-1"><span className="text-gray-400">{k}</span><span className="font-semibold">{v}</span></div>
+                ))}
+                <div className="text-xs text-gray-400 leading-snug pt-1">{af.description}</div>
+              </div>
+            ) : (<>
             <SegBar label="Тяговооружённость с грузом" value={p.twr} base={b.twr} max={3} text={p.twr.toFixed(2)} color={color} />
             <SegBar label="Максимальная скорость" value={p.speed} base={b.speed} max={24} text={`${Math.round(p.speed * 3.6)} км/ч`} color={color} />
             <SegBar label="Висение без груза" value={p.hover} base={b.hover} max={50} text={`${p.hover.toFixed(0)} мин`} color={color} />
             <SegBar label="Висение с полным грузом" value={p.hoverFull} base={b.hoverFull} max={30} text={`${p.hoverFull.toFixed(0)} мин`} color={color} />
             <SegBar label="Полезная нагрузка" value={p.payload} base={b.payload} max={26} text={`${p.payload.toFixed(1)} кг`} color={color} />
             <SegBar label="Манёвренность" value={p.agility} base={b.agility} max={11} text={p.agility.toFixed(1)} color={color} />
+            </>)}
             <div className="grid grid-cols-3 gap-2 pt-1 text-sm">
               {[["МАССА", `${af.mass.toFixed(1)} кг`], ["АКБ", `${Math.round(af.batteryWh)} Вт·ч`], ["РЕЗЕРВ", af.redundancy]].map(([k, v]) => (
                 <div key={k} className="min-w-0"><div className="sp-label !text-[9px] text-gray-500">{k}</div><div className="font-bold truncate" title={v}>{v}</div></div>
@@ -556,7 +578,7 @@ function Constructor({ s, set, af, build, color, tank }: {
           </Cut>
 
           {/* комплектующие */}
-          <Cut inner="p-5 space-y-4">
+          {!plane && <Cut inner="p-5 space-y-4">
             <div className="flex items-center justify-between">
               <div className="sp-label text-gray-300">Комплектующие</div>
               {custom && (
@@ -589,7 +611,7 @@ function Constructor({ s, set, af, build, color, tank }: {
                 </div>
               );
             })}
-          </Cut>
+          </Cut>}
 
           {/* старт */}
           <Cut inner="p-5 space-y-3">

@@ -115,6 +115,8 @@ export interface MissionDef {
   course?: boolean;
   /** Режим полёта, в котором начинается упражнение. */
   startMode?: FlightMode;
+  /** Полёт по плану с разрешением на использование воздушного пространства (выше 150 м — без замечаний). */
+  airspace?: boolean;
   create(ctx: Ctx): Mission;
 }
 
@@ -2183,6 +2185,158 @@ class LoggingMission extends Mission {
   }
 }
 
+
+// ───────────────────────────── 19. Авиапатрулирование лесов (самолётный БАС) ─────────────────────────────
+
+/** Маршрут патрулирования (замкнутый), очаги пожаров и костёр туристов — ложная цель. */
+let PATROL = {
+  route: [[0, -700], [700, -900], [1000, -300], [600, 300], [-400, 200], [-900, -400]] as [number, number][],
+  fires: [[800, -600], [-700, -100]] as [number, number][],
+  decoy: [300, -1000] as [number, number],
+};
+const PATROL_RIVER = { z0: 1050, amp: 90, wl: 520, width: 34 };
+
+interface FireSpot { x: number; z: number; y: number; r: number; reported: boolean; decoy: boolean; checked: boolean; started: number }
+
+class PatrolMission extends Mission {
+  private next = 0;
+  private spots: FireSpot[] = [];
+  private beams: THREE.Mesh[] = [];
+  private edgeSaid = -10; private farSaid = -10;
+  private routeDone = false;
+
+  constructor(ctx: Ctx) {
+    super(ctx);
+    const { world } = ctx;
+    // катапульта: направляющая под углом 10° на ферме
+    const rail = new THREE.Group();
+    const steel = std(0x6f7880, 0.5, 0.6), orange = std(0xf07a1a, 0.6);
+    const beam = boxMesh(0.25, 0.12, 4.2, steel, 0, 1.0, 0.3);
+    beam.rotation.x = 0.17;
+    rail.add(beam, boxMesh(0.12, 1.0, 0.12, steel, 0, 0.5, 1.9), boxMesh(0.12, 0.7, 0.12, steel, 0, 0.35, -0.6), boxMesh(0.5, 0.25, 0.5, orange, 0, 0.75, 2.3));
+    this.place(rail, 0, 0.6);
+    // световые столбы над точками маршрута — их видно издалека
+    PATROL.route.forEach(([x, z], i) => {
+      const b = makeBeam(i === 0 ? 0xffd700 : 0x00aaff, 260, 4);
+      b.position.set(x, world.groundAt(x, z) + 130, z);
+      world.scene.add(b);
+      this.beams.push(b);
+    });
+    const spot = (x: number, z: number, decoy: boolean): FireSpot => {
+      // очаг не должен попасть в реку
+      for (let k = 0; k < 10 && world.cfg.river && world.riverDist(x, z) < 90; k++) z -= 60;
+      const y = world.groundAt(x, z), r = decoy ? 2 : 22;
+      // гарь под очагом и тёплое пятно для тепловизора
+      const burn = new THREE.Mesh(new THREE.CircleGeometry(r * (decoy ? 1.5 : 1.25), 28),
+        new THREE.MeshStandardMaterial({ color: decoy ? 0x3a3128 : 0x15110d, roughness: 1, polygonOffset: true, polygonOffsetFactor: -3 }));
+      burn.rotation.x = -Math.PI / 2;
+      this.place(burn, x, z, 0.15);
+      world.addThermal(burn, decoy ? 0.55 : 0.95);
+      if (decoy) {
+        // палатка и костёр туристов
+        const tent = new THREE.Mesh(new THREE.ConeGeometry(1.4, 1.7, 4), std(0x2f7a3a, 0.8));
+        tent.rotation.y = Math.PI / 4;
+        this.place(tent, x + 4, z + 2, 0.85);
+        world.addThermal(tent, 0.25);
+      }
+      return { x, z, y, r, reported: false, decoy, checked: false, started: -60 - Math.random() * 120 };
+    };
+    for (const [x, z] of PATROL.fires) this.spots.push(spot(x, z, false));
+    this.spots.push(spot(PATROL.decoy[0], PATROL.decoy[1], true));
+    ctx.say("Самолёт на катапульте. Газ вверх — старт. Маршрут — световые столбы, первый жёлтый", "info");
+  }
+
+  update(dt: number, action: Action) {
+    this.time += dt;
+    const { drone, fx, world } = this.ctx, w = drone.windNow;
+    // очаги: дым поднимается столбом и ложится по ветру, по кромке — пламя
+    for (const f of this.spots) {
+      const age = this.time - f.started, R = f.decoy ? f.r : f.r * (1 + age / 900);
+      // столб дыма: частиц немного, но крупные и плотные — его видно за километры
+      const smoke = f.decoy ? 2 : 9, flames = f.decoy ? 3 : 30;
+      if (this.ctx.rnd() < smoke * dt) {
+        const a = this.ctx.rnd() * 6.283, d = Math.sqrt(this.ctx.rnd()) * R;
+        const g = f.decoy ? 0.75 : 0.22 + this.ctx.rnd() * 0.2;
+        fx.smoke.spawn(f.x + Math.cos(a) * d, f.y + (f.decoy ? 1 : 8), f.z + Math.sin(a) * d, w.x * 0.4, f.decoy ? 1.5 : 6 + this.ctx.rnd() * 3, w.z * 0.4,
+          f.decoy ? 6 : 30 + this.ctx.rnd() * 12, f.decoy ? 1.5 : 26 + this.ctx.rnd() * 14, g * 1.05, g, g * 0.95, f.decoy ? 0.25 : 0.7);
+      }
+      if (this.ctx.rnd() < flames * dt) {
+        const a = this.ctx.rnd() * 6.283, d = f.decoy ? this.ctx.rnd() * 0.5 : R * (0.6 + this.ctx.rnd() * 0.4);
+        fx.fire.spawn(f.x + Math.cos(a) * d, f.y + 0.5, f.z + Math.sin(a) * d, 0, f.decoy ? 1 : 3 + this.ctx.rnd() * 3, 0,
+          0.7 + this.ctx.rnd() * 0.6, f.decoy ? 0.6 : 2.5 + this.ctx.rnd() * 2.5, 1, 0.6, 0.15, 0.85);
+      }
+    }
+    // маршрут
+    const p = drone.pos;
+    if (!this.routeDone && this.next < PATROL.route.length) {
+      const [x, z] = PATROL.route[this.next];
+      if (Math.hypot(p.x - x, p.z - z) < 170) {
+        (this.beams[this.next].material as THREE.MeshBasicMaterial).color.set(0x00ffaa);
+        this.next++;
+        if (this.next >= PATROL.route.length) { this.routeDone = true; this.ctx.say("Маршрут патрулирования пройден", "good"); }
+        else {
+          (this.beams[this.next].material as THREE.MeshBasicMaterial).color.set(0xffd700);
+          this.ctx.say(`Точка ${this.next} из ${PATROL.route.length} пройдена`, "good");
+        }
+      }
+    }
+    // граница района полётов
+    if ((Math.abs(p.x) > 1600 || Math.abs(p.z) > 1600) && this.time - this.edgeSaid > 6) {
+      this.edgeSaid = this.time;
+      this.ctx.say("Граница района полётов! Разворачивайтесь", "warn");
+    }
+    // фотофиксация очага камерой подвеса
+    if (action.pressed && !drone.landed) {
+      const dir = this.ctx.camDir(), zm = this.ctx.zoom?.() ?? 1;
+      let best: FireSpot | null = null, bd = 1e9;
+      for (const f of this.spots) {
+        const v = new THREE.Vector3(f.x - p.x, f.y + 4 - p.y, f.z - p.z), d = v.length();
+        if (dir.dot(v.divideScalar(d)) > Math.cos(0.28 / zm) && d < bd) { best = f; bd = d; }
+      }
+      if (!best) this.ctx.say("В кадре нет очага — наведите камеру подвеса на дым (G — наклон, Z — зум)", "info");
+      else if (bd > 450 * Math.sqrt(zm)) {
+        if (this.time - this.farSaid > 2) { this.farSaid = this.time; this.ctx.say(`Далеко (${Math.round(bd)} м) — подлетите ближе или увеличьте зум (Z)`, "warn"); }
+      } else if (best.decoy) {
+        if (!best.checked) this.ctx.say("Это костёр туристов у палатки, а не пожар. Отмечено для лесничества — профилактическая беседа", "info");
+        best.checked = true;
+      } else if (!best.reported) {
+        best.reported = true;
+        const k = this.spots.filter((f) => !f.decoy && f.reported).length;
+        const ha = (Math.PI * (best.r * (1 + (this.time - best.started) / 900)) ** 2) / 10000;
+        this.ctx.say(`Очаг №${k}: площадь ≈ ${ha.toFixed(2)} га, координаты переданы в пожарно-химическую станцию`, "good");
+      }
+    }
+    if (!this.tasksDone && this.routeDone && this.spots.every((f) => f.decoy || f.reported)) {
+      this.tasksDone = true;
+      this.ctx.say("Патруль выполнен! Возвращайтесь и садитесь на парашюте над базой (L)", "good");
+    }
+    void world;
+  }
+  refill() { return false; }
+  objectives(): Objective[] {
+    const rep = this.spots.filter((f) => !f.decoy && f.reported).length, all = this.spots.filter((f) => !f.decoy).length;
+    return [
+      { text: "Пройти маршрут патрулирования", done: this.routeDone, progress: `${this.next}/${PATROL.route.length}` },
+      { text: "Найти и сфотографировать очаги", done: rep === all, progress: `${rep}/${all}` },
+    ];
+  }
+  summary() {
+    const rep = this.spots.filter((f) => !f.decoy && f.reported).length;
+    const decoy = this.spots.find((f) => f.decoy);
+    return {
+      score: clamp(100 - Math.max(0, this.time - 780) / 8 - (2 - rep) * 30 + (decoy?.checked ? 5 : 0), 10, 100),
+      rows: [["Точек маршрута", `${this.next}/${PATROL.route.length}`], ["Очагов зафиксировано", `${rep}`], ["Костёр туристов проверен", decoy?.checked ? "да" : "нет"], ["Время", fmtTime(this.time)]] as [string, string][],
+    };
+  }
+  drawMap(m: MapDraw) {
+    const R = PATROL.route;
+    m.path?.([...R, R[0]], "rgba(0,170,255,0.5)", undefined, true);
+    R.forEach(([x, z], i) => m.dot(x, z, i < this.next ? "#00ffaa" : i === this.next ? "#ffd700" : "#00aaff", i === this.next ? 5 : 3));
+    m.ring(0, 0, 90, "#ffffff");
+    for (const f of this.spots) if (f.reported) m.dot(f.x, f.z, "#ff4444", 5); else if (f.checked) m.dot(f.x, f.z, "#888888", 3);
+  }
+}
+
 // ───────────────────────────── 12. Газовый промысел (Вуктыл) ─────────────────────────────
 
 let PADS: [number, number][] = [[60, -260], [-140, -420], [170, -520]];
@@ -2821,6 +2975,25 @@ export function rollLayouts(R: () => number = Math.random) {
   AREA = { ...AREA, x: rr(-120, 120), z: rr(-320, -230) };
   CAMP = { ...CAMP, x: rr(-110, 110), z: rr(-215, -150) };
   SETTLE = (() => { const [x, z] = at(R() * Math.PI * 2, rr(200, 265)); return { x, z }; })();
+  // 19. авиапатруль: замкнутый маршрут в случайной стороне, очаги — в стороне от линии маршрута
+  {
+    const phi = north(), [cx, cz] = at(phi, rr(450, 650)), rot = R() * Math.PI * 2;
+    const pts: [number, number][] = [];
+    for (let k = 0; k < 6; k++) {
+      const t = rot + (k / 6) * Math.PI * 2, rad = rr(700, 950);
+      pts.push([clamp(cx + Math.cos(t) * rad, -1450, 1450), clamp(cz + Math.sin(t) * rad, -1450, 700)]);
+    }
+    // начинаем с ближайшей к базе точки
+    const i0 = pts.reduce((b, p, i) => (Math.hypot(...p) < Math.hypot(...pts[b]) ? i : b), 0);
+    const route = [...pts.slice(i0), ...pts.slice(0, i0)];
+    const off = (k: number, d: number): [number, number] => {
+      const [ax, az] = route[k], [bx, bz] = route[(k + 1) % 6], L = Math.hypot(bx - ax, bz - az) || 1;
+      const s = R() < 0.5 ? -1 : 1, t = rr(0.3, 0.7);
+      return [clamp(ax + (bx - ax) * t + (-(bz - az) / L) * d * s, -1500, 1500), clamp(az + (bz - az) * t + ((bx - ax) / L) * d * s, -1500, 750)];
+    };
+    const segs = [0, 1, 2, 3, 4, 5].sort(() => R() - 0.5);
+    PATROL = { route, fires: [off(segs[0], rr(220, 450)), off(segs[1], rr(220, 450))], decoy: off(segs[2], rr(120, 300)) };
+  }
   // 15. вырубка — в другом секторе, 16. льдина стартует в другом месте реки
   LOG_ROT = rr(-0.6, 0.6);
   FLOE_S = rr(-480, -320);
@@ -3116,6 +3289,24 @@ export const MISSIONS: MissionDef[] = [
     get world(): WorldCfg { return { seed: 167, size: 1400, relief: 9, flats: [BASE_FLAT, { x: SETTLE.x, z: SETTLE.z, rx: 55, rz: 55 }], clearings: [], forestDensity: 0.75, palette: NIGHT }; },
     wind: { toDeg: 120, speed: 2, gust: 0.3 }, gimbalPitch: -35, pip: true, payloadLabel: "Камера", payloadUnit: "",
     create: (c) => new BearMission(c),
+  },
+  {
+    id: "patrol", title: "Авиапатруль лесов", place: "Усть-Куломский район, Республика Коми",
+    tagline: "Самолётный БАС: облёт маршрута и поиск очагов", icon: "Plane", color: "#7dd3fc",
+    briefing: [
+      "Лесничество выпускает самолётный БАС «Кречет» на облёт лесов — сухая погода, класс пожарной опасности IV. Полёт по плану, разрешение на использование воздушного пространства получено.",
+      "Самолёт не висит: скорость держит автопилот (газ в центре — крейсерская 85 км/ч, ниже 55 км/ч — сваливание). Ручка вбок — крен и разворот, на себя/от себя — набор и снижение, отпущена — держит высоту. Старт — газ вверх на катапульте.",
+      "Пройдите маршрут по световым столбам. Дым видно за километры: подлетите, наведите камеру подвеса (G — наклон, Z — зум) и сфотографируйте очаг (ПРОБЕЛ). Не путайте пожар с костром туристов.",
+      "Посадка — на парашюте (L) над базой: купол сносит ветром, выпускайте с наветренной стороны на высоте 80–120 м. H — автовозврат: самолёт придёт к базе и встанет в вираж.",
+    ],
+    actionLabel: "Снимок", recommended: ["krechet"], startMode: "POS", airspace: true,
+    get world(): WorldCfg { return {
+      seed: 181, size: 3600, relief: 26, river: PATROL_RIVER,
+      flats: [{ x: 0, z: 0, rx: 40, rz: 40 }], clearings: [{ x: 0, z: 0, r: 70 }],
+      corridors: [{ x1: 0, z1: 0, x2: 0, z2: -380, w: 80 }], forestDensity: 0.45, palette: { ...SUMMER, fogDensity: 0.00042, clouds: 0.3 },
+    }; },
+    wind: { toDeg: 70, speed: 4, gust: 0.35 }, gimbalPitch: -35, pip: true, payloadLabel: "Камера", payloadUnit: "",
+    create: (c) => new PatrolMission(c),
   },
 ];
 

@@ -2,7 +2,8 @@
 import { WorldRecorder } from "./replay";
 import { Ambience, music, playSplash, setSoundPrefs, getSoundPrefs } from "./sound";
 import * as THREE from "three";
-import { Airframe } from "./airframes";
+import { Airframe, isPlane } from "./airframes";
+import { PlaneSim } from "./plane";
 import { Particles, PrecipField } from "./effects";
 import { Action, Ctx, Difficulty, DIFFICULTY, MapDraw, Mission, MissionDef, Objective, SayKind } from "./missions";
 import { clamp, mulberry32 } from "./noise";
@@ -288,7 +289,7 @@ export class SimEngine {
   constructor(o: EngineOpts) {
     this.o = o;
     this.world = new World(o.mission.world, o.quality);
-    this.drone = new DroneSim(o.airframe);
+    this.drone = isPlane(o.airframe) ? new PlaneSim(o.airframe) : new DroneSim(o.airframe);
     this.pip = o.mission.pip;
     this.gimbalPitch = o.mission.gimbalPitch;
 
@@ -441,6 +442,9 @@ export class SimEngine {
     }
     else if (c === "mute") { this.audio.muted = !this.audio.muted; this.amb.muted = this.audio.muted; setSoundPrefs({ muted: this.audio.muted }); }
     else if (c === "mode") this.setMode(MODES[(MODES.indexOf(this.drone.mode) + 1) % MODES.length]);
+    else if (c === "land" && this.plane) {
+      if (this.plane.deployChute()) this.rth = false;
+    }
     else if (c === "land") {
       if (this.drone.landed && !this.landReq) return;
       this.landReq = !this.landReq;
@@ -697,14 +701,27 @@ export class SimEngine {
       this.lowBatHandled = true; this.rth = true;
       this.say("Заряд 20% — автоматический возврат на базу. Отменить — отклоните стики", "warn");
     }
-    if (d.soc < 0.07 && !d.landed && !this.autoLand) { this.autoLand = true; this.rth = false; this.say("КРИТИЧЕСКИЙ ЗАРЯД — принудительная посадка", "warn"); }
+    const pl = this.plane;
+    if (d.soc < 0.07 && !d.landed && !this.autoLand) {
+      this.autoLand = true; this.rth = false;
+      if (pl) pl.deployChute();
+      this.say(pl ? "КРИТИЧЕСКИЙ ЗАРЯД — выпущен парашют" : "КРИТИЧЕСКИЙ ЗАРЯД — принудительная посадка", "warn");
+    }
     if (this.failsafe === "rth") this.rth = true;
-    if (this.rth && !d.crashed) st = this.autopilot(st);
+    if (pl) {
+      // у самолёта свой автопилот возврата: к базе и вираж над ней
+      if (this.rth && this.linkLostT <= 1 && (Math.hypot(st.roll, st.pitch) > 0.3 || Math.abs(st.throttle) > 0.3)) {
+        this.rth = false; if (this.failsafe) this.failsafe = null;
+        this.o.onSay("Автовозврат отменён — управление у пилота", "info");
+      }
+      pl.autoHome = this.rth && pl.launched && !pl.chute;
+    } else if (this.rth && !d.crashed) st = this.autopilot(st);
     if (this.landReq && st.throttle > 0.3) { this.landReq = false; this.o.onSay("Автопосадка отменена", "info"); }
-    const needsAssist = this.failsafe === "land" || this.failsafe === "hover" || this.autoLand || this.landReq;
+    const needsAssist = !pl && (this.failsafe === "land" || this.failsafe === "hover" || this.autoLand || this.landReq);
     if (needsAssist && MANUAL_THROTTLE[d.mode]) d.mode = "ATTI"; // контроллер сам переходит в режим с удержанием высоты
     if (this.failsafe === "hover") { this.hoverT += dt; if (this.hoverT > 20) { this.failsafe = "land"; this.say("Связи нет 20 с — посадка на месте", "warn"); } }
-    if (this.failsafe === "land" || this.autoLand) { st = { ...st, throttle: Math.min(st.throttle, -0.55) }; }
+    if (pl && (this.failsafe === "land" || this.failsafe === "hover")) { this.failsafe = "rth"; this.rth = true; } // самолёт не висит — только возврат
+    if (!pl && (this.failsafe === "land" || this.autoLand)) { st = { ...st, throttle: Math.min(st.throttle, -0.55) }; }
     if (this.landReq) {
       // плавное снижение, у самой земли — медленно; горизонталь у пилота, но мягче
       const agl = d.pos.y - d.gear - this.world.groundAt(d.pos.x, d.pos.z);
@@ -718,6 +735,7 @@ export class SimEngine {
     if (!this.ended || this.endTimer >= 0) {
       this.acc += dt;
       while (this.acc >= STEP) { d.step(STEP, st, this.env); this.acc -= STEP; }
+      if (pl?.event) this.planeEvent(pl);
     }
     if (!this.ended) {
       this.mission.update(dt, action);
@@ -765,7 +783,7 @@ export class SimEngine {
   }
 
   private rules(dt: number) {
-    const d = this.drone, m = this.mission, say = (t: string, k: SayKind) => this.say(t, k);
+    const d = this.drone, m = this.mission, say = (t: string, k: SayKind) => this.say(t, k), pl = this.plane;
     if (d.crashed && d.crashed === WATER_CRASH) {
       this.ended = true; this.endTimer = 3.4;
       this.crashAt = { t: this.recT, water: true };
@@ -783,7 +801,12 @@ export class SimEngine {
       return;
     }
     if (m.failed) { this.finish(false, m.failed); return; }
-    const atBase = Math.hypot(d.pos.x, d.pos.z) < 6;
+    const atBase = Math.hypot(d.pos.x, d.pos.z) < (pl ? 90 : 6);
+    if (pl && pl.launched && d.landed && !atBase) {
+      // самолёт без катапульты второй раз не взлетит: посадка вне базы — эвакуация наземной группой
+      this.finish(m.tasksDone, m.tasksDone ? "Задача выполнена, но посадка вне базы — аппарат эвакуирован" : "Аппарат приземлился вне базы");
+      return;
+    }
     if (d.landed && atBase) {
       this.baseTimer += dt;
       if (m.tasksDone && this.baseTimer > 1) { this.finish(true, "Задача выполнена"); return; }
@@ -829,10 +852,10 @@ export class SimEngine {
     L.maxSpeed = Math.max(L.maxSpeed, spd);
     L.distance += spd * dt;
     // ограничение высоты для БВС без разрешения на использование воздушного пространства — 150 м
-    if (agl > 150) { if (L.over150 === 0) this.say("Выше 150 м — нужен план полёта и разрешение на использование воздушного пространства", "warn"); L.over150 += dt; }
+    if (agl > 150 && !this.o.mission.airspace) { if (L.over150 === 0) this.say("Выше 150 м — нужен план полёта и разрешение на использование воздушного пространства", "warn"); L.over150 += dt; }
     // полёт за пределами прямой видимости (условно — дальше 2 км от пилота)
     if (Math.hypot(d.pos.x, d.pos.z) > 2000) L.beyondVlos += dt;
-    if (d.landed && this.wasAirborne && this.lastVy < -2.5) { L.hardLandings++; this.say("Жёсткая посадка — гасите вертикальную скорость у земли", "warn"); }
+    if (d.landed && this.wasAirborne && this.lastVy < -2.5 && !this.plane) { L.hardLandings++; this.say("Жёсткая посадка — гасите вертикальную скорость у земли", "warn"); }
     if (d.bumps !== this.lastBumps) { this.lastBumps = d.bumps; this.say("Задели препятствие — аккуратнее", "warn"); }
     this.wasAirborne = !d.landed;
     this.lastVy = d.vel.y;
@@ -995,6 +1018,19 @@ export class SimEngine {
     this.pushHud();
     return true;
   }
+  private stallSaid = -10;
+  private planeEvent(pl: PlaneSim) {
+    const e = pl.event; pl.event = null;
+    if (e === "launch") this.say("Старт с катапульты! Автопилот набирает высоту. Газ в центре — крейсерские 85 км/ч", "good");
+    else if (e === "chute") this.say("Парашют выпущен: двигатель стоп, купол сносит по ветру", "info");
+    else if (e === "stall" && this.drone.time - this.stallSaid > 4) { this.stallSaid = this.drone.time; this.say("СВАЛИВАНИЕ! Ручку от себя, газ вперёд — наберите скорость", "warn"); }
+    else if (e === "touchdown") this.say("Приземление", "good");
+    else if (e === "tree") this.say("Купол зацепился за деревья — аппарат повис на кроне", "warn");
+  }
+
+  /** Самолётный БАС (своя физика, катапульта, парашют). */
+  private get plane(): PlaneSim | null { return this.drone instanceof PlaneSim ? this.drone : null; }
+
   get isReplaying() { return !!this.replay; }
   stopReplay() {
     // мир — в конечное состояние, как после миссии
@@ -1293,7 +1329,14 @@ export class SimEngine {
     if (d.soc < 0.2) warnings.push("НИЗКИЙ ЗАРЯД");
     if (d.windNow.length() > 9) warnings.push("СИЛЬНЫЙ ВЕТЕР");
     const aglW = d.pos.y - d.gear - gh;
-    if (!d.landed && aglW < 6 && d.vel.y < -3) warnings.push("БЫСТРОЕ СНИЖЕНИЕ У ЗЕМЛИ");
+    const pl = this.plane;
+    if (pl) {
+      if (pl.stall) warnings.push("СВАЛИВАНИЕ");
+      else if (pl.launched && !pl.chute && !pl.landed && pl.airspeed < (pl.af.wing?.stall ?? 14) * 1.15) warnings.push("МАЛАЯ СКОРОСТЬ");
+      if (pl.chute && !pl.landed) warnings.push("ПАРАШЮТ");
+      else if (pl.lowAlt && pl.launched && !pl.landed) warnings.push("МАЛАЯ ВЫСОТА — АВТОПИЛОТ НАБИРАЕТ");
+      if (!pl.launched) warnings.push("НА КАТАПУЛЬТЕ — ГАЗ ВВЕРХ ДЛЯ СТАРТА");
+    } else if (!d.landed && aglW < 6 && d.vel.y < -3) warnings.push("БЫСТРОЕ СНИЖЕНИЕ У ЗЕМЛИ");
     if (!d.gpsOk) warnings.push("НЕТ GPS — РЕЖИМ ATTI");
     if (this.linkQ < 0.22 && this.linkLostT <= 1) warnings.push("СЛАБЫЙ СИГНАЛ ПУЛЬТА");
     const objectives = [...m.objectives(), { text: "Вернуться и сесть на площадку базы", done: false }];

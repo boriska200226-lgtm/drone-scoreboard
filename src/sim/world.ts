@@ -103,6 +103,8 @@ export class World {
     this.cfg = cfg;
     this.quality = quality;
     this.size = cfg.size;
+    // большие районы (самолётные миссии) — сетка рельефа гуще, чтобы клетка оставалась ~9 м
+    if (cfg.size > 2200) this.n = 385;
     this.cell = cfg.size / (this.n - 1);
     this.hf = new Float32Array(this.n * this.n);
     this.waterLevel = cfg.river ? 0 : null;
