@@ -73,6 +73,9 @@ export abstract class Mission {
     return true;
   }
   dispose(): void { /* нет собственных ресурсов */ }
+  /** Повтор полёта: снимок изменяемого состояния миссии (пожар, обработанное поле…) и его применение. */
+  snapshot(): unknown { return null; }
+  restore(_s: unknown, _dt: number): void { /* по умолчанию состояние миссии в повторе не меняется */ }
 
   protected agl(): number {
     const d = this.ctx.drone;
@@ -348,6 +351,66 @@ class FireMission extends Mission {
     }
   }
 
+  /** Отсвет, языки пламени и (при живом полёте) искры с дымом — по текущему состоянию клеток. */
+  private renderFire(dt: number, wx: number, wz: number, spawn: boolean) {
+    const { world, fx } = this.ctx;
+    // отсвет пламени: свет в центре горящей кромки, мерцает
+    let gx = 0, gz = 0, gi = 0;
+    for (let c = 0; c < this.state.length; c++) if (this.state[c] === 2) { gx += this.cx(c) * this.inten[c]; gz += this.cz(c) * this.inten[c]; gi += this.inten[c]; }
+    if (gi > 0) {
+      gx /= gi; gz /= gi;
+      this.glow.position.x += (gx - this.glow.position.x) * Math.min(1, dt);
+      this.glow.position.z += (gz - this.glow.position.z) * Math.min(1, dt);
+      this.glow.position.y = world.groundAt(this.glow.position.x, this.glow.position.z) + 9;
+    }
+    this.glow.intensity = Math.min(1, gi / 8) * 120 * (0.85 + 0.15 * Math.sin(this.time * 17) * Math.sin(this.time * 7.3));
+
+    // пламя и дым
+    this.flames.begin();
+    for (let c = 0; c < this.state.length; c++) {
+      if (this.state[c] !== 2) continue;
+      const I = this.inten[c];
+      // низовой огонь: языки пламени на постоянных местах клетки, их высота дышит и зависит от силы горения
+      for (let k = 0; k < 5; k++) {
+        const h1 = Math.sin(c * 12.9898 + k * 78.233) * 43758.5453, r1 = h1 - Math.floor(h1);
+        const h2 = Math.sin(c * 39.346 + k * 11.135) * 24634.6345, r2 = h2 - Math.floor(h2);
+        const x = this.cx(c) + (r1 - 0.5) * this.cs * 0.9, z = this.cz(c) + (r2 - 0.5) * this.cs * 0.9;
+        const breath = 0.8 + 0.2 * Math.sin(this.time * (2 + r1 * 3) + k);
+        this.flames.add(x, world.groundAt(x, z) - 0.2, z, (2.5 + r2 * 2.5) * (0.5 + 0.5 * I), (2.5 + r1 * 4) * (0.3 + 0.7 * I) * breath, I);
+      }
+      // верховой огонь: горящие кроны деревьев
+      const trees = this.cellTrees[c];
+      for (let k = 0; k < Math.min(3, trees.length); k++) {
+        const t = trees[(k * 7) % trees.length];
+        if (!world.treeAlive[t] || I < 0.35) continue;
+        const h = world.treeH[t];
+        this.flames.add(world.treeX[t], world.treeY[t] + h * 0.15, world.treeZ[t], h * 0.35 * I + 1.5, h * (0.75 + 0.15 * Math.sin(this.time * 3 + t)) * I, I);
+      }
+      // искры и горящие хлопья, которые уносит потоком
+      if (spawn && this.ctx.rnd() < I * 9 * dt) {
+        const x = this.cx(c) + (this.ctx.rnd() - 0.5) * this.cs, z = this.cz(c) + (this.ctx.rnd() - 0.5) * this.cs;
+        fx.fire.spawn(x, world.groundAt(x, z) + 2 + this.ctx.rnd() * 8 * I, z, wx * 2 + (this.ctx.rnd() - 0.5) * 3, 5 + this.ctx.rnd() * 7, wz * 2 + (this.ctx.rnd() - 0.5) * 3,
+          1.2 + this.ctx.rnd() * 1.4, 0.25 + this.ctx.rnd() * 0.35, 1, 1, 1, 0.9);
+      }
+      if (spawn && this.ctx.rnd() < I * 2.6 * dt) {
+        const x = this.cx(c) + (this.ctx.rnd() - 0.5) * this.cs, z = this.cz(c) + (this.ctx.rnd() - 0.5) * this.cs;
+        const g = 0.16 + this.ctx.rnd() * 0.22;
+        fx.smoke.spawn(x, world.groundAt(x, z) + 8, z, 0, 4 + this.ctx.rnd() * 2, 0, 12 + this.ctx.rnd() * 6, 9 + this.ctx.rnd() * 5, g * 1.05, g, g * 0.92, 0.42);
+      }
+    }
+
+    this.flames.end(dt, this.ctx.camPos());
+  }
+
+  // для повтора полёта: состояние пожара раз в секунду
+  snapshot() { return { state: this.state.slice(), inten: this.inten.slice(), time: this.time }; }
+  restore(sn: unknown, dt: number) {
+    const v = sn as { state: Uint8Array; inten: Float32Array; time: number };
+    this.state.set(v.state); this.inten.set(v.inten);
+    this.time += dt;
+    this.renderFire(dt, 0, 0, false);
+  }
+
   update(dt: number, action: Action) {
     this.time += dt;
     const { drone, world, fx, af } = this.ctx;
@@ -396,52 +459,7 @@ class FireMission extends Mission {
       }
     }
 
-    // отсвет пламени: свет в центре горящей кромки, мерцает
-    let gx = 0, gz = 0, gi = 0;
-    for (let c = 0; c < this.state.length; c++) if (this.state[c] === 2) { gx += this.cx(c) * this.inten[c]; gz += this.cz(c) * this.inten[c]; gi += this.inten[c]; }
-    if (gi > 0) {
-      gx /= gi; gz /= gi;
-      this.glow.position.x += (gx - this.glow.position.x) * Math.min(1, dt);
-      this.glow.position.z += (gz - this.glow.position.z) * Math.min(1, dt);
-      this.glow.position.y = world.groundAt(this.glow.position.x, this.glow.position.z) + 9;
-    }
-    this.glow.intensity = Math.min(1, gi / 8) * 120 * (0.85 + 0.15 * Math.sin(this.time * 17) * Math.sin(this.time * 7.3));
-
-    // пламя и дым
-    this.flames.begin();
-    for (let c = 0; c < this.state.length; c++) {
-      if (this.state[c] !== 2) continue;
-      const I = this.inten[c];
-      // низовой огонь: языки пламени на постоянных местах клетки, их высота дышит и зависит от силы горения
-      for (let k = 0; k < 5; k++) {
-        const h1 = Math.sin(c * 12.9898 + k * 78.233) * 43758.5453, r1 = h1 - Math.floor(h1);
-        const h2 = Math.sin(c * 39.346 + k * 11.135) * 24634.6345, r2 = h2 - Math.floor(h2);
-        const x = this.cx(c) + (r1 - 0.5) * this.cs * 0.9, z = this.cz(c) + (r2 - 0.5) * this.cs * 0.9;
-        const breath = 0.8 + 0.2 * Math.sin(this.time * (2 + r1 * 3) + k);
-        this.flames.add(x, world.groundAt(x, z) - 0.2, z, (2.5 + r2 * 2.5) * (0.5 + 0.5 * I), (2.5 + r1 * 4) * (0.3 + 0.7 * I) * breath, I);
-      }
-      // верховой огонь: горящие кроны деревьев
-      const trees = this.cellTrees[c];
-      for (let k = 0; k < Math.min(3, trees.length); k++) {
-        const t = trees[(k * 7) % trees.length];
-        if (!world.treeAlive[t] || I < 0.35) continue;
-        const h = world.treeH[t];
-        this.flames.add(world.treeX[t], world.treeY[t] + h * 0.15, world.treeZ[t], h * 0.35 * I + 1.5, h * (0.75 + 0.15 * Math.sin(this.time * 3 + t)) * I, I);
-      }
-      // искры и горящие хлопья, которые уносит потоком
-      if (this.ctx.rnd() < I * 9 * dt) {
-        const x = this.cx(c) + (this.ctx.rnd() - 0.5) * this.cs, z = this.cz(c) + (this.ctx.rnd() - 0.5) * this.cs;
-        fx.fire.spawn(x, world.groundAt(x, z) + 2 + this.ctx.rnd() * 8 * I, z, wx * 2 + (this.ctx.rnd() - 0.5) * 3, 5 + this.ctx.rnd() * 7, wz * 2 + (this.ctx.rnd() - 0.5) * 3,
-          1.2 + this.ctx.rnd() * 1.4, 0.25 + this.ctx.rnd() * 0.35, 1, 1, 1, 0.9);
-      }
-      if (this.ctx.rnd() < I * 2.6 * dt) {
-        const x = this.cx(c) + (this.ctx.rnd() - 0.5) * this.cs, z = this.cz(c) + (this.ctx.rnd() - 0.5) * this.cs;
-        const g = 0.16 + this.ctx.rnd() * 0.22;
-        fx.smoke.spawn(x, world.groundAt(x, z) + 8, z, 0, 4 + this.ctx.rnd() * 2, 0, 12 + this.ctx.rnd() * 6, 9 + this.ctx.rnd() * 5, g * 1.05, g, g * 0.92, 0.42);
-      }
-    }
-
-    this.flames.end(dt, this.ctx.camPos());
+    this.renderFire(dt, wx, wz, true);
 
     // тлеющие потушенные квадраты: тонкий светлый дымок
     for (let c = 0; c < this.state.length; c++) {
@@ -930,6 +948,13 @@ class AgroMission extends Mission {
     }
   }
   private coverage() { return this.covered / this.dose.length; }
+  snapshot() { return this.dose.slice(); }
+  restore(sn: unknown) {
+    const v = sn as Uint8Array;
+    let changed = false;
+    for (let c = 0; c < v.length; c++) if (v[c] !== this.dose[c]) { this.dose[c] = v[c]; this.paintCell(c % this.nx, Math.floor(c / this.nx)); changed = true; }
+    if (changed) this.tex.needsUpdate = true;
+  }
 
   objectives(): Objective[] {
     return [

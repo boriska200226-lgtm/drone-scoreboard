@@ -77,6 +77,9 @@ export interface ParticleOpts {
 }
 
 export class Particles {
+  /** Все живые системы частиц (для повтора полёта) и перехват рождения частиц для записи. */
+  static all = new Set<Particles>();
+  static onSpawn: ((p: Particles, a: number[]) => void) | null = null;
   points: THREE.Points;
   private pos: Float32Array; private vel: Float32Array; private col: Float32Array; private size: Float32Array;
   private life: Float32Array; private maxLife: Float32Array; private alpha: Float32Array; private data: Float32Array;
@@ -115,6 +118,14 @@ export class Particles {
     this.points.renderOrder = opts.additive ? 3 : 2;
     if (opts.thermal) this.points.layers.enable(THERMAL_LAYER);
     scene.add(this.points);
+    Particles.all.add(this);
+  }
+
+  /** Погасить все частицы (перемотка повтора). */
+  clear() {
+    this.life.fill(0); this.size.fill(0);
+    for (let i = 3; i < this.col.length; i += 4) this.col[i] = 0;
+    this.points.visible = false;
   }
 
   setScale(s: number) { this.mat.uniforms.uScale.value = s; }
@@ -124,6 +135,7 @@ export class Particles {
 
   spawn(x: number, y: number, z: number, vx: number, vy: number, vz: number,
         life: number, size: number, r: number, g: number, b: number, a: number, data = 0) {
+    if (Particles.onSpawn) Particles.onSpawn(this, [x, y, z, vx, vy, vz, life, size, r, g, b, a, data]);
     const i = this.head;
     this.head = (this.head + 1) % this.opts.max;
     this.pos[i * 3] = x; this.pos[i * 3 + 1] = y; this.pos[i * 3 + 2] = z;
@@ -173,6 +185,7 @@ export class Particles {
   }
 
   dispose() {
+    Particles.all.delete(this);
     this.points.geometry.dispose();
     this.mat.dispose();
   }

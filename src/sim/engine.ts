@@ -1,4 +1,5 @@
 // Игровой цикл: ввод → физика → миссия → рендер (основной вид + окно подвесной камеры).
+import { WorldRecorder } from "./replay";
 import { Ambience, music, playSplash, setSoundPrefs, getSoundPrefs } from "./sound";
 import * as THREE from "three";
 import { Airframe } from "./airframes";
@@ -278,6 +279,10 @@ export class SimEngine {
   private recording = true;
   private events: ReplayEvent[] = [];
   private replay: { t: number; playing: boolean; speed: number; i: number } | null = null;
+  private worldRec: WorldRecorder;
+  /** Часы записи: идут и после аварии (физика тогда стоит). */
+  private recT = 0;
+  private crashAt: { t: number; water: boolean } | null = null;
   private thermalPal = (() => { try { return (+(localStorage.getItem("bas-sim-thermal-pal") ?? 0) || 0) % 4; } catch { return 0; } })();
 
   constructor(o: EngineOpts) {
@@ -321,7 +326,7 @@ export class SimEngine {
     this.fx = {
       fire: new Particles(scene, { max: 3600, additive: true, thermal: true, fireRamp: true, fog }),
       smoke: new Particles(scene, { max: 2600, drag: 0.45, grow: 3.2, fog, tint: lightTint }),
-      water: new Particles(scene, { max: 4000, gravity: 9.81, drag: 0.35, fog, tint: lightTint, ground, onHit: (x, z, m) => this.mission.onWaterHit(x, z, m) }),
+      water: new Particles(scene, { max: 4000, gravity: 9.81, drag: 0.35, fog, tint: lightTint, ground, onHit: (x, z, m) => { if (!this.replay) this.mission.onWaterHit(x, z, m); } }),
     };
 
     this.env = {
@@ -342,6 +347,7 @@ export class SimEngine {
       fault: (k, dur) => this.instructor(k, false, dur),
       link: () => ({ lost: this.linkLostT > 1, failsafe: this.failsafe, q: this.linkQ }),
     };
+    const before = new Set(scene.children);
     this.mission = o.mission.create(ctx);
     if (o.mission.precip) this.precip = new PrecipField(scene, o.mission.precip, o.quality === "low" ? 2500 : o.mission.precip === "rain" ? 9000 : 6000);
     if (o.mission.drain) this.drone.drain = o.mission.drain;
@@ -360,6 +366,8 @@ export class SimEngine {
       livery: o.livery,
     });
     scene.add(this.model.group);
+    before.add(this.model.group);
+    this.worldRec = new WorldRecorder(scene, before);
 
     if (o.quality !== "low") {
       const size = new THREE.Vector2(o.canvas.clientWidth || window.innerWidth, o.canvas.clientHeight || window.innerHeight);
@@ -735,11 +743,15 @@ export class SimEngine {
     let avg = 0;
     for (let i = 0; i < d.n; i++) avg += d.thrust[i] / d.af.motorThrust;
     if (this.recording) {
+      this.recT += dt;
       this.trackAcc += dt;
       if (this.trackAcc >= 0.05 || this.track.length === 0) {
         this.trackAcc = 0;
-        this.track.push(d.time, d.pos.x, d.pos.y, d.pos.z, d.quat.x, d.quat.y, d.quat.z, d.quat.w, avg / d.n);
+        // ориентация — как у модели на экране (с креном при аварии и погружении)
+        const gq = this.model.group.quaternion;
+        this.track.push(this.recT, d.pos.x, d.pos.y, d.pos.z, gq.x, gq.y, gq.z, gq.w, avg / d.n);
       }
+      this.worldRec.record(this.recT, dt, () => this.mission.snapshot());
     }
     this.audio.set(avg / d.n, !d.crashed && !this.ended);
     this.ambAcc += dt;
@@ -756,12 +768,14 @@ export class SimEngine {
     const d = this.drone, m = this.mission, say = (t: string, k: SayKind) => this.say(t, k);
     if (d.crashed && d.crashed === WATER_CRASH) {
       this.ended = true; this.endTimer = 3.4;
+      this.crashAt = { t: this.recT, water: true };
       this.splashDown();
       say(d.crashed, "warn");
       return;
     }
     if (d.crashed) {
       this.ended = true; this.endTimer = 1.8;
+      this.crashAt = { t: this.recT, water: false };
       for (let i = 0; i < 60; i++) {
         this.fx.fire.spawn(d.pos.x, d.pos.y, d.pos.z, (this.rnd() - 0.5) * 9, this.rnd() * 7, (this.rnd() - 0.5) * 9, 0.5 + this.rnd(), 1.5 + this.rnd() * 2, 1, 0.6, 0.15, 0.8);
       }
@@ -794,7 +808,7 @@ export class SimEngine {
 
   /** Сообщение пилоту; предупреждения попадают в замечания разбора полёта. */
   private say(text: string, kind: SayKind) {
-    if (this.recording && !this.replay) this.events.push({ t: this.drone.time, text, kind });
+    if (this.recording && !this.replay) this.events.push({ t: this.recT, text, kind });
     if (kind === "warn") {
       // одинаковые по смыслу замечания группируем: убираем числа из текста
       const key = text.replace(/[0-9.,]+/g, "N").replace(/\s+/g, " ").trim();
@@ -974,28 +988,36 @@ export class SimEngine {
     this.recording = false;
     this.paused = false;
     this.thermal = false;
-    // убираем последствия аварии: в повторе аппарат целый, всплеск/пламя проиграются заново не будут
+    // мир (звери, грузы, огонь, брызги) проигрывается из записи; крен аварии — из записи ориентации
     this.drone.crashed = null;
-    if (this.sink) { this.sink.rings.forEach((r) => (r.visible = false)); this.sink = null; }
+    this.sink = null;
+    this.worldRec.begin(this.track[0]);
     this.pushHud();
     return true;
   }
   get isReplaying() { return !!this.replay; }
-  stopReplay() { this.replay = null; this.audio.set(0, false); this.pushHud(); }
+  stopReplay() {
+    // мир — в конечное состояние, как после миссии
+    this.worldRec.seek(this.track[this.track.length - SimEngine.TS]);
+    this.replay = null; this.audio.set(0, false); this.pushHud();
+  }
   replayCtl(c: { play?: boolean; speed?: number; seek?: number; step?: number }) {
     const r = this.replay;
     if (!r) return;
-    if (c.play !== undefined) { r.playing = c.play; if (c.play && r.t >= this.trackDur()) r.t = 0; }
+    if (c.play !== undefined) { r.playing = c.play; if (c.play && r.t >= this.trackDur()) { r.t = 0; this.worldRec.seek(this.track[0]); } }
     if (c.speed) r.speed = c.speed;
-    if (c.seek !== undefined) { r.t = clamp(c.seek, 0, this.trackDur()); r.i = 0; }
-    if (c.step) { r.t = clamp(r.t + c.step, 0, this.trackDur()); r.i = 0; }
+    if (c.seek !== undefined) { r.t = clamp(c.seek, 0, this.trackDur()); r.i = 0; this.worldRec.seek(this.track[0] + r.t); }
+    if (c.step) { r.t = clamp(r.t + c.step, 0, this.trackDur()); r.i = 0; this.worldRec.seek(this.track[0] + r.t); }
     this.pushHud();
   }
 
   private _qa = new THREE.Quaternion(); private _qb = new THREE.Quaternion(); private _pv = new THREE.Vector3();
   private replayStep(dt: number) {
     const r = this.replay!, T = this.track, S = SimEngine.TS, n = T.length / S, t0 = T[0], dur = this.trackDur();
+    const prevT = r.t;
     if (r.playing) { r.t += dt * r.speed; if (r.t >= dur) { r.t = dur; r.playing = false; } }
+    // всплеск звучит заново, когда повтор проходит момент падения
+    if (this.crashAt?.water && prevT < this.crashAt.t - t0 && r.t >= this.crashAt.t - t0) playSplash(this.audio.muted);
     const tt = t0 + r.t;
     // ищем кадр записи (обычно — следующий за прошлым)
     if (r.i >= n - 1 || T[r.i * S] > tt) r.i = 0;
@@ -1013,9 +1035,13 @@ export class SimEngine {
     const thr = T[a + 8] + (T[b + 8] - T[a + 8]) * k;
     for (let i = 0; i < d.n; i++) d.thrust[i] = thr * d.af.motorThrust;
     d.landed = thr < 0.05;
-    updateModels(dt * (r.playing ? r.speed : 0));
+    const pdt = r.playing ? dt * r.speed : 0;
+    this.worldRec.apply(tt, pdt);
+    const sn = this.worldRec.snapshotAt(tt);
+    if (sn !== null) this.mission.restore(sn, pdt);
+    updateModels(pdt);
     const wind = d.windNow;
-    this.fx.fire.update(dt, wind); this.fx.smoke.update(dt, wind); this.fx.water.update(dt, wind);
+    for (const ps of Particles.all) ps.update(pdt, wind);
     this.syncVisuals(r.playing ? dt * r.speed : 0);
     this.audio.set(thr, r.playing && !this.audio.muted);
   }
@@ -1304,6 +1330,7 @@ export class SimEngine {
     window.removeEventListener("resize", this.resize);
     window.removeEventListener("blur", this.onBlur);
     this.audio.dispose();
+    this.worldRec.dispose();
     this.sink?.rings.forEach((r) => { r.geometry.dispose(); (r.material as THREE.Material).dispose(); });
     if (this.thermalPost) { this.thermalPost.rt.dispose(); this.thermalPost.mat.dispose(); this.thermalPost.small.dispose(); this.thermalPost.sampleMat.dispose(); }
     this.amb.dispose();
