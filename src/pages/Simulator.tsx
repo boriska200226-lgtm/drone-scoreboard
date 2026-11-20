@@ -11,6 +11,7 @@ import { FlightMode, MODE_HINT, MODE_LABEL } from "@/sim/physics";
 import { Difficulty, DIFFICULTY, freshMission, MissionDef, SayKind, withWeather } from "@/sim/missions";
 import type { Quality } from "@/sim/world";
 import Launcher, { Best, LaunchSettings, Stars } from "./sim/Launcher";
+import "./sim/sport.css";
 import Debrief from "./sim/Debrief";
 import { BAS_API, loadAuth } from "./arena/constants";
 
@@ -382,6 +383,19 @@ function Flight({ mission, af, difficulty, quality, flightMode, camMode, input, 
 
         {/* карта и окно камеры */}
         <canvas ref={map} className="absolute rounded-xl" style={{ top: 12, right: 12, width: hud?.mapSize ?? 176, height: hud?.mapSize ?? 176, border: "1px solid rgba(255,255,255,0.14)" }} />
+        {/* FPV ушёл под воду: мутная зелёно-синяя вода, затем рябь и «нет сигнала» */}
+        {hud && hud.underwater > 0 && (
+          <div className="absolute inset-0 pointer-events-none overflow-hidden" style={{ opacity: hud.underwater }}>
+            <div className="absolute inset-0" style={{ background: "radial-gradient(ellipse at 50% 0%, rgba(120,190,170,0.75), rgba(10,45,50,0.97) 70%)", backdropFilter: "blur(6px)" }} />
+            <div className="absolute inset-0 sim-bubbles" />
+            {hud.noSignal && (
+              <div className="absolute inset-0 flex items-center justify-center sim-static">
+                <div className="font-orbitron text-2xl sm:text-4xl tracking-widest px-4 py-2" style={{ color: "#fff", background: "rgba(0,0,0,0.55)" }}>НЕТ ВИДЕОСИГНАЛА</div>
+              </div>
+            )}
+          </div>
+        )}
+
         {hud?.pip && (
           <div className="absolute rounded" style={{ top: hud.pipRect.top, right: hud.pipRect.right, width: hud.pipRect.w, height: hud.pipRect.h, border: `1px solid ${hud.thermal ? "#ff8800" : "rgba(255,255,255,0.35)"}` }}>
             <span className="absolute top-1 left-1.5 font-orbitron text-[10px] px-1 rounded" style={{ background: "rgba(0,0,0,0.55)", color: hud.thermal ? "#ff8800" : "#fff" }}>

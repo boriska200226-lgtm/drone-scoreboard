@@ -1,5 +1,5 @@
 // Игровой цикл: ввод → физика → миссия → рендер (основной вид + окно подвесной камеры).
-import { Ambience, music, setSoundPrefs, getSoundPrefs } from "./sound";
+import { Ambience, music, playSplash, setSoundPrefs, getSoundPrefs } from "./sound";
 import * as THREE from "three";
 import { Airframe } from "./airframes";
 import { Particles, PrecipField } from "./effects";
@@ -22,7 +22,9 @@ export interface Hud {
   battery: number; minutes: number; powerW: number;
   payloadLabel: string; payloadText: string; payloadFrac: number;
   wind: number; windFrom: number;
-  mode: string; cam: string; thermal: boolean; thermalPal: string; pip: boolean; rth: boolean;
+  mode: string; cam: string; thermal: boolean; thermalPal: string;
+  /** Падение в воду в FPV: 0..1 — насколько камера под водой; потом пропадает видеосигнал. */
+  underwater: number; noSignal: boolean; pip: boolean; rth: boolean;
   distHome: number; time: number;
   objectives: Objective[]; motors: boolean[]; warnings: string[];
   pipRect: { right: number; top: number; w: number; h: number }; mapSize: number;
@@ -170,6 +172,8 @@ function makeThermalPost() {
   return { rt, mat, scene, cam: new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1) };
 }
 
+const WATER_CRASH = "Аппарат упал в воду";
+
 export class SimEngine {
   readonly drone: DroneSim;
   readonly world: World;
@@ -246,6 +250,7 @@ export class SimEngine {
   private env: Env;
   private windsock: THREE.Object3D | null = null;
   private fogSaved: THREE.FogExp2 | null = null;
+  private sink: { t: number; x: number; z: number; wl: number; rings: THREE.Mesh[] } | null = null;
   private thermalPost: ReturnType<typeof makeThermalPost> | null = null;
   private thermalPal = (() => { try { return (+(localStorage.getItem("bas-sim-thermal-pal") ?? 0) || 0) % 4; } catch { return 0; } })();
 
@@ -708,6 +713,12 @@ export class SimEngine {
 
   private rules(dt: number) {
     const d = this.drone, m = this.mission, say = (t: string, k: SayKind) => this.say(t, k);
+    if (d.crashed && d.crashed === WATER_CRASH) {
+      this.ended = true; this.endTimer = 3.4;
+      this.splashDown();
+      say(d.crashed, "warn");
+      return;
+    }
     if (d.crashed) {
       this.ended = true; this.endTimer = 1.8;
       for (let i = 0; i < 60; i++) {
@@ -794,11 +805,55 @@ export class SimEngine {
     });
   }
 
+  /** Падение в воду: брызги, туман из капель, кольца волн, звук; дальше аппарат тонет. */
+  private splashDown() {
+    const d = this.drone, wl = this.world.waterLevel ?? d.pos.y, r = this.rnd, sp = Math.hypot(d.vel.x, d.vel.z);
+    this.sink = { t: 0, x: d.pos.x, z: d.pos.z, wl, rings: [] };
+    for (let i = 0; i < 220; i++) {
+      const a = r() * 6.283, h = 1.5 + r() * 4.5, up = 2.5 + r() * 7 * (1 - h / 8);
+      this.fx.water.spawn(d.pos.x + Math.cos(a) * 0.3, wl + 0.1, d.pos.z + Math.sin(a) * 0.3,
+        Math.cos(a) * h + d.vel.x * 0.35, up + Math.min(4, -d.vel.y * 0.4), Math.sin(a) * h + d.vel.z * 0.35,
+        1.2 + r() * 0.8, 0.1 + r() * 0.25, 0.78, 0.88, 0.96, 0.95);
+    }
+    // столб брызг по центру и водяная пыль
+    for (let i = 0; i < 30; i++) this.fx.water.spawn(d.pos.x, wl + 0.2, d.pos.z, (r() - 0.5) * 1.4, 4 + r() * 6 + sp * 0.2, (r() - 0.5) * 1.4, 1.5, 0.1 + r() * 0.16, 0.78, 0.88, 0.96, 0.9);
+    for (let i = 0; i < 10; i++) this.fx.smoke.spawn(d.pos.x + (r() - 0.5) * 1.5, wl + 0.3 + r() * 0.8, d.pos.z + (r() - 0.5) * 1.5, (r() - 0.5) * 1.2, 0.4 + r() * 0.6, (r() - 0.5) * 1.2, 0.9 + r() * 0.5, 0.5 + r() * 0.5, 0.95, 0.97, 1, 0.18);
+    const mat = new THREE.MeshBasicMaterial({ color: 0xeaf6ff, transparent: true, opacity: 0.8, depthWrite: false, side: THREE.DoubleSide });
+    for (let k = 0; k < 4; k++) {
+      const ring = new THREE.Mesh(new THREE.RingGeometry(0.955, 1, 64), mat.clone());
+      ring.rotation.x = -Math.PI / 2;
+      ring.position.set(d.pos.x, wl + 0.03, d.pos.z);
+      ring.visible = false;
+      this.world.scene.add(ring);
+      this.sink.rings.push(ring);
+    }
+    mat.dispose();
+    playSplash(this.audio.muted);
+  }
+
   private syncVisuals(dt: number) {
     const d = this.drone, g = this.model.group;
+    if (this.sink) {
+      // аппарат качается на волне, кренится и уходит под воду; поднимаются пузыри
+      const s = this.sink;
+      s.t += dt;
+      const depth = Math.min(2.5, Math.max(0, s.t - 0.25) * 0.75);
+      d.pos.set(s.x, s.wl + 0.05 - depth + 0.12 * Math.sin(s.t * 7) * Math.exp(-s.t * 1.5), s.z);
+      s.rings.forEach((ring, k) => {
+        const tt = s.t - k * 0.35;
+        ring.visible = tt > 0;
+        if (tt <= 0) return;
+        ring.scale.setScalar(0.6 + tt * 2.6 - tt * tt * 0.12);
+        (ring.material as THREE.MeshBasicMaterial).opacity = Math.max(0, 0.55 - tt * 0.2);
+      });
+      if (s.t > 0.4 && s.t < 3 && this.rnd() < dt * 14) {
+        this.fx.water.spawn(s.x + (this.rnd() - 0.5) * 0.8, s.wl + 0.02, s.z + (this.rnd() - 0.5) * 0.8, 0, 0.9, 0, 0.25, 0.1 + this.rnd() * 0.12, 1, 1, 1, 0.8);
+      }
+    }
     g.position.copy(d.pos);
     g.quaternion.copy(d.quat);
-    if (d.crashed) g.rotation.z += 0.9;
+    if (this.sink) { g.rotation.z += Math.min(1.1, this.sink.t * 0.8); g.rotation.x += Math.min(0.5, this.sink.t * 0.3); }
+    else if (d.crashed) g.rotation.z += 0.9;
     const frac = this.mission.capacity > 0 ? this.mission.amount / this.mission.capacity : 0;
     this.model.update(dt, d, frac, d.time);
 
@@ -1105,7 +1160,8 @@ export class SimEngine {
       failsafe: this.linkLostT > 1 ? (this.failsafe === "rth" ? "НЕТ СВЯЗИ · ВОЗВРАТ" : this.failsafe === "land" ? "НЕТ СВЯЗИ · ПОСАДКА" : this.failsafe === "hover" ? "НЕТ СВЯЗИ · ЗАВИСАНИЕ" : "НЕТ СВЯЗИ")
         : this.autoLand ? "ПРИНУДИТЕЛЬНАЯ ПОСАДКА" : this.failsafe ? "FAILSAFE" : null,
       landing: this.landReq, gimbal: Math.round(this.gimbalPitch),
-      thermal: this.thermal, thermalPal: THERMAL_PALETTES[this.thermalPal], pip: this.pip, rth: this.rth,
+      thermal: this.thermal, thermalPal: THERMAL_PALETTES[this.thermalPal],
+      underwater: this.sink && this.camMode === "fpv" ? clamp((this.sink.t - 0.3) * 1.6, 0, 1) : 0, noSignal: !!this.sink && this.camMode === "fpv" && this.sink.t > 1.5, pip: this.pip, rth: this.rth,
       distHome: Math.hypot(d.pos.x, d.pos.z), time: m.time, objectives, motors: [...d.motorOk], warnings,
       ...layout(w, this.thermal),
     });
@@ -1118,6 +1174,7 @@ export class SimEngine {
     window.removeEventListener("resize", this.resize);
     window.removeEventListener("blur", this.onBlur);
     this.audio.dispose();
+    this.sink?.rings.forEach((r) => { r.geometry.dispose(); (r.material as THREE.Material).dispose(); });
     if (this.thermalPost) { this.thermalPost.rt.dispose(); this.thermalPost.mat.dispose(); }
     this.amb.dispose();
     this.precip?.dispose();

@@ -386,3 +386,29 @@ export class Ambience {
     this.out?.disconnect();
   }
 }
+
+/** Всплеск при падении в воду: удар, шипение брызг и бульканье уходящего на дно аппарата. */
+export function playSplash(muted = prefs.muted) {
+  const c = audio();
+  if (!c || muted) return;
+  const t = c.currentTime + 0.02, out = c.createGain();
+  out.gain.value = 0.9; out.connect(c.destination);
+  // удар о воду
+  const o = c.createOscillator(), og = c.createGain();
+  o.frequency.setValueAtTime(140, t); o.frequency.exponentialRampToValueAtTime(40, t + 0.25);
+  og.gain.setValueAtTime(0.5, t); og.gain.exponentialRampToValueAtTime(0.001, t + 0.35);
+  o.connect(og).connect(out); o.start(t); o.stop(t + 0.4);
+  // шум брызг
+  const n = noise(c), f = c.createBiquadFilter(), g = c.createGain();
+  f.type = "bandpass"; f.frequency.setValueAtTime(2500, t); f.frequency.exponentialRampToValueAtTime(700, t + 1.2); f.Q.value = 0.6;
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.45, t + 0.03); g.gain.exponentialRampToValueAtTime(0.001, t + 1.4);
+  n.connect(f).connect(g).connect(out); n.start(t, Math.random()); n.stop(t + 1.5);
+  // пузыри
+  for (let i = 0; i < 14; i++) {
+    const k = t + 0.35 + i * 0.09 + Math.random() * 0.12, b = c.createOscillator(), bg = c.createGain();
+    const f0 = 300 + Math.random() * 500;
+    b.frequency.setValueAtTime(f0, k); b.frequency.exponentialRampToValueAtTime(f0 * 1.9, k + 0.06);
+    bg.gain.setValueAtTime(0.0001, k); bg.gain.exponentialRampToValueAtTime(0.12 * (1 - i / 16), k + 0.01); bg.gain.exponentialRampToValueAtTime(0.001, k + 0.08);
+    b.connect(bg).connect(out); b.start(k); b.stop(k + 0.1);
+  }
+}

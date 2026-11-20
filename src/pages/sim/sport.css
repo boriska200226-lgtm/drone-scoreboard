@@ -50,3 +50,23 @@
   .sp-shine::after, .sp-pulse { animation: none; }
   .sp-card, .sp-card:hover { transition: none; transform: none; }
 }
+
+/* Падение в воду (FPV): пузыри поднимаются, потом помехи вместо картинки. */
+.sim-bubbles {
+  background-image:
+    radial-gradient(circle, rgba(220,255,250,0.55) 0 3px, transparent 4px),
+    radial-gradient(circle, rgba(220,255,250,0.4) 0 2px, transparent 3px),
+    radial-gradient(circle, rgba(220,255,250,0.5) 0 5px, transparent 6px);
+  background-size: 97px 131px, 61px 83px, 173px 211px;
+  background-position: 10px 0, 40px 20px, 70px 50px;
+  animation: sim-bubbles 1.4s linear infinite;
+}
+@keyframes sim-bubbles { to { background-position: 10px -130px, 40px -60px, 70px -160px; } }
+.sim-static {
+  background:
+    repeating-linear-gradient(0deg, rgba(255,255,255,0.10) 0 1px, transparent 1px 3px),
+    repeating-radial-gradient(circle at 37% 61%, rgba(255,255,255,0.18) 0 1px, rgba(0,0,0,0.35) 1px 2px);
+  background-color: #1a1d1f;
+  animation: sim-static 0.12s steps(3) infinite;
+}
+@keyframes sim-static { 33% { background-position: 0 2px, 3px 1px; } 66% { background-position: 0 -1px, -2px 3px; } }
