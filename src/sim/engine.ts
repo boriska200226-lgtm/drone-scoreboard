@@ -22,7 +22,8 @@ export interface Hud {
   battery: number; minutes: number; powerW: number;
   payloadLabel: string; payloadText: string; payloadFrac: number;
   wind: number; windFrom: number;
-  mode: string; cam: string; thermal: boolean; thermalPal: string;
+  mode: string; cam: string; thermal: boolean; thermalPal: string; zoom: number;
+  replay: ReplayState | null;
   /** Падение в воду в FPV: 0..1 — насколько камера под водой; потом пропадает видеосигнал. */
   underwater: number; noSignal: boolean; pip: boolean; rth: boolean;
   distHome: number; time: number;
@@ -38,6 +39,9 @@ export interface FlightLog {
   samples: FlightSample[]; remarks: [string, number][]; maxAgl: number; maxSpeed: number; distance: number;
   energyWh: number; over150: number; beyondVlos: number; hardLandings: number; base: { x: number; z: number };
 }
+/** Событие полёта для шкалы повтора. */
+export interface ReplayEvent { t: number; text: string; kind: SayKind }
+export interface ReplayState { t: number; t0: number; dur: number; playing: boolean; speed: number; events: ReplayEvent[] }
 export interface SimResult {
   success: boolean; reason: string; score: number; stars: number; rows: [string, string][]; time: number;
   missionId: string; log: FlightLog;
@@ -62,7 +66,9 @@ export interface EngineOpts {
   onEnd(r: SimResult): void;
 }
 
-export type Command = "cam" | "thermal" | "pip" | "gimbal" | "mode" | "rth" | "mute" | "land" | "palette";
+export type Command = "cam" | "thermal" | "pip" | "gimbal" | "mode" | "rth" | "mute" | "land" | "palette" | "zoomIn" | "zoomOut";
+/** Ступени зума камеры подвеса (оптика + цифра), как у промышленных дронов. */
+export const ZOOMS = [1, 2, 4, 8];
 /** Палитры тепловизора, как в настоящих камерах. */
 export const THERMAL_PALETTES = ["Железо", "Белое — горячее", "Чёрное — горячее", "Радуга"] as const;
 /** Отказы, которые вводит инструктор (или случайный сценарий). */
@@ -126,11 +132,23 @@ const THERMAL_SKY = new THREE.Color(0x010101);
  *  у матрицы есть шум и полосы по столбцам; палитра «белое — горячее». */
 function makeThermalPost() {
   const rt = new THREE.WebGLRenderTarget(4, 4, { type: THREE.HalfFloatType, depthBuffer: true });
+  // уменьшенная копия кадра для автоусиления (по ней считаем диапазон температур в кадре)
+  const small = new THREE.WebGLRenderTarget(32, 24, { type: THREE.HalfFloatType, depthBuffer: false });
+  const sampleMat = new THREE.ShaderMaterial({
+    uniforms: { uTex: { value: null } },
+    vertexShader: "varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0., 1.); }",
+    fragmentShader: "uniform sampler2D uTex; varying vec2 vUv; void main() { float t = texture2D(uTex, vUv).r; gl_FragColor = vec4(log(1. + max(t, 0.) * 40.) / log(41.), 0., 0., 1.); }",
+    depthTest: false, depthWrite: false,
+  });
+  const sampleScene = new THREE.Scene();
+  const sq = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), sampleMat);
+  sq.frustumCulled = false;
+  sampleScene.add(sq);
   const mat = new THREE.ShaderMaterial({
-    uniforms: { uTex: { value: null }, uPx: { value: new THREE.Vector2() }, uTime: { value: 0 }, uPal: { value: 0 } },
+    uniforms: { uTex: { value: null }, uPx: { value: new THREE.Vector2() }, uTime: { value: 0 }, uPal: { value: 0 }, uLo: { value: 0 }, uHi: { value: 1 } },
     vertexShader: "varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0., 1.); }",
     fragmentShader: `
-      uniform sampler2D uTex; uniform vec2 uPx; uniform float uTime; uniform int uPal; varying vec2 vUv;
+      uniform sampler2D uTex; uniform vec2 uPx; uniform float uTime, uLo, uHi; uniform int uPal; varying vec2 vUv;
       // «железо» (ironbow): холодное — чёрно-синее, тёплое — фиолетово-красное, горячее — жёлто-белое
       vec3 iron(float v) {
         vec3 c = mix(vec3(0., 0., .04), vec3(.2, .02, .45), smoothstep(0., .3, v));
@@ -154,8 +172,9 @@ function makeThermalPost() {
         float b3 = (T(vec2(3, 0)) + T(vec2(-3, 0)) + T(vec2(0, 3)) + T(vec2(0, -3)) + T(vec2(2, 2)) + T(vec2(-2, 2)) + T(vec2(2, -2)) + T(vec2(-2, -2))) * .125;
         float t = mix(c, b1, .55);           // оптика
         t += (t - b3) * .7;                  // подчёркивание контуров
-        // автоусиление: растягиваем холодный диапазон, чтобы читался фон; горячее — белое
-        float v = pow(log(1. + max(t, 0.) * 40.) / log(41.), .85);
+        // автоусиление (AGC): диапазон кадра растягивается на всю палитру; самое горячее уходит в белое
+        float v = log(1. + max(t, 0.) * 40.) / log(41.);
+        v = (v - uLo) / max(.1, uHi - uLo);
         v += (h(gl_FragCoord.xy + uTime * 91.) - .5) * .05;     // шум матрицы
         v += (h(vec2(floor(gl_FragCoord.x), 7.)) - .5) * .025;  // полосы по столбцам
         vec2 d = vUv - .5; v *= 1. - dot(d, d) * .5;            // виньетка объектива
@@ -169,7 +188,7 @@ function makeThermalPost() {
   const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), mat);
   quad.frustumCulled = false;
   scene.add(quad);
-  return { rt, mat, scene, cam: new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1) };
+  return { rt, mat, scene, cam: new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1), small, sampleMat, sampleScene, buf: new Uint16Array(32 * 24 * 4), n: 0 };
 }
 
 const WATER_CRASH = "Аппарат упал в воду";
@@ -252,6 +271,13 @@ export class SimEngine {
   private fogSaved: THREE.FogExp2 | null = null;
   private sink: { t: number; x: number; z: number; wl: number; rings: THREE.Mesh[] } | null = null;
   private thermalPost: ReturnType<typeof makeThermalPost> | null = null;
+  private zoom = 1;
+  // запись полёта для повтора: 20 кадров в секунду — время, позиция, ориентация, тяга
+  private track: number[] = [];
+  private trackAcc = 0;
+  private recording = true;
+  private events: ReplayEvent[] = [];
+  private replay: { t: number; playing: boolean; speed: number; i: number } | null = null;
   private thermalPal = (() => { try { return (+(localStorage.getItem("bas-sim-thermal-pal") ?? 0) || 0) % 4; } catch { return 0; } })();
 
   constructor(o: EngineOpts) {
@@ -312,6 +338,7 @@ export class SimEngine {
       thermal: () => this.thermal,
       camDir: () => this.camDirV,
       camPos: () => this.cam.position,
+      zoom: () => this.zoom,
       fault: (k, dur) => this.instructor(k, false, dur),
       link: () => ({ lost: this.linkLostT > 1, failsafe: this.failsafe, q: this.linkQ }),
     };
@@ -349,13 +376,14 @@ export class SimEngine {
     this.audio = new Audio(150 / (0.6 + o.airframe.propR * 3));
     const apal = o.mission.world.palette;
     this.amb = new Ambience({
-      forest: o.mission.world.forestDensity, night: apal.sunIntensity < 0.8, winter: !!apal.snow || o.mission.precip === "snow",
+      forest: o.mission.world.forestDensity, night: !!apal.night || apal.sunIntensity < 0.6, winter: !!apal.snow || o.mission.precip === "snow",
       rain: o.mission.precip === "rain", river: !!o.mission.world.river,
     });
     music.start("flight");
     this.audio.muted = this.amb.muted = getSoundPrefs().muted;
 
     window.addEventListener("keydown", this.onKey);
+    o.canvas.addEventListener("wheel", this.onWheel, { passive: true });
     window.addEventListener("keyup", this.onKeyUp);
     window.addEventListener("resize", this.resize);
     window.addEventListener("blur", this.onBlur);
@@ -372,7 +400,7 @@ export class SimEngine {
     if (["Space", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.code)) e.preventDefault();
     if (e.repeat) return;
     this.keys.add(e.code);
-    const map: Record<string, Command> = { KeyC: "cam", KeyT: "thermal", KeyV: "pip", KeyG: "gimbal", KeyM: "mode", KeyH: "rth", KeyN: "mute", KeyL: "land", KeyP: "palette" };
+    const map: Record<string, Command> = { KeyC: "cam", KeyT: "thermal", KeyV: "pip", KeyG: "gimbal", KeyM: "mode", KeyH: "rth", KeyN: "mute", KeyL: "land", KeyP: "palette", KeyZ: "zoomIn", KeyX: "zoomOut" };
     if (e.code === "Space") this.actionPressed = true;
     else if (map[e.code]) this.command(map[e.code]);
   };
@@ -384,6 +412,11 @@ export class SimEngine {
     const say = this.o.onSay;
     if (c === "cam") this.camMode = CAMS[(CAMS.indexOf(this.camMode) + 1) % CAMS.length];
     else if (c === "thermal") { this.thermal = !this.thermal; if (this.thermal) this.pip = true; }
+    else if (c === "zoomIn" || c === "zoomOut") {
+      const i = clamp(ZOOMS.indexOf(this.zoom) + (c === "zoomIn" ? 1 : -1), 0, ZOOMS.length - 1);
+      this.zoom = ZOOMS[i];
+      if (!this.pip) this.pip = true;
+    }
     else if (c === "palette") {
       this.thermalPal = (this.thermalPal + 1) % THERMAL_PALETTES.length;
       try { localStorage.setItem("bas-sim-thermal-pal", String(this.thermalPal)); } catch { /* приватный режим */ }
@@ -598,7 +631,8 @@ export class SimEngine {
     const dt = Math.min(0.05, raw);
     this.last = now;
     this.measure(raw);
-    if (!this.paused) this.update(dt);
+    if (this.replay) this.replayStep(dt);
+    else if (!this.paused) this.update(dt);
     this.render();
     this.hudAcc += dt;
     if (this.hudAcc > 0.12) { this.hudAcc = 0; this.pushHud(); }
@@ -700,6 +734,13 @@ export class SimEngine {
     this.syncVisuals(dt);
     let avg = 0;
     for (let i = 0; i < d.n; i++) avg += d.thrust[i] / d.af.motorThrust;
+    if (this.recording) {
+      this.trackAcc += dt;
+      if (this.trackAcc >= 0.05 || this.track.length === 0) {
+        this.trackAcc = 0;
+        this.track.push(d.time, d.pos.x, d.pos.y, d.pos.z, d.quat.x, d.quat.y, d.quat.z, d.quat.w, avg / d.n);
+      }
+    }
     this.audio.set(avg / d.n, !d.crashed && !this.ended);
     this.ambAcc += dt;
     if (this.ambAcc > 0.25) {
@@ -753,6 +794,7 @@ export class SimEngine {
 
   /** Сообщение пилоту; предупреждения попадают в замечания разбора полёта. */
   private say(text: string, kind: SayKind) {
+    if (this.recording && !this.replay) this.events.push({ t: this.drone.time, text, kind });
     if (kind === "warn") {
       // одинаковые по смыслу замечания группируем: убираем числа из текста
       const key = text.replace(/[0-9.,]+/g, "N").replace(/\s+/g, " ").trim();
@@ -794,6 +836,7 @@ export class SimEngine {
     const score = success ? Math.round(sum.score) : 0;
     const rows: [string, string][] = [...sum.rows, ["Остаток АКБ", `${Math.round(this.drone.soc * 100)}%`]];
     this.audio.set(0, false);
+    this.recording = false;
     this.o.onEnd({
       success, reason, score, stars: !success ? 0 : score >= 85 ? 3 : score >= 60 ? 2 : 1,
       rows: rows.filter((r, i) => rows.findIndex((x) => x[0] === r[0]) === i), time: this.mission.time,
@@ -913,9 +956,93 @@ export class SimEngine {
     }
 
     this.pipCam.position.set(d.pos.x, d.pos.y - d.gear * 0.5, d.pos.z);
+    // зум: плавно сужаем поле зрения; у тепловизора матрица меньше — поле уже
+    const fov0 = 50 / this.zoom;
+    if (Math.abs(this.pipCam.fov - fov0) > 0.01) { this.pipCam.fov += (fov0 - this.pipCam.fov) * Math.min(1, dt * 8); this.pipCam.updateProjectionMatrix(); }
     this.pipCam.rotation.set((this.gimbalPitch * Math.PI) / 180, d.yaw, 0, "YXZ");
     this.camDirV.set(0, 0, -1).applyQuaternion(this.pipCam.quaternion);
   }
+
+  // ───────────── повтор полёта ─────────────
+  private static readonly TS = 9;
+  private trackDur() { const n = this.track.length / SimEngine.TS; return n > 1 ? this.track[(n - 1) * SimEngine.TS] - this.track[0] : 0; }
+
+  /** Запускает повтор: мир остаётся в конечном состоянии, дрон летит по записанному треку. */
+  startReplay() {
+    if (this.track.length < SimEngine.TS * 2) return false;
+    this.replay = { t: 0, playing: true, speed: 1, i: 0 };
+    this.recording = false;
+    this.paused = false;
+    this.thermal = false;
+    // убираем последствия аварии: в повторе аппарат целый, всплеск/пламя проиграются заново не будут
+    this.drone.crashed = null;
+    if (this.sink) { this.sink.rings.forEach((r) => (r.visible = false)); this.sink = null; }
+    this.pushHud();
+    return true;
+  }
+  get isReplaying() { return !!this.replay; }
+  stopReplay() { this.replay = null; this.audio.set(0, false); this.pushHud(); }
+  replayCtl(c: { play?: boolean; speed?: number; seek?: number; step?: number }) {
+    const r = this.replay;
+    if (!r) return;
+    if (c.play !== undefined) { r.playing = c.play; if (c.play && r.t >= this.trackDur()) r.t = 0; }
+    if (c.speed) r.speed = c.speed;
+    if (c.seek !== undefined) { r.t = clamp(c.seek, 0, this.trackDur()); r.i = 0; }
+    if (c.step) { r.t = clamp(r.t + c.step, 0, this.trackDur()); r.i = 0; }
+    this.pushHud();
+  }
+
+  private _qa = new THREE.Quaternion(); private _qb = new THREE.Quaternion(); private _pv = new THREE.Vector3();
+  private replayStep(dt: number) {
+    const r = this.replay!, T = this.track, S = SimEngine.TS, n = T.length / S, t0 = T[0], dur = this.trackDur();
+    if (r.playing) { r.t += dt * r.speed; if (r.t >= dur) { r.t = dur; r.playing = false; } }
+    const tt = t0 + r.t;
+    // ищем кадр записи (обычно — следующий за прошлым)
+    if (r.i >= n - 1 || T[r.i * S] > tt) r.i = 0;
+    while (r.i < n - 2 && T[(r.i + 1) * S] <= tt) r.i++;
+    const a = r.i * S, b = Math.min(n - 1, r.i + 1) * S;
+    const span = T[b] - T[a], k = span > 0 ? clamp((tt - T[a]) / span, 0, 1) : 0;
+    const d = this.drone;
+    this._pv.copy(d.pos);
+    d.pos.set(T[a + 1] + (T[b + 1] - T[a + 1]) * k, T[a + 2] + (T[b + 2] - T[a + 2]) * k, T[a + 3] + (T[b + 3] - T[a + 3]) * k);
+    this._qa.set(T[a + 4], T[a + 5], T[a + 6], T[a + 7]); this._qb.set(T[b + 4], T[b + 5], T[b + 6], T[b + 7]);
+    d.quat.copy(this._qa).slerp(this._qb, k);
+    const fw = new THREE.Vector3(0, 0, -1).applyQuaternion(d.quat);
+    d.yaw = Math.atan2(-fw.x, -fw.z);
+    if (span > 0) d.vel.set(T[b + 1] - T[a + 1], T[b + 2] - T[a + 2], T[b + 3] - T[a + 3]).divideScalar(span);
+    const thr = T[a + 8] + (T[b + 8] - T[a + 8]) * k;
+    for (let i = 0; i < d.n; i++) d.thrust[i] = thr * d.af.motorThrust;
+    d.landed = thr < 0.05;
+    updateModels(dt * (r.playing ? r.speed : 0));
+    const wind = d.windNow;
+    this.fx.fire.update(dt, wind); this.fx.smoke.update(dt, wind); this.fx.water.update(dt, wind);
+    this.syncVisuals(r.playing ? dt * r.speed : 0);
+    this.audio.set(thr, r.playing && !this.audio.muted);
+  }
+
+  /** Автоусиление: по уменьшенному кадру берём 3-й и 99,5-й процентили и плавно подстраиваем диапазон. */
+  private thermalAgc(tp: ReturnType<typeof makeThermalPost>) {
+    const r = this.renderer;
+    tp.sampleMat.uniforms.uTex.value = tp.rt.texture;
+    r.setRenderTarget(tp.small);
+    r.render(tp.sampleScene, tp.cam);
+    try { r.readRenderTargetPixels(tp.small, 0, 0, 32, 24, tp.buf); } catch { return; }
+    const v: number[] = [];
+    for (let i = 0; i < tp.buf.length; i += 4) v.push(THREE.DataUtils.fromHalfFloat(tp.buf[i]));
+    v.sort((a, b) => a - b);
+    // диапазон — по фону (2…96 %): мелкие горячие цели не «съедают» контраст и уходят в самые яркие цвета
+    const lo = v[Math.floor(v.length * 0.02)], hi = v[Math.floor(v.length * 0.96)];
+    const u = tp.mat.uniforms;
+    const hiC = Math.max(hi, lo + 0.1) + 0.1;
+    u.uLo.value += (lo - 0.01 - u.uLo.value) * 0.35;
+    u.uHi.value += (hiC - u.uHi.value) * 0.35;
+  }
+
+  /** Колесо мыши — зум камеры подвеса (когда открыто её окно). */
+  private onWheel = (e: WheelEvent) => {
+    if (!this.pip || this.paused) return;
+    this.command(e.deltaY < 0 ? "zoomIn" : "zoomOut");
+  };
 
   private resize = () => {
     const c = this.o.canvas;
@@ -979,6 +1106,7 @@ export class SimEngine {
         if (tp.rt.width !== tw || tp.rt.height !== th) tp.rt.setSize(tw, th);
         r.setRenderTarget(tp.rt);
         r.render(scene, this.pipCam);
+        if (tp.n++ % 6 === 0) this.thermalAgc(tp);
         r.setRenderTarget(null);
         tp.mat.uniforms.uTex.value = tp.rt.texture;
         tp.mat.uniforms.uPx.value.set(1 / tw, 1 / th);
@@ -1160,7 +1288,8 @@ export class SimEngine {
       failsafe: this.linkLostT > 1 ? (this.failsafe === "rth" ? "НЕТ СВЯЗИ · ВОЗВРАТ" : this.failsafe === "land" ? "НЕТ СВЯЗИ · ПОСАДКА" : this.failsafe === "hover" ? "НЕТ СВЯЗИ · ЗАВИСАНИЕ" : "НЕТ СВЯЗИ")
         : this.autoLand ? "ПРИНУДИТЕЛЬНАЯ ПОСАДКА" : this.failsafe ? "FAILSAFE" : null,
       landing: this.landReq, gimbal: Math.round(this.gimbalPitch),
-      thermal: this.thermal, thermalPal: THERMAL_PALETTES[this.thermalPal],
+      thermal: this.thermal, thermalPal: THERMAL_PALETTES[this.thermalPal], zoom: this.zoom,
+      replay: this.replay ? { t: this.replay.t, t0: this.track[0] ?? 0, dur: this.trackDur(), playing: this.replay.playing, speed: this.replay.speed, events: this.events } : null,
       underwater: this.sink && this.camMode === "fpv" ? clamp((this.sink.t - 0.3) * 1.6, 0, 1) : 0, noSignal: !!this.sink && this.camMode === "fpv" && this.sink.t > 1.5, pip: this.pip, rth: this.rth,
       distHome: Math.hypot(d.pos.x, d.pos.z), time: m.time, objectives, motors: [...d.motorOk], warnings,
       ...layout(w, this.thermal),
@@ -1170,12 +1299,13 @@ export class SimEngine {
   dispose() {
     cancelAnimationFrame(this.raf);
     window.removeEventListener("keydown", this.onKey);
+    this.o.canvas.removeEventListener("wheel", this.onWheel);
     window.removeEventListener("keyup", this.onKeyUp);
     window.removeEventListener("resize", this.resize);
     window.removeEventListener("blur", this.onBlur);
     this.audio.dispose();
     this.sink?.rings.forEach((r) => { r.geometry.dispose(); (r.material as THREE.Material).dispose(); });
-    if (this.thermalPost) { this.thermalPost.rt.dispose(); this.thermalPost.mat.dispose(); }
+    if (this.thermalPost) { this.thermalPost.rt.dispose(); this.thermalPost.mat.dispose(); this.thermalPost.small.dispose(); this.thermalPost.sampleMat.dispose(); }
     this.amb.dispose();
     this.precip?.dispose();
     releaseModels();

@@ -177,7 +177,7 @@ export class ForestKit {
     this.thermalMat.onBeforeCompile = (sh) => {
       // в тепловизоре крона чуть теплее земли и неоднородна: яркость атласа даёт фактуру ветвей
       sh.fragmentShader = sh.fragmentShader.replace("#include <map_fragment>",
-        "vec4 tx = texture2D(map, vMapUv); diffuseColor.a *= tx.a; diffuseColor.rgb = vec3(0.03 + 0.09 * dot(tx.rgb, vec3(.3, .59, .11)));");
+        "vec4 tx = texture2D(map, vMapUv); diffuseColor.a *= tx.a; diffuseColor.rgb = vec3(0.03 + 0.03 * dot(tx.rgb, vec3(.3, .59, .11)));");
     };
     this.disposables.push(this.impostorMat, this.thermalMat);
     this.ready = waitImages(this.textures);

@@ -173,7 +173,7 @@ async function sendResult(r: SimResult, title: string): Promise<{ ok: boolean; t
 const KEY_GROUPS = (action: string) => [
   { title: "ПОЛЁТ", color: "#00ffaa", keys: [["W / S", "газ: вверх / вниз"], ["A / D", "поворот (рыскание)"], ["↑ ↓", "вперёд / назад"], ["← →", "влево / вправо"], ["M", "режим: GPS · ATTI · Angle · Acro"]] },
   { title: "ПОСАДКА И ВОЗВРАТ", color: "#ffd166", keys: [["L", "автопосадка (стиками — на площадку)"], ["H", "автовозврат на базу"]] },
-  { title: "КАМЕРА", color: "#7dd3fc", keys: [["C", "вид: FPV · сзади · с земли · сверху"], ["V", "окно камеры подвеса"], ["G", "угол подвеса 0…−90°"], ["T", "тепловизор"], ["P", "палитра тепловизора"]] },
+  { title: "КАМЕРА", color: "#7dd3fc", keys: [["C", "вид: FPV · сзади · с земли · сверху"], ["V", "окно камеры подвеса"], ["G", "угол подвеса 0…−90°"], ["T", "тепловизор"], ["P", "палитра тепловизора"], ["Z / X, колесо", "зум камеры подвеса ×1…×8"]] },
   { title: "МИССИЯ", color: "#ff8a5c", keys: [["Пробел", action !== "—" ? action : "действие миссии"], ["I", "панель инструктора"], ["N", "звук"], ["Esc", "пауза"]] },
 ] as { title: string; color: string; keys: [string, string][] }[];
 
@@ -210,6 +210,7 @@ function Flight({ mission, af, difficulty, quality, flightMode, camMode, input, 
   const [result, setResult] = useState<SimResult | null>(null);
   const [xpNote, setXpNote] = useState<{ ok: boolean; text: string } | null>(null);
   const [paused, setPaused] = useState(false);
+  const [replaying, setReplaying] = useState(false);
   const [instr, setInstr] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
@@ -251,7 +252,7 @@ function Flight({ mission, af, difficulty, quality, flightMode, camMode, input, 
 
   useEffect(() => {
     const onKey = (ev: KeyboardEvent) => {
-      if (ev.code === "Escape") setPaused((p) => !p);
+      if (ev.code === "Escape") { if (engine.current?.isReplaying) { engine.current.stopReplay(); setReplaying(false); return; } setPaused((p) => !p); }
       if (ev.code === "KeyI") setInstr((v) => !v);
       if (ev.shiftKey && /^Digit[0-5]$/.test(ev.code)) {
         const f = FAULTS.find((x) => x.key === ev.code.slice(5));
@@ -399,7 +400,7 @@ function Flight({ mission, af, difficulty, quality, flightMode, camMode, input, 
         {hud?.pip && (
           <div className="absolute rounded" style={{ top: hud.pipRect.top, right: hud.pipRect.right, width: hud.pipRect.w, height: hud.pipRect.h, border: `1px solid ${hud.thermal ? "#ff8800" : "rgba(255,255,255,0.35)"}` }}>
             <span className="absolute top-1 left-1.5 font-orbitron text-[10px] px-1 rounded" style={{ background: "rgba(0,0,0,0.55)", color: hud.thermal ? "#ff8800" : "#fff" }}>
-              {hud.thermal ? `ТЕПЛОВИЗОР · ${hud.thermalPal} (P)` : "КАМЕРА ПОДВЕСА"} · {hud.gimbal}°
+              {hud.thermal ? `ТЕПЛОВИЗОР · ${hud.thermalPal} (P)` : "КАМЕРА ПОДВЕСА"} · {hud.gimbal}° · ×{hud.zoom} (Z/X)
             </span>
             <span className="absolute left-1/2 top-1/2 w-4 h-4 -ml-2 -mt-2 rounded-full" style={{ border: "1px solid rgba(255,255,255,0.7)" }} />
           </div>
@@ -503,8 +504,14 @@ function Flight({ mission, af, difficulty, quality, flightMode, camMode, input, 
         </div>
       )}
 
+      {/* повтор полёта */}
+      {result && replaying && hud?.replay && (
+        <ReplayBar r={hud.replay} cam={hud.camId} eng={engine.current}
+          onClose={() => { engine.current?.stopReplay(); setReplaying(false); }} />
+      )}
+
       {/* итог */}
-      {result && (
+      {result && !replaying && (
         <div className="absolute inset-0 flex items-center justify-center p-4 overflow-y-auto" style={{ background: "rgba(0,0,0,0.65)" }}>
           <div className="rounded-2xl p-6 w-[920px] max-w-full my-auto text-center animate-fade-in grid lg:grid-cols-[300px_minmax(0,1fr)] gap-6" style={{ ...panel, background: "rgba(10,13,22,0.96)", borderColor: result.success ? "#00ffaa66" : "#ff444466" }}>
            <div>
@@ -520,7 +527,11 @@ function Flight({ mission, af, difficulty, quality, flightMode, camMode, input, 
               ))}
             </div>
             {xpNote && <div className="mt-3 text-sm rounded-lg px-3 py-2" style={{ background: xpNote.ok ? "#00ffaa14" : "#ffffff0a", color: xpNote.ok ? "#00ffaa" : "#9aa3b2" }}>{xpNote.text}</div>}
-            <div className="grid grid-cols-2 gap-2 mt-5">
+            <button onClick={() => { if (engine.current?.startReplay()) setReplaying(true); }}
+              className="w-full mt-5 py-2.5 rounded-lg font-orbitron text-sm flex items-center justify-center gap-2" style={{ background: "#7dd3fc1f", color: "#7dd3fc", border: "1px solid #7dd3fc55" }}>
+              <Icon name="Clapperboard" size={16} />ПОВТОР ПОЛЁТА
+            </button>
+            <div className="grid grid-cols-2 gap-2 mt-2">
               <button onClick={onRestart} className="py-3 rounded-lg font-orbitron font-bold text-sm" style={{ background: "#00ffaa", color: "#0a0d16" }}>ЕЩЁ РАЗ</button>
               <button onClick={onExit} className="py-3 rounded-lg font-orbitron text-sm text-white" style={{ background: "#ffffff14" }}>МИССИИ</button>
             </div>
@@ -532,6 +543,63 @@ function Flight({ mission, af, difficulty, quality, flightMode, camMode, input, 
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// ─────────────────────────── повтор ───────────────────────────
+
+const REPLAY_SPEEDS = [0.25, 0.5, 1, 2, 4];
+const EVENT_COLOR: Record<SayKind, string> = { info: "#7dd3fc", good: "#00ffaa", warn: "#ff6b5a" };
+
+function ReplayBar({ r, cam, eng, onClose }: { r: NonNullable<Hud["replay"]>; cam: string; eng: SimEngine | null; onClose: () => void }) {
+  const base = r.t0;
+  const recent = r.events.filter((e) => e.t - base <= r.t + 0.05 && e.t - base > r.t - 4).slice(-2);
+  const btn = "pointer-events-auto h-9 min-w-9 px-2 rounded-lg flex items-center justify-center text-white";
+  return (
+    <div className="absolute inset-x-0 bottom-0 p-3 sm:p-4 pointer-events-none" style={{ background: "linear-gradient(transparent, rgba(0,0,0,0.75))" }}>
+      <div className="flex justify-center mb-3 min-h-[28px]">
+        <div className="space-y-1 text-center">
+          {recent.map((e, i) => (
+            <div key={i} className="text-sm px-3 py-1 rounded-md inline-block mx-1" style={{ background: "rgba(0,0,0,0.6)", color: EVENT_COLOR[e.kind] }}>{e.text}</div>
+          ))}
+        </div>
+      </div>
+      <div className="max-w-4xl mx-auto rounded-xl p-3 pointer-events-auto" style={{ background: "rgba(10,13,22,0.9)", border: "1px solid rgba(125,211,252,0.35)" }}>
+        <div className="flex items-center gap-2 mb-2">
+          <span className="font-orbitron text-xs text-[#7dd3fc] flex items-center gap-1.5"><Icon name="Clapperboard" size={14} />ПОВТОР</span>
+          <span className="font-orbitron text-xs text-white tabular-nums ml-auto">{fmt(r.t)} / {fmt(r.dur)}</span>
+        </div>
+        {/* шкала с отметками событий */}
+        <div className="relative h-6">
+          <input type="range" min={0} max={r.dur || 1} step={0.05} value={r.t} aria-label="Время повтора"
+            onChange={(e) => eng?.replayCtl({ seek: +e.target.value })} className="absolute inset-x-0 top-1 w-full accent-[#7dd3fc]" />
+          {r.dur > 0 && r.events.map((e, i) => (
+            <button key={i} title={e.text} onClick={() => eng?.replayCtl({ seek: Math.max(0, e.t - base - 1.5) })}
+              className="absolute top-0 w-1.5 h-2 rounded-sm -ml-0.5" style={{ left: `${((e.t - base) / r.dur) * 100}%`, background: EVENT_COLOR[e.kind] }} />
+          ))}
+        </div>
+        <div className="flex flex-wrap items-center gap-1.5 mt-1">
+          <button className={btn} style={{ background: "#ffffff14" }} onClick={() => eng?.replayCtl({ step: -10 })} title="Назад 10 с"><Icon name="Rewind" size={16} /></button>
+          <button className={btn} style={{ background: "#7dd3fc", color: "#0a0d16" }} onClick={() => eng?.replayCtl({ play: !r.playing })} title="Пуск / пауза">
+            <Icon name={r.playing ? "Pause" : "Play"} size={16} style={{ color: "#0a0d16" }} />
+          </button>
+          <button className={btn} style={{ background: "#ffffff14" }} onClick={() => eng?.replayCtl({ step: 10 })} title="Вперёд 10 с"><Icon name="FastForward" size={16} /></button>
+          <div className="flex gap-1 ml-2">
+            {REPLAY_SPEEDS.map((sp) => (
+              <button key={sp} className={`${btn} text-xs font-orbitron`} onClick={() => eng?.replayCtl({ speed: sp })}
+                style={{ background: r.speed === sp ? "#7dd3fc33" : "#ffffff0a", color: r.speed === sp ? "#7dd3fc" : "#bbb" }}>×{sp}</button>
+            ))}
+          </div>
+          <div className="flex gap-1 ml-2">
+            {CAMS.map((c) => (
+              <button key={c} className={`${btn} text-xs`} onClick={() => eng?.setCam(c)}
+                style={{ background: cam === c ? "#00ffaa26" : "#ffffff0a", color: cam === c ? "#00ffaa" : "#bbb" }}>{CAM_LABEL[c]}</button>
+            ))}
+          </div>
+          <button className={`${btn} ml-auto text-xs font-orbitron`} style={{ background: "#ffffff14" }} onClick={onClose}>К ИТОГАМ</button>
+        </div>
+      </div>
     </div>
   );
 }

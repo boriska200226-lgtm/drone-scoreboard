@@ -43,6 +43,8 @@ export interface Ctx {
   thermal(): boolean;
   camDir(): THREE.Vector3;
   camPos(): THREE.Vector3;
+  /** Зум камеры подвеса (1…8). */
+  zoom?(): number;
   /** Ввести отказ (для упражнений курса). */
   fault?(kind: Fault, dur?: number): void;
   /** Состояние радиоканала. */
@@ -659,7 +661,9 @@ class SearchMission extends Mission {
       return;
     }
     const t = agl / -dir.y, cx = d.pos.x + dir.x * t, cz = d.pos.z + dir.z * t;
-    const r = Math.min(agl * 0.39, Math.sqrt(Math.max(0, 100 * 100 - agl * agl)));
+    const zm = this.ctx.zoom?.() ?? 1, range = 100 * Math.sqrt(zm);
+    if (agl > range) return;
+    const r = Math.min((agl * 0.39) / zm, Math.sqrt(Math.max(0, range * range - agl * agl)));
     if (r < 3) return;
     const S = SEARCH;
     const i0 = Math.max(0, Math.floor((cx - r - S.x0) / SUB)), i1 = Math.min(this.nsx - 1, Math.floor((cx + r - S.x0) / SUB));
@@ -684,7 +688,9 @@ class SearchMission extends Mission {
     const dx = t.x - d.x, dy = t.y + 1 - d.y, dz = t.z - d.z;
     const dist = Math.hypot(dx, dy, dz);
     const cos = (dx * dir.x + dy * dir.y + dz * dir.z) / Math.max(1, dist);
-    const visible = cos > 0.93 && (this.ctx.thermal() ? dist < 100 : dist < 32);
+    // с зумом поле зрения уже, зато цель различима дальше
+    const z = this.ctx.zoom?.() ?? 1;
+    const visible = cos > Math.cos(0.38 / z) && (this.ctx.thermal() ? dist < 100 * Math.sqrt(z) : dist < 32 * Math.sqrt(z));
     t.seen = visible ? t.seen + dt : Math.max(0, t.seen - dt);
     if (t.seen > 1.2) { t.found = true; return true; }
     return false;
@@ -806,6 +812,7 @@ class AgroMission extends Mission {
   private dirty = false; private texAcc = 0;
   private covered = 0; private over = 0; private off = 0; private buffer = 0; private used = 0; private warnT = -10;
   private px = 8;
+  private lanes: number[] = [];
   protected F: { x: number; z: number; hx: number; hz: number };
   protected crop: boolean;
 
@@ -831,7 +838,21 @@ class AgroMission extends Mission {
     this.place(mesh, this.F.x, this.F.z, 0.12);
     ctx.world.addThermal(mesh, 0.14);
     this.capacity = ctx.af.payloadMax; this.amount = this.capacity;
-    ctx.say(`Опрыскивание: ПРОБЕЛ. Высота 2–5 м, скорость ограничивается до 7 м/с, ширина захвата ${ctx.af.sprayWidth} м`, "info");
+    ctx.drone.radar = true;
+    // вешки по краям поля через ширину захвата — по ним выдерживают галсы
+    const w = ctx.af.sprayWidth, flag = new THREE.MeshStandardMaterial({ color: 0xff6a10, roughness: 0.7, side: THREE.DoubleSide });
+    const pole = new THREE.MeshStandardMaterial({ color: 0xeeeeee, roughness: 0.6 });
+    for (let x = this.F.x - this.F.hx + w / 2; x < this.F.x + this.F.hx; x += w) {
+      for (const sz of [-1, 1]) {
+        const g = new THREE.Group();
+        const pm = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.03, 1.8, 5), pole); pm.position.y = 0.9;
+        const fm = new THREE.Mesh(new THREE.PlaneGeometry(0.45, 0.3), flag); fm.position.set(0.23, 1.62, 0);
+        g.add(pm, fm);
+        this.place(g, x, this.F.z + sz * (this.F.hz + 1.5));
+      }
+      this.lanes.push(x);
+    }
+    ctx.say(`Опрыскивание: ПРОБЕЛ. Отпустите газ на 2–5 м — радар удержит высоту над полем. Галсы — по вешкам, захват ${w} м`, "info");
   }
 
   private paintCell(ix: number, iz: number) {
@@ -929,6 +950,7 @@ class AgroMission extends Mission {
   }
   drawMap(m: MapDraw) {
     m.rect(this.F.x - this.F.hx, this.F.z - this.F.hz, this.F.x + this.F.hx, this.F.z + this.F.hz, "#9be05a");
+    for (const x of this.lanes) m.path?.([[x, this.F.z - this.F.hz], [x, this.F.z + this.F.hz]], "rgba(255,140,40,0.35)", undefined, true);
     const step = 4;
     for (let iz = 0; iz < this.nz; iz += step) for (let ix = 0; ix < this.nx; ix += step) {
       let s = 0;
@@ -1910,9 +1932,9 @@ const SPRING: Palette = {
   sunIntensity: 2.2, clouds: 0.8, grassTint: [0.86, 0.78, 0.56], hdr: "forest_slope_1k.hdr",
 };
 const NIGHT: Palette = {
-  ...SUMMER, skyTop: 0x060a18, skyBottom: 0x1d2638, fog: 0x141b28, fogDensity: 0.0024,
-  sun: 0x9fb4ff, sunIntensity: 0.55, ambient: 0x3a4870, ambientIntensity: 0.55, sunDir: [-0.3, 0.55, -0.6],
-  clouds: 0.3, exposure: 2.3, hdr: "kiara_1_dawn_1k.hdr", grassTint: [0.6, 0.68, 0.62],
+  ...SUMMER, skyTop: 0x01030a, skyBottom: 0x0a1222, fog: 0x070b14, fogDensity: 0.0026,
+  sun: 0x8aa2e0, sunIntensity: 0.5, ambient: 0x2a3654, ambientIntensity: 0.45, sunDir: [-0.3, 0.5, -0.6],
+  clouds: 0.3, exposure: 1.05, hdr: undefined, grassTint: [0.6, 0.68, 0.62], night: true,
 };
 
 // ───────────────────────────── 10. Ледоход и затор на Печоре ─────────────────────────────
@@ -2561,6 +2583,8 @@ let FLOE_RIVER = { z0: -150, amp: 40, wl: 240, width: 44 };
 
 class BearMission extends Mission {
   private bear: THREE.Group;
+  private houses: THREE.Object3D[] = [];
+  private extras: THREE.Object3D[] = [];
   private head: number;
   private found = false; private tracked = 0; private seen = 0;
 
@@ -2571,15 +2595,47 @@ class BearMission extends Mission {
     for (let k = 0; k < 9; k++) {
       const a = (k / 9) * 6.28, d = 18 + r() * 26;
       const h = makeHouse(r, false);
-      h.rotation.y = r() * 3;
+      h.rotation.y = Math.round(r() * 3) * (Math.PI / 2); // окна ставим по граням коробки дома
       this.place(h, SETTLE.x + Math.cos(a) * d, SETTLE.z + Math.sin(a) * d);
       world.addThermal(h, 0.4);
+      this.houses.push(h);
     }
-    // уличные фонари — тёплые пятна света
+    // уличные фонари: столб, светящийся плафон и тёплое пятно света
+    const bulb = new THREE.MeshBasicMaterial({ color: new THREE.Color(0xffd9a0).multiplyScalar(4), toneMapped: false });
+    const pole = std(0x3a3d40, 0.7, 0.4);
     for (let k = 0; k < 4; k++) {
-      const l = new THREE.PointLight(0xffc27a, 40, 40, 1.6);
-      l.position.set(SETTLE.x - 30 + k * 20, world.groundAt(SETTLE.x - 30 + k * 20, SETTLE.z) + 6, SETTLE.z + 4);
+      const x = SETTLE.x - 30 + k * 20, z = SETTLE.z + 4, gy = world.groundAt(x, z);
+      const l = new THREE.PointLight(0xffc27a, 70, 45, 1.6);
+      l.position.set(x, gy + 6, z);
       world.scene.add(l);
+      const g = new THREE.Group();
+      g.add(boxMesh(0.12, 6.2, 0.12, pole, 0, 3.1, 0), boxMesh(0.8, 0.08, 0.08, pole, 0.35, 6.15, 0));
+      const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.18, 10, 8), bulb);
+      lamp.position.set(0.7, 6.0, 0);
+      g.add(lamp);
+      this.place(g, x - 0.7, z);
+    }
+    // светящиеся окна: тёплый свет в части домов
+    const win = new THREE.MeshBasicMaterial({ color: new THREE.Color(0xffb35c).multiplyScalar(2.2), toneMapped: false });
+    const box = new THREE.Box3(), c = new THREE.Vector3(), sz = new THREE.Vector3();
+    world.scene.updateMatrixWorld(true);
+    for (const h of this.houses) {
+      if (r() < 0.25) continue;
+      box.setFromObject(h); box.getCenter(c); box.getSize(sz);
+      for (const side of [0, 1, 2, 3]) {
+        if (r() < 0.45) continue;
+        const along = side < 2 ? sz.x : sz.z, n = along > 6 ? 2 : 1;
+        for (let i = 0; i < n; i++) {
+          const wm = new THREE.Mesh(new THREE.PlaneGeometry(0.8, 0.9), win);
+          const off = (i - (n - 1) / 2) * along * 0.4;
+          if (side < 2) wm.position.set(c.x + off, box.min.y + 1.6, side ? box.max.z + 0.03 : box.min.z - 0.03);
+          else { wm.position.set(side === 2 ? box.max.x + 0.03 : box.min.x - 0.03, box.min.y + 1.6, c.z + off); wm.rotation.y = Math.PI / 2; }
+          if (side === 0) wm.rotation.y = Math.PI;
+          if (side === 3) wm.rotation.y = -Math.PI / 2;
+          world.scene.add(wm);
+          this.extras.push(wm);
+        }
+      }
     }
     const a = rnd() * 6.28;
     this.bear = makeAnimal("bear");
@@ -2607,7 +2663,8 @@ class BearMission extends Mission {
     else b.y = world.groundAt(b.x, b.z) + Math.abs(Math.sin(this.time * sp * 2)) * 0.05;
     this.bear.rotation.y = this.head;
     if (dh < 4 && agl < 3) drone.crashed = "Медведь сбил аппарат лапой";
-    const inFrame = dh < 80 && this.ctx.camDir().dot(new THREE.Vector3(b.x, b.y + 0.8, b.z).sub(drone.pos).normalize()) > 0.85;
+    const zm = this.ctx.zoom?.() ?? 1;
+    const inFrame = dh < 80 * Math.sqrt(zm) && this.ctx.camDir().dot(new THREE.Vector3(b.x, b.y + 0.8, b.z).sub(drone.pos).normalize()) > Math.cos(0.55 / zm);
     if (inFrame && this.ctx.thermal()) {
       this.seen += dt;
       if (!this.found && this.seen > 1.5) { this.found = true; this.ctx.say("Медведь обнаружен! Подойдите на 30 м выше крон — гул винтов отпугнёт его в лес", "good"); }
@@ -2675,7 +2732,7 @@ export function rollLayouts(R: () => number = Math.random) {
     SEARCH = { ...SEARCH, car: [cx, cz], carYaw: Math.atan2(cx, cz), x0: Math.round(gx - 240), z0: Math.round(gz - 180) };
   }
   // 3. поле агромиссии
-  FIELD = { ...FIELD, x: rr(-110, 110), z: rr(-185, -125) };
+  FIELD = { ...FIELD, x: rr(-110, 110), z: rr(-160, -118) }; // не ближе ~50 м к реке
   // 4. хутор за широкой рекой — не у самой воды
   {
     const riv = { z0: -330, amp: 55, wl: 230 };
@@ -2809,10 +2866,11 @@ export const MISSIONS: MissionDef[] = [
     tagline: "Опрыскивание 1,1 га посевов", icon: "Sprout", color: "#9be05a",
     briefing: [
       "Поле 140×80 м нужно обработать от фитофтороза. Норма — 10 л/га, расход регулируется автоматически по скорости.",
-      "Летите параллельными галсами на высоте 2–5 м. Пропуски и двойные перекрытия снижают оценку.",
+      "Летите параллельными галсами на высоте 2–5 м — по оранжевым вешкам на краях поля, они стоят через ширину захвата. Пропуски и двойные перекрытия снижают оценку.",
+      "Как у настоящего агродрона, работает радар рельефа: отпустите газ на нужной высоте — аппарат сам будет держать её над посевами. Миссия начинается в режиме GPS.",
       "К северу река: в 30-метровой водоохранной зоне распылять запрещено. Заправка бака — посадкой на базу.",
     ],
-    actionLabel: "Опрыскивание", recommended: ["octo", "coax", "hexa"],
+    actionLabel: "Опрыскивание", recommended: ["octo", "coax", "hexa"], startMode: "POS",
     get world(): WorldCfg { return {
       seed: 41, size: 1400, relief: 5, river: { z0: -265, amp: 12, wl: 200, width: 12 },
       flats: [BASE_FLAT, { x: FIELD.x, z: FIELD.z, rx: FIELD.hx + 8, rz: FIELD.hz + 8 }],
@@ -3012,7 +3070,7 @@ export const MISSIONS: MissionDef[] = [
       "Здесь растут деревья — летите на 2–5 м и обходите стволы. Скорость автоматически ограничивается 7 м/с при включённых форсунках.",
       "Пропуски и двойные дозы снижают оценку, заправка — на базе.",
     ],
-    actionLabel: "Опрыскивание", recommended: ["hexa", "coax"],
+    actionLabel: "Опрыскивание", recommended: ["hexa", "coax"], startMode: "POS",
     get world(): WorldCfg { return {
       seed: 163, size: 1400, relief: 5, flats: [BASE_FLAT],
       // лужайки между корпусами; деревья остаются группами по краям и между полянами

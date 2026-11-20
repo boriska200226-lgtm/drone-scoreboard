@@ -90,6 +90,9 @@ export class DroneSim {
   gear: number;
   rates: Rates = { rc: 1, superRate: 0.7, expo: 0 };
   speedLimit = Infinity;
+  /** Радар рельефа (агродроны): в GPS/ATTI ниже 10 м держит высоту над землёй, а не над точкой взлёта. */
+  radar = false;
+  private radarAgl = 3;
   /** Есть ли спутниковая навигация: без неё режим GPS работает как ATTI (сносит ветром). */
   gpsOk = true;
   /** Множитель расхода энергии (погода: дождь, мороз). */
@@ -247,7 +250,15 @@ export class DroneSim {
           const aglNow = this.pos.y - this.gear - env.groundAt(this.pos.x, this.pos.z);
           vzDes = Math.max(vzDes, -Math.max(0.6, aglNow * 0.55));
           this.altSp = this.pos.y + this.vel.y * 0.35;
-        } else vzDes = clamp(1.6 * (this.altSp - this.pos.y), -af.climb * 0.75, af.climb);
+        } else {
+          const aglR = this.pos.y - this.gear - env.groundAt(this.pos.x, this.pos.z);
+          if (this.radar && aglR < 10 && !this.landed) {
+            // следуем рельефу: цель — та высота над землёй, на которой пилот отпустил газ
+            vzDes = clamp(2.2 * (env.groundAt(this.pos.x, this.pos.z) + this.gear + this.radarAgl - this.pos.y), -af.climb * 0.75, af.climb);
+            this.altSp = this.pos.y;
+          } else vzDes = clamp(1.6 * (this.altSp - this.pos.y), -af.climb * 0.75, af.climb);
+        }
+        if (this.radar && Math.abs(st.throttle) > 0.05) this.radarAgl = clamp(this.pos.y - this.gear - env.groundAt(this.pos.x, this.pos.z), 1.5, 10);
         if (!manual) {
           const ez = vzDes - this.vel.y;
           this.iZ = clamp(this.iZ + ez * dt * 1.2, -3, 3);

@@ -12,6 +12,8 @@ float fbm3(vec2 p){ float a = .5, s = 0.; for (int i = 0; i < 3; i++) { s += a*v
 export interface SkyParams {
   zenith: THREE.Color; horizon: THREE.Color; sunDir: THREE.Vector3; sunColor: THREE.Color;
   cover: number; cloudLit: THREE.Color; cloudDark: THREE.Color;
+  /** Ночь: вместо солнца луна, на небе звёзды и Млечный Путь. */
+  night?: boolean;
 }
 
 export function makeSkyMaterial(p: SkyParams, time: { value: number }): THREE.ShaderMaterial {
@@ -20,18 +22,50 @@ export function makeSkyMaterial(p: SkyParams, time: { value: number }): THREE.Sh
     uniforms: {
       uZenith: { value: p.zenith }, uHorizon: { value: p.horizon }, uSunDir: { value: p.sunDir }, uSunColor: { value: p.sunColor },
       uCover: { value: p.cover }, uCloudLit: { value: p.cloudLit }, uCloudDark: { value: p.cloudDark }, uTime: time,
+      uNight: { value: p.night ? 1 : 0 },
     },
     vertexShader: /* glsl */ `varying vec3 vDir; void main(){ vDir = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.); gl_Position.z = gl_Position.w; }`,
     fragmentShader: /* glsl */ `
-      uniform vec3 uZenith, uHorizon, uSunDir, uSunColor, uCloudLit, uCloudDark; uniform float uCover, uTime; varying vec3 vDir;
+      uniform vec3 uZenith, uHorizon, uSunDir, uSunColor, uCloudLit, uCloudDark; uniform float uCover, uTime, uNight; varying vec3 vDir;
       ${NOISE_GLSL}
+      float sh(vec3 p) { p = fract(p * vec3(443.897, 441.423, 437.195)); p += dot(p, p.yzx + 19.19); return fract((p.x + p.y) * p.z); }
+      // звёзды: по ячейкам направления, у каждой своя яркость, лёгкое мерцание
+      float stars(vec3 d) {
+        float s = 0.;
+        for (int k = 0; k < 2; k++) {
+          float sc = k == 0 ? 160. : 340.;
+          vec3 c = floor(d * sc), f = fract(d * sc) - .5;
+          float r = sh(c + float(k) * 7.1);
+          if (r > .965) {
+            vec3 o = vec3(sh(c + 1.3), sh(c + 2.7), sh(c + 4.1)) - .5;
+            float dd = length(f - o * .6);
+            float b = pow(r - .965, 1.) * 28. * (k == 0 ? 1.4 : .7);
+            s += b * smoothstep(.16, 0., dd) * (.75 + .25 * sin(uTime * (2. + r * 9.) + r * 40.));
+          }
+        }
+        return s;
+      }
       void main(){
         vec3 d = normalize(vDir);
         float h = max(d.y, 0.);
         vec3 col = mix(uHorizon, uZenith, pow(h, .48));
         float sd = max(dot(d, uSunDir), 0.);
-        col += uSunColor * (pow(sd, 5.) * .07 + pow(sd, 48.) * .22);
-        float disc = smoothstep(.99955, .9998, sd);
+        float disc;
+        if (uNight > .5) {
+          // Млечный Путь — размытая полоса, звёзды гаснут к горизонту в дымке
+          float band = exp(-pow(dot(d, normalize(vec3(.35, .25, .9))) * 3.2, 2.));
+          col += vec3(.035, .04, .06) * band * (.5 + fbm(d.xz / (d.y + .3) * 3.) * .8) * smoothstep(0., .3, d.y);
+          col += vec3(.9, .93, 1.) * stars(d) * smoothstep(.02, .25, d.y) * (1. + band);
+          // луна: диск с «морями» и мягкий ореол
+          col += vec3(.55, .62, .8) * (pow(sd, 60.) * .25 + pow(sd, 900.) * .6);
+          disc = smoothstep(.99935, .99955, sd);
+          float maria = fbm(d.xz * 900.) ;
+          col += vec3(1., .98, .92) * disc * (2.2 - maria * .9);
+          disc = 0.;
+        } else {
+          col += uSunColor * (pow(sd, 5.) * .07 + pow(sd, 48.) * .22);
+          disc = smoothstep(.99955, .9998, sd);
+        }
         if (d.y > .004) {
           vec2 uv = d.xz / (d.y + .13) * 1.5 + uTime * vec2(.007, .003);
           float n = fbm(uv * 1.2) * .7 + fbm(uv * 3.1 + 5.) * .3;
@@ -39,7 +73,7 @@ export function makeSkyMaterial(p: SkyParams, time: { value: number }): THREE.Sh
           float dens = smoothstep(1. - uCover, 1. - uCover + .28, n * 1.3);
           float light = clamp(.5 + (n - n2) * 4.5, 0., 1.);
           vec3 cc = mix(uCloudDark, uCloudLit, light) + uSunColor * pow(sd, 9.) * .2 * (1. - dens * .6);
-          col = mix(col, cc, dens * smoothstep(0., .2, d.y));
+          col = mix(col, cc, dens * smoothstep(0., .2, d.y) * (uNight > .5 ? .92 : 1.));
           disc *= 1. - dens;
         }
         col += uSunColor * disc * 14.;

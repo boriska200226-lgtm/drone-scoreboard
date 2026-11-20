@@ -39,6 +39,8 @@ export interface Palette {
   clouds: number; // 0 — ясно, 1 — сплошная облачность
   exposure: number;
   snow?: boolean;
+  /** Ночь: звёзды и луна, тёмные облака, без дневной HDR-панорамы. */
+  night?: boolean;
   grassTint?: [number, number, number];
   hdr?: string; // HDR-панорама для освещения (Poly Haven, CC0)
 }
@@ -179,8 +181,9 @@ export class World {
       zenith: new THREE.Color(pal.skyTop), horizon, sunDir,
       sunColor: new THREE.Color(pal.sun).multiplyScalar(pal.sunIntensity * (1 - pal.clouds * 0.75)),
       cover: pal.clouds,
-      cloudLit: new THREE.Color(pal.sun).lerp(new THREE.Color(0xffffff), 0.6).multiplyScalar(0.95 - pal.clouds * 0.3),
-      cloudDark: new THREE.Color(pal.skyBottom).multiplyScalar(0.62),
+      cloudLit: pal.night ? new THREE.Color(0x1b2130) : new THREE.Color(pal.sun).lerp(new THREE.Color(0xffffff), 0.6).multiplyScalar(0.95 - pal.clouds * 0.3),
+      cloudDark: pal.night ? new THREE.Color(0x05070c) : new THREE.Color(pal.skyBottom).multiplyScalar(0.62),
+      night: !!pal.night,
     };
     const geo = this.own(new THREE.SphereGeometry(1, 32, 16));
     this.sky = new THREE.Mesh(geo, this.own(makeSkyMaterial(this.skyParams, this.time)));
@@ -223,7 +226,7 @@ export class World {
     this.scene.environment = rt.texture;
     this.scene.environmentIntensity = 0.55;
     const hdr = this.cfg.palette.hdr;
-    if (hdr && this.quality !== "low") {
+    if (hdr && this.quality !== "low" && !this.cfg.palette.night) {
       // настоящая панорама неба и леса даёт фотографичное рассеянное освещение и отражения
       const apply = (eq: THREE.DataTexture) => {
         const pm2 = new THREE.PMREMGenerator(renderer);
