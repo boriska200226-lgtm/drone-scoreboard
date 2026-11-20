@@ -376,7 +376,7 @@ export default function ControlsSetup({ cfg, onChange }: { cfg: InputConfig; onC
         <div className="font-orbitron text-xs font-bold text-white mb-3">КЛАВИАТУРА</div>
         <div className="grid sm:grid-cols-2 gap-x-8 gap-y-1.5 text-sm text-gray-400">
           {[["W / S", "газ / набор и снижение"], ["A / D", "рыскание"], ["↑ ↓ ← →", "тангаж и крен"], ["Пробел", "сброс воды, набора, снимок"],
-            ["C", "камера: сзади / FPV / с земли / сверху"], ["M", "режим: GPS / ATTI / Angle / Acro"], ["T", "тепловизор"], ["V / G", "окно подвеса / наклон подвеса"],
+            ["C", "камера: сзади / FPV / с земли / сверху"], ["M", "режим: GPS / ATTI / Angle / Acro"], ["T / P", "тепловизор / палитра"], ["V / G", "окно подвеса / наклон подвеса"],
             ["H", "автовозврат на базу"], ["L", "автопосадка (стиками — на площадку)"], ["N", "звук"], ["I", "панель инструктора"], ["Shift + 1…5", "ввести отказ (0 — сброс)"], ["Esc", "пауза"]].map(([k, v]) => (
             <div key={k} className="flex gap-3"><kbd className="px-1.5 rounded text-white text-xs font-mono shrink-0 text-center" style={{ background: "#ffffff14", minWidth: 70, lineHeight: "20px" }}>{k}</kbd><span>{v}</span></div>
           ))}

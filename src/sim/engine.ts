@@ -22,7 +22,7 @@ export interface Hud {
   battery: number; minutes: number; powerW: number;
   payloadLabel: string; payloadText: string; payloadFrac: number;
   wind: number; windFrom: number;
-  mode: string; cam: string; thermal: boolean; pip: boolean; rth: boolean;
+  mode: string; cam: string; thermal: boolean; thermalPal: string; pip: boolean; rth: boolean;
   distHome: number; time: number;
   objectives: Objective[]; motors: boolean[]; warnings: string[];
   pipRect: { right: number; top: number; w: number; h: number }; mapSize: number;
@@ -60,7 +60,9 @@ export interface EngineOpts {
   onEnd(r: SimResult): void;
 }
 
-export type Command = "cam" | "thermal" | "pip" | "gimbal" | "mode" | "rth" | "mute" | "land";
+export type Command = "cam" | "thermal" | "pip" | "gimbal" | "mode" | "rth" | "mute" | "land" | "palette";
+/** Палитры тепловизора, как в настоящих камерах. */
+export const THERMAL_PALETTES = ["Железо", "Белое — горячее", "Чёрное — горячее", "Радуга"] as const;
 /** Отказы, которые вводит инструктор (или случайный сценарий). */
 export type Fault = "motor" | "gps" | "link" | "gust" | "battery" | "clear";
 export const CAMS = ["chase", "fpv", "los", "top"] as const;
@@ -123,10 +125,25 @@ const THERMAL_SKY = new THREE.Color(0x010101);
 function makeThermalPost() {
   const rt = new THREE.WebGLRenderTarget(4, 4, { type: THREE.HalfFloatType, depthBuffer: true });
   const mat = new THREE.ShaderMaterial({
-    uniforms: { uTex: { value: null }, uPx: { value: new THREE.Vector2() }, uTime: { value: 0 } },
+    uniforms: { uTex: { value: null }, uPx: { value: new THREE.Vector2() }, uTime: { value: 0 }, uPal: { value: 0 } },
     vertexShader: "varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0., 1.); }",
     fragmentShader: `
-      uniform sampler2D uTex; uniform vec2 uPx; uniform float uTime; varying vec2 vUv;
+      uniform sampler2D uTex; uniform vec2 uPx; uniform float uTime; uniform int uPal; varying vec2 vUv;
+      // «железо» (ironbow): холодное — чёрно-синее, тёплое — фиолетово-красное, горячее — жёлто-белое
+      vec3 iron(float v) {
+        vec3 c = mix(vec3(0., 0., .04), vec3(.2, .02, .45), smoothstep(0., .3, v));
+        c = mix(c, vec3(.75, .05, .35), smoothstep(.25, .55, v));
+        c = mix(c, vec3(.95, .38, .02), smoothstep(.5, .75, v));
+        c = mix(c, vec3(1., .85, .15), smoothstep(.72, .9, v));
+        return mix(c, vec3(1.), smoothstep(.9, 1., v));
+      }
+      vec3 rainbow(float v) {
+        vec3 c = mix(vec3(.05, 0., .25), vec3(0., .2, .9), smoothstep(0., .25, v));
+        c = mix(c, vec3(0., .85, .6), smoothstep(.22, .45, v));
+        c = mix(c, vec3(.9, .9, 0.), smoothstep(.45, .65, v));
+        c = mix(c, vec3(1., .2, 0.), smoothstep(.65, .85, v));
+        return mix(c, vec3(1., .95, .95), smoothstep(.9, 1., v));
+      }
       float T(vec2 o) { return texture2D(uTex, vUv + o * uPx).r; }
       float h(vec2 p) { vec3 q = fract(vec3(p.xyx) * .1031); q += dot(q, q.yzx + 33.33); return fract((q.x + q.y) * q.z); }
       void main() {
@@ -140,7 +157,9 @@ function makeThermalPost() {
         v += (h(gl_FragCoord.xy + uTime * 91.) - .5) * .05;     // шум матрицы
         v += (h(vec2(floor(gl_FragCoord.x), 7.)) - .5) * .025;  // полосы по столбцам
         vec2 d = vUv - .5; v *= 1. - dot(d, d) * .5;            // виньетка объектива
-        gl_FragColor = vec4(vec3(clamp(v, 0., 1.)), 1.);
+        v = clamp(v, 0., 1.);
+        vec3 col = uPal == 0 ? iron(v) : uPal == 2 ? vec3(1. - v) : uPal == 3 ? rainbow(v) : vec3(v);
+        gl_FragColor = vec4(col, 1.);
       }`,
     depthTest: false, depthWrite: false,
   });
@@ -228,6 +247,7 @@ export class SimEngine {
   private windsock: THREE.Object3D | null = null;
   private fogSaved: THREE.FogExp2 | null = null;
   private thermalPost: ReturnType<typeof makeThermalPost> | null = null;
+  private thermalPal = (() => { try { return (+(localStorage.getItem("bas-sim-thermal-pal") ?? 0) || 0) % 4; } catch { return 0; } })();
 
   constructor(o: EngineOpts) {
     this.o = o;
@@ -347,7 +367,7 @@ export class SimEngine {
     if (["Space", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.code)) e.preventDefault();
     if (e.repeat) return;
     this.keys.add(e.code);
-    const map: Record<string, Command> = { KeyC: "cam", KeyT: "thermal", KeyV: "pip", KeyG: "gimbal", KeyM: "mode", KeyH: "rth", KeyN: "mute", KeyL: "land" };
+    const map: Record<string, Command> = { KeyC: "cam", KeyT: "thermal", KeyV: "pip", KeyG: "gimbal", KeyM: "mode", KeyH: "rth", KeyN: "mute", KeyL: "land", KeyP: "palette" };
     if (e.code === "Space") this.actionPressed = true;
     else if (map[e.code]) this.command(map[e.code]);
   };
@@ -359,6 +379,12 @@ export class SimEngine {
     const say = this.o.onSay;
     if (c === "cam") this.camMode = CAMS[(CAMS.indexOf(this.camMode) + 1) % CAMS.length];
     else if (c === "thermal") { this.thermal = !this.thermal; if (this.thermal) this.pip = true; }
+    else if (c === "palette") {
+      this.thermalPal = (this.thermalPal + 1) % THERMAL_PALETTES.length;
+      try { localStorage.setItem("bas-sim-thermal-pal", String(this.thermalPal)); } catch { /* приватный режим */ }
+      if (!this.thermal) { this.thermal = true; this.pip = true; }
+      this.say(`Палитра тепловизора: ${THERMAL_PALETTES[this.thermalPal]}`, "info");
+    }
     else if (c === "pip") this.pip = !this.pip;
     else if (c === "gimbal") {
       // фиксированные положения подвеса: от надира до горизонта
@@ -902,6 +928,7 @@ export class SimEngine {
         tp.mat.uniforms.uTex.value = tp.rt.texture;
         tp.mat.uniforms.uPx.value.set(1 / tw, 1 / th);
         tp.mat.uniforms.uTime.value = (tp.mat.uniforms.uTime.value + 0.013) % 50;
+        tp.mat.uniforms.uPal.value = this.thermalPal;
         r.setScissorTest(true);
         r.setScissor(x, y, p.w, p.h);
         r.setViewport(x, y, p.w, p.h);
@@ -1078,7 +1105,7 @@ export class SimEngine {
       failsafe: this.linkLostT > 1 ? (this.failsafe === "rth" ? "НЕТ СВЯЗИ · ВОЗВРАТ" : this.failsafe === "land" ? "НЕТ СВЯЗИ · ПОСАДКА" : this.failsafe === "hover" ? "НЕТ СВЯЗИ · ЗАВИСАНИЕ" : "НЕТ СВЯЗИ")
         : this.autoLand ? "ПРИНУДИТЕЛЬНАЯ ПОСАДКА" : this.failsafe ? "FAILSAFE" : null,
       landing: this.landReq, gimbal: Math.round(this.gimbalPitch),
-      thermal: this.thermal, pip: this.pip, rth: this.rth,
+      thermal: this.thermal, thermalPal: THERMAL_PALETTES[this.thermalPal], pip: this.pip, rth: this.rth,
       distHome: Math.hypot(d.pos.x, d.pos.z), time: m.time, objectives, motors: [...d.motorOk], warnings,
       ...layout(w, this.thermal),
     });

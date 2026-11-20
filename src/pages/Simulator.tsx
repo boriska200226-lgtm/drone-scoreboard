@@ -172,7 +172,7 @@ async function sendResult(r: SimResult, title: string): Promise<{ ok: boolean; t
 const KEY_GROUPS = (action: string) => [
   { title: "ПОЛЁТ", color: "#00ffaa", keys: [["W / S", "газ: вверх / вниз"], ["A / D", "поворот (рыскание)"], ["↑ ↓", "вперёд / назад"], ["← →", "влево / вправо"], ["M", "режим: GPS · ATTI · Angle · Acro"]] },
   { title: "ПОСАДКА И ВОЗВРАТ", color: "#ffd166", keys: [["L", "автопосадка (стиками — на площадку)"], ["H", "автовозврат на базу"]] },
-  { title: "КАМЕРА", color: "#7dd3fc", keys: [["C", "вид: FPV · сзади · с земли · сверху"], ["V", "окно камеры подвеса"], ["G", "угол подвеса 0…−90°"], ["T", "тепловизор"]] },
+  { title: "КАМЕРА", color: "#7dd3fc", keys: [["C", "вид: FPV · сзади · с земли · сверху"], ["V", "окно камеры подвеса"], ["G", "угол подвеса 0…−90°"], ["T", "тепловизор"], ["P", "палитра тепловизора"]] },
   { title: "МИССИЯ", color: "#ff8a5c", keys: [["Пробел", action !== "—" ? action : "действие миссии"], ["I", "панель инструктора"], ["N", "звук"], ["Esc", "пауза"]] },
 ] as { title: string; color: string; keys: [string, string][] }[];
 
@@ -385,7 +385,7 @@ function Flight({ mission, af, difficulty, quality, flightMode, camMode, input, 
         {hud?.pip && (
           <div className="absolute rounded" style={{ top: hud.pipRect.top, right: hud.pipRect.right, width: hud.pipRect.w, height: hud.pipRect.h, border: `1px solid ${hud.thermal ? "#ff8800" : "rgba(255,255,255,0.35)"}` }}>
             <span className="absolute top-1 left-1.5 font-orbitron text-[10px] px-1 rounded" style={{ background: "rgba(0,0,0,0.55)", color: hud.thermal ? "#ff8800" : "#fff" }}>
-              {hud.thermal ? "ТЕПЛОВИЗОР" : "КАМЕРА ПОДВЕСА"} · {hud.gimbal}°
+              {hud.thermal ? `ТЕПЛОВИЗОР · ${hud.thermalPal} (P)` : "КАМЕРА ПОДВЕСА"} · {hud.gimbal}°
             </span>
             <span className="absolute left-1/2 top-1/2 w-4 h-4 -ml-2 -mt-2 rounded-full" style={{ border: "1px solid rgba(255,255,255,0.7)" }} />
           </div>
