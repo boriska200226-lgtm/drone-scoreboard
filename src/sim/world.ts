@@ -270,7 +270,8 @@ export class World {
     this.lodAcc += dt;
     if (this.lodAcc > 0.3) {
       this.lodAcc = 0;
-      const far = this.quality === "high" ? 105 : this.quality === "medium" ? 70 : -1;
+      // на высоком качестве объёмные деревья дальше — меньше «картонных» вблизи
+      const far = this.quality === "high" ? 165 : this.quality === "medium" ? 95 : -1;
       for (const c of this.chunks) {
         const near = Math.hypot(c.x - camPos.x, c.z - camPos.z) < far + CHUNK * 0.7;
         for (const m of c.near) m.visible = near;

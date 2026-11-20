@@ -166,12 +166,20 @@ export class ForestKit {
       map: this.atlas.texture, alphaTest: 0.5, side: THREE.DoubleSide, roughness: 0.9, metalness: 0, alphaToCoverage: opts.a2c,
     });
     this.impostorMat.onBeforeCompile = (sh) => {
+      // вид кроны сверху виден только сверху, боковые снимки — только сбоку; иначе плоские карточки
+      // видны ребром — тёмные «полоски» в воздухе
       sh.vertexShader = sh.vertexShader
-        .replace("#include <common>", "#include <common>\nvarying vec3 vIW;")
-        .replace("#include <begin_vertex>", "#include <begin_vertex>\n#ifdef USE_INSTANCING\nvIW = instanceMatrix[3].xyz;\n#else\nvIW = vec3(0.);\n#endif");
+        .replace("#include <common>", "#include <common>\nattribute float aTop; varying vec3 vIW; varying float vTop; varying vec3 vWP;")
+        .replace("#include <begin_vertex>", "#include <begin_vertex>\nvTop = aTop;\n#ifdef USE_INSTANCING\nvIW = instanceMatrix[3].xyz;\n#else\nvIW = vec3(0.);\n#endif")
+        .replace("#include <worldpos_vertex>", "#include <worldpos_vertex>\nvec4 wpI = vec4(transformed, 1.);\n#ifdef USE_INSTANCING\nwpI = instanceMatrix * wpI;\n#endif\nvWP = (modelMatrix * wpI).xyz;");
       sh.fragmentShader = sh.fragmentShader
-        .replace("#include <common>", `#include <common>\nvarying vec3 vIW;\n${NOISE_GLSL}`)
-        .replace("#include <color_fragment>", "#include <color_fragment>\ndiffuseColor.rgb *= .85 + .3 * hash12(vIW.xz);");
+        .replace("#include <common>", `#include <common>\nvarying vec3 vIW; varying float vTop; varying vec3 vWP;\n${NOISE_GLSL}`)
+        .replace("#include <color_fragment>", `#include <color_fragment>
+          diffuseColor.rgb *= .85 + .3 * hash12(vIW.xz);
+          float up = abs(normalize(cameraPosition - vWP).y);
+          float keep = vTop > .5 ? smoothstep(.45, .8, up) : 1. - smoothstep(.9, .99, up);
+          // плавное исчезновение — дизерингом, чтобы работало с alphaTest
+          if (keep < hash12(gl_FragCoord.xy)) discard;`);
     };
     this.thermalMat = new THREE.MeshBasicMaterial({ map: this.atlas.texture, alphaTest: 0.5, side: THREE.DoubleSide, color: 0x0d0d0d, fog: false, toneMapped: false });
     this.thermalMat.onBeforeCompile = (sh) => {
@@ -241,13 +249,13 @@ export class ForestKit {
 
 /** Импостор: три вертикальные плоскости под 60° со снимком сбоку и горизонтальная со снимком сверху. */
 function impostorGeometry(tile: number, halfW: number, crown: number): THREE.BufferGeometry {
-  const pos: number[] = [], nor: number[] = [], uv: number[] = [];
+  const pos: number[] = [], nor: number[] = [], uv: number[] = [], isTop: number[] = [];
   const top = 2 * halfW * (SIDE_H / TILE_W) - 0.02;
   const u0 = (tile * TILE_W + 1) / ATLAS_W, u1 = ((tile + 1) * TILE_W - 1) / ATLAS_W;
   const vS0 = TOP_H / ATLAS_H, vS1 = 1;
   const push = (x: number, y: number, z: number, nx: number, ny: number, nz: number, u: number, v: number) => {
     const l = Math.hypot(nx, ny, nz) || 1;
-    pos.push(x, y, z); nor.push(nx / l, ny / l, nz / l); uv.push(u, v);
+    pos.push(x, y, z); nor.push(nx / l, ny / l, nz / l); uv.push(u, v); isTop.push(0);
   };
   for (let k = 0; k < 3; k++) {
     const a = (k * Math.PI) / 3, cx = Math.cos(a), sz = Math.sin(a);
@@ -267,11 +275,13 @@ function impostorGeometry(tile: number, halfW: number, crown: number): THREE.Buf
   for (const k of [0, 1, 2, 0, 2, 3]) {
     const [x, z, u, v] = corners[k];
     push(x, y, z, x * 0.4, 1, z * 0.4, u, v);
+    isTop[isTop.length - 1] = 1;
   }
   const g = new THREE.BufferGeometry();
   g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
   g.setAttribute("normal", new THREE.Float32BufferAttribute(nor, 3));
   g.setAttribute("uv", new THREE.Float32BufferAttribute(uv, 2));
+  g.setAttribute("aTop", new THREE.Float32BufferAttribute(isTop, 1));
   g.computeBoundingSphere();
   return g;
 }
