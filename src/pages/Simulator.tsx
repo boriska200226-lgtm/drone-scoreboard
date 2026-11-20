@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Icon from "@/components/ui/icon";
-import { Airframe, getAirframe, isPlane } from "@/sim/airframes";
+import { Airframe, getAirframe, kindOf } from "@/sim/airframes";
 import { assemble, loadBuilds } from "@/sim/build";
 import { CAM_LABEL, CamMode, CAMS, Command, Fault, Hud, MODES, SimEngine, SimResult } from "@/sim/engine";
 import { findMission } from "@/sim/course";
@@ -615,7 +615,7 @@ export default function Simulator() {
   useEffect(() => { document.title = "Северный дрон — симулятор беспилотников"; }, []);
   // самолётная миссия — самолёт, иначе — коптер (если в настройках остался аппарат другого типа)
   const mDef = findMission(settings.mission);
-  const afId = isPlane(getAirframe(settings.af)) === isPlane(getAirframe(mDef.recommended[0])) ? settings.af : mDef.recommended[0];
+  const afId = kindOf(getAirframe(settings.af)) === kindOf(getAirframe(mDef.recommended[0])) ? settings.af : mDef.recommended[0];
   const af = useMemo(() => assemble(afId, settings.builds[afId]), [afId, settings.builds]);
   // каждый вылет и каждый перезапуск — новая раскладка заданий
   const [salt] = useState(() => Math.floor(Math.random() * 1e9));

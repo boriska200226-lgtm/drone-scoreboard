@@ -76,6 +76,8 @@ export abstract class Mission {
   /** Повтор полёта: снимок изменяемого состояния миссии (пожар, обработанное поле…) и его применение. */
   snapshot(): unknown { return null; }
   restore(_s: unknown, _dt: number): void { /* по умолчанию состояние миссии в повторе не меняется */ }
+  /** Своя подпись груза на приборной панели (иначе — по capacity/amount). */
+  payloadText?(): string;
 
   protected agl(): number {
     const d = this.ctx.drone;
@@ -2337,6 +2339,163 @@ class PatrolMission extends Mission {
   }
 }
 
+// ───────────────────────────── 20. Груз на внешней подвеске (вертолётный БАС) ─────────────────────────────
+
+let RIG = { x: 1400, z: -1300 };
+const ROPE = 12;
+
+class SlingMission extends Mission {
+  private load: THREE.Group; private rope: THREE.Line;
+  private lp = new THREE.Vector3(); private lv = new THREE.Vector3();
+  private attached = false; private hookT = 0; private delivered = false;
+  private pad: THREE.Vector3; private pick: THREE.Vector3;
+  private maxSwing = 0; private swingNear = 0; private swingSaid = -10; private dropHits = 0; private hintSaid = -10;
+  private readonly lm = 22; // масса груза, кг
+
+  constructor(ctx: Ctx) {
+    super(ctx);
+    const { world } = ctx;
+    // площадка с грузом рядом с базой
+    this.pick = new THREE.Vector3(18, 0, -6);
+    this.pick.y = world.groundAt(this.pick.x, this.pick.z);
+    // буровая: площадка, вышка, вагончики
+    this.pad = new THREE.Vector3(RIG.x, world.groundAt(RIG.x, RIG.z), RIG.z);
+    const hp = makeHelipad("Г", "#ff8a1f");
+    this.place(hp, RIG.x, RIG.z, 0.05);
+    const tower = makePylon(34, 5);
+    this.place(tower, RIG.x + 24, RIG.z - 6);
+    world.addThermal(tower, 0.2);
+    const r = mulberry32(77);
+    for (const [dx, dz] of [[-26, 10], [-26, -8], [8, 26]]) {
+      const h = makeHouse(r, false);
+      h.scale.set(0.8, 0.8, 0.8);
+      this.place(h, RIG.x + dx, RIG.z + dz);
+      world.addThermal(h, 0.35);
+    }
+    const flare = makeBeam(0xff7a2a, 300, 3);
+    flare.position.set(RIG.x, this.pad.y + 150, RIG.z);
+    world.scene.add(flare);
+    // груз: ящик с запчастями в сетке
+    this.load = new THREE.Group();
+    const box = boxMesh(1.1, 0.8, 0.9, std(0x3d6aa8, 0.7), 0, 0, 0);
+    const strap = std(0xf2c230, 0.8);
+    this.load.add(box, boxMesh(1.14, 0.08, 0.94, strap, 0, 0.2, 0), boxMesh(0.08, 0.84, 0.94, strap, 0, 0, 0));
+    world.scene.add(this.load);
+    world.addThermal(this.load, 0.12);
+    this.lp.set(this.pick.x, this.pick.y + 0.42, this.pick.z);
+    const geo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]);
+    this.rope = new THREE.Line(geo, new THREE.LineBasicMaterial({ color: 0x222222 }));
+    this.rope.frustumCulled = false;
+    this.rope.visible = false;
+    world.scene.add(this.rope);
+    this.capacity = 1; this.amount = 0;
+    ctx.say(`Груз — на площадке рядом с базой. Зависните над ним на ${ROPE}–${ROPE + 3} м: наземная команда зацепит трос`, "info");
+  }
+
+  update(dt: number, action: Action) {
+    this.time += dt;
+    const { drone, world } = this.ctx;
+    const hook = new THREE.Vector3(drone.pos.x, drone.pos.y - 0.2, drone.pos.z);
+    const heli = drone as DroneSim & { sling?: THREE.Vector3 };
+    const g = world.groundAt(this.lp.x, this.lp.z);
+    // ── зацепление ──
+    if (!this.attached && !this.delivered) {
+      const dh = Math.hypot(hook.x - this.lp.x, hook.z - this.lp.z), hgt = hook.y - this.lp.y;
+      const ok = dh < 3.5 && hgt > ROPE - 3 && hgt < ROPE + 3 && Math.hypot(drone.vel.x, drone.vel.z) < 1.5;
+      this.hookT = ok ? this.hookT + dt : 0;
+      if (ok && this.hookT > 2.5) { this.attached = true; this.amount = 1; this.ctx.say("Груз на крюке! Плавно вверх и курс на буровую — оранжевый столб", "good"); }
+      else if (dh < 15 && !ok && this.time - this.hintSaid > 6) {
+        this.hintSaid = this.time;
+        this.ctx.say(hgt < ROPE - 3 ? "Слишком низко — нужно " + ROPE + "–" + (ROPE + 3) + " м над грузом, иначе трос не натянуть" : hgt > ROPE + 3 ? "Снизьтесь: трос " + ROPE + " м" : "Точнее над грузом и остановитесь", "info");
+      }
+    }
+    // ── маятник на тросе ──
+    if (heli.sling) heli.sling.set(0, 0, 0);
+    if (this.attached) {
+      const w = drone.windNow;
+      this.lv.y -= 9.81 * dt;
+      this.lv.x += (w.x - this.lv.x) * 0.02 * dt * 10; this.lv.z += (w.z - this.lv.z) * 0.02 * dt * 10;
+      this.lv.multiplyScalar(1 - 0.08 * dt);
+      this.lp.addScaledVector(this.lv, dt);
+      const onGround = this.lp.y <= g + 0.42;
+      if (onGround) {
+        if (this.lv.y < -3) { this.dropHits++; this.ctx.say("Груз ударился о землю!", "warn"); }
+        this.lp.y = g + 0.42; this.lv.y = Math.max(0, this.lv.y); this.lv.x *= 0.8; this.lv.z *= 0.8;
+      }
+      const d = this.lp.distanceTo(hook);
+      if (d > ROPE) {
+        const n = this.lp.clone().sub(hook).divideScalar(d);
+        this.lp.copy(hook).addScaledVector(n, ROPE);
+        const vr = this.lv.clone().sub(drone.vel).dot(n);
+        if (vr > 0) {
+          const M = drone.mass, J = (vr * this.lm * M) / (this.lm + M);
+          this.lv.addScaledVector(n, -J / this.lm);
+          drone.vel.addScaledVector(n, J / M);
+        }
+        // натянутый трос тянет вертолёт — автопилот видит это как лишний вес
+        if (heli.sling) heli.sling.copy(n).multiplyScalar(this.lm * 9.81 * Math.max(0, -n.y));
+      }
+      drone.payload = onGround ? 0 : this.lm * 0.2; // запас на маневр учитывает часть веса
+      // раскачка — колебания груза относительно вертолёта (в полёте груз и так отклоняется потоком назад)
+      const rel = Math.hypot(this.lv.x - drone.vel.x, this.lv.z - drone.vel.z);
+      const swing = Math.atan(rel / Math.sqrt(9.81 / ROPE) / ROPE) * 57.3;
+      this.maxSwing = Math.max(this.maxSwing, onGround ? 0 : swing);
+      if (swing > 20 && !onGround && this.time - this.swingSaid > 5) { this.swingSaid = this.time; this.ctx.say(`Груз раскачался (${Math.round(swing)}°) — плавнее разгон и торможение`, "warn"); }
+      const padD = Math.hypot(this.lp.x - this.pad.x, this.lp.z - this.pad.z);
+      if (padD < 30 && !onGround) this.swingNear = Math.max(this.swingNear, swing);
+      // вышка: груз или трос задели металлоконструкцию
+      const tx = RIG.x + 24, tz = RIG.z - 6;
+      if (Math.hypot(this.lp.x - tx, this.lp.z - tz) < 3.5 && this.lp.y < this.pad.y + 34) { this.ctx.say("Груз задел буровую вышку! Трос оборван", "warn"); this.failed = "Груз зацепил буровую вышку"; }
+      // отказ двигателя с грузом — по инструкции груз сбрасывают, иначе авторотацию не вытянуть
+      const engineDead = (drone as DroneSim & { engineOk?: boolean }).engineOk === false;
+      // отцепка (ПРОБЕЛ): на площадке — доставка, в воздухе — аварийный сброс
+      if (action.pressed || (engineDead && !onGround)) {
+        if (engineDead && !action.pressed) this.ctx.say("Отказ двигателя — автоматический сброс груза", "warn");
+        this.attached = false; this.amount = 0; drone.payload = 0;
+        if (onGround && padD < 7) { this.delivered = true; this.ctx.say(`Груз на площадке буровой (${padD.toFixed(1)} м от центра). Возвращайтесь на базу`, "good"); }
+        else if (onGround) this.ctx.say(`Груз отцеплен мимо площадки (${Math.round(padD)} м) — так рабочим неудобно, зацепите снова`, "warn");
+        else this.ctx.say("Аварийный сброс груза!", "warn");
+      }
+    } else if (!this.delivered || this.lp.y > g + 0.43) {
+      // свободный груз падает
+      this.lv.y -= 9.81 * dt;
+      this.lp.addScaledVector(this.lv, dt);
+      if (this.lp.y <= g + 0.42) {
+        if (this.lv.y < -6) { this.failed = "Груз разбился при сбросе"; }
+        this.lp.y = g + 0.42; this.lv.set(0, 0, 0);
+      }
+    }
+    // визуализация: ящик под тросом поворачивается по направлению троса
+    this.load.position.copy(this.lp);
+    this.rope.visible = this.attached;
+    if (this.attached) {
+      const a = this.rope.geometry.attributes.position as THREE.BufferAttribute;
+      a.setXYZ(0, hook.x, hook.y, hook.z); a.setXYZ(1, this.lp.x, this.lp.y + 0.45, this.lp.z); a.needsUpdate = true;
+    }
+    if (!this.tasksDone && this.delivered) this.tasksDone = true;
+  }
+  refill() { return false; }
+  payloadText() { return this.delivered ? "доставлен" : this.attached ? "на тросе" : "у базы"; }
+  objectives(): Objective[] {
+    return [
+      { text: "Зацепить груз у базы", done: this.attached || this.delivered },
+      { text: "Опустить груз на площадку буровой", done: this.delivered, progress: this.attached ? `${Math.round(Math.hypot(this.lp.x - this.pad.x, this.lp.z - this.pad.z))} м` : undefined },
+    ];
+  }
+  summary() {
+    return {
+      score: clamp(100 - Math.max(0, this.swingNear - 8) * 2 - this.dropHits * 15 - Math.max(0, this.time - 420) / 6, 10, 100),
+      rows: [["Груз доставлен", this.delivered ? "да" : "нет"], ["Макс. раскачка", `${Math.round(this.maxSwing)}°`], ["Раскачка у площадки", `${Math.round(this.swingNear)}°`],
+        ["Удары груза", String(this.dropHits)], ["Время", fmtTime(this.time)]] as [string, string][],
+    };
+  }
+  drawMap(m: MapDraw) {
+    m.ring(RIG.x, RIG.z, 18, "#ff8a1f");
+    m.text?.(RIG.x, RIG.z - 30, "буровая", "#ff8a1f");
+    m.dot(this.lp.x, this.lp.z, this.attached ? "#ffd700" : this.delivered ? "#00ffaa" : "#3d9aff", 4);
+  }
+}
+
 // ───────────────────────────── 12. Газовый промысел (Вуктыл) ─────────────────────────────
 
 let PADS: [number, number][] = [[60, -260], [-140, -420], [170, -520]];
@@ -2994,6 +3153,8 @@ export function rollLayouts(R: () => number = Math.random) {
     const segs = [0, 1, 2, 3, 4, 5].sort(() => R() - 0.5);
     PATROL = { route, fires: [off(segs[0], rr(220, 450)), off(segs[1], rr(220, 450))], decoy: off(segs[2], rr(120, 300)) };
   }
+  // 20. буровая — 1,5–1,9 км от базы в случайной стороне
+  RIG = (() => { const [x, z] = at(R() * Math.PI * 2, rr(1500, 1900)); return { x: Math.round(x), z: Math.round(z) }; })();
   // 15. вырубка — в другом секторе, 16. льдина стартует в другом месте реки
   LOG_ROT = rr(-0.6, 0.6);
   FLOE_S = rr(-480, -320);
@@ -3307,6 +3468,25 @@ export const MISSIONS: MissionDef[] = [
     }; },
     wind: { toDeg: 70, speed: 4, gust: 0.35 }, gimbalPitch: -35, pip: true, payloadLabel: "Камера", payloadUnit: "",
     create: (c) => new PatrolMission(c),
+  },
+  {
+    id: "sling", title: "Груз на буровую", place: "Усинский район, Республика Коми",
+    tagline: "Вертолётный БАС: груз на тросе 12 м", icon: "Anchor", color: "#f07a1a",
+    briefing: [
+      "На буровой в 1,5–2 км встал насос — нужна запчасть, 22 кг. Дорогу размыло, вертолётный БАС «Буран-В» понесёт ящик на внешней подвеске.",
+      "Зависните над грузом у базы на 12–15 м и подождите: наземная команда зацепит трос. Ящик на тросе — маятник: резкий разгон или торможение раскачивают его, и он тянет вертолёт за собой.",
+      "У буровой вышка 34 м — заходите так, чтобы трос её не задел. Опустите ящик на площадку (до 7 м от центра) и отцепите (ПРОБЕЛ).",
+      "Отказ двигателя у вертолёта не конец: в GPS/ATTI автопилот сядет на авторотации сам, в Acro — шаг вниз, у земли подрывка газом.",
+    ],
+    actionLabel: "Отцепка", recommended: ["buran"], startMode: "POS", airspace: true,
+    get world(): WorldCfg { return {
+      seed: 191, size: 4400, relief: 18,
+      flats: [{ x: 0, z: 0, rx: 45, rz: 40 }, { x: RIG.x, z: RIG.z, rx: 55, rz: 55 }],
+      clearings: [{ x: 10, z: -3, r: 45 }, { x: RIG.x, z: RIG.z, r: 60 }],
+      forestDensity: 0.28, palette: TUNDRA,
+    }; },
+    wind: { toDeg: 140, speed: 5, gust: 0.4 }, gimbalPitch: -70, pip: true, payloadLabel: "Груз", payloadUnit: "шт",
+    create: (c) => new SlingMission(c),
   },
 ];
 

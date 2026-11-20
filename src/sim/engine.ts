@@ -4,6 +4,7 @@ import { Ambience, music, playSplash, setSoundPrefs, getSoundPrefs } from "./sou
 import * as THREE from "three";
 import { Airframe, isPlane } from "./airframes";
 import { PlaneSim } from "./plane";
+import { HeliSim } from "./heli";
 import { Particles, PrecipField } from "./effects";
 import { Action, Ctx, Difficulty, DIFFICULTY, MapDraw, Mission, MissionDef, Objective, SayKind } from "./missions";
 import { clamp, mulberry32 } from "./noise";
@@ -289,7 +290,7 @@ export class SimEngine {
   constructor(o: EngineOpts) {
     this.o = o;
     this.world = new World(o.mission.world, o.quality);
-    this.drone = isPlane(o.airframe) ? new PlaneSim(o.airframe) : new DroneSim(o.airframe);
+    this.drone = isPlane(o.airframe) ? new PlaneSim(o.airframe) : o.airframe.kind === "heli" ? new HeliSim(o.airframe) : new DroneSim(o.airframe);
     this.pip = o.mission.pip;
     this.gimbalPitch = o.mission.gimbalPitch;
 
@@ -541,7 +542,7 @@ export class SimEngine {
     const d = this.drone, pre = random ? "Внезапно: " : "Инструктор: ";
     if (kind === "motor") {
       const ok = d.motorOk.map((v, i) => (v ? i : -1)).filter((i) => i >= 0);
-      if (ok.length) { const i = ok[Math.floor(this.rnd() * ok.length)]; d.failMotor(i); this.say(`${pre}ОТКАЗ МОТОРА №${i + 1}! ${d.af.redundancy === "нет" ? "Резерва нет" : "Аппарат держится — садитесь"}`, "warn"); }
+      if (ok.length) { const i = ok[Math.floor(this.rnd() * ok.length)]; d.failMotor(i); if (!(d instanceof HeliSim)) this.say(`${pre}ОТКАЗ МОТОРА №${i + 1}! ${d.af.redundancy === "нет" ? "Резерва нет" : "Аппарат держится — садитесь"}`, "warn"); }
     } else if (kind === "gps") {
       if (d.gpsOk) {
         d.gpsOk = false; this.gpsUntil = d.time + dur;
@@ -736,6 +737,12 @@ export class SimEngine {
       this.acc += dt;
       while (this.acc >= STEP) { d.step(STEP, st, this.env); this.acc -= STEP; }
       if (pl?.event) this.planeEvent(pl);
+      const hl = this.drone instanceof HeliSim ? this.drone : null;
+      if (hl?.event) {
+        const e = hl.event; hl.event = null;
+        if (e === "engine" || e === "fuel") this.say(`${e === "fuel" ? "ТОПЛИВО КОНЧИЛОСЬ" : "ОТКАЗ ДВИГАТЕЛЯ"} — авторотация! ${MANUAL_THROTTLE[hl.mode] ? "Шаг вниз, у земли — подрывка (газ вверх)" : "Автопилот снижается и подорвёт шаг у земли"}`, "warn");
+        else if (e === "autorot-ok") this.say("Посадка на авторотации выполнена", "good");
+      }
     }
     if (!this.ended) {
       this.mission.update(dt, action);
@@ -743,7 +750,7 @@ export class SimEngine {
         const i = Math.floor(this.rnd() * d.n);
         d.failMotor(i);
         this.failAt = Infinity;
-        this.say(`ОТКАЗ МОТОРА №${i + 1}! ${d.af.redundancy === "нет" ? "Резерва нет" : "Аппарат держится — садитесь"}`, "warn");
+        if (!(d instanceof HeliSim)) this.say(`ОТКАЗ МОТОРА №${i + 1}! ${d.af.redundancy === "нет" ? "Резерва нет" : "Аппарат держится — садитесь"}`, "warn");
       }
       this.rules(dt);
     } else if (this.endTimer >= 0) {
@@ -1329,6 +1336,9 @@ export class SimEngine {
     if (d.soc < 0.2) warnings.push("НИЗКИЙ ЗАРЯД");
     if (d.windNow.length() > 9) warnings.push("СИЛЬНЫЙ ВЕТЕР");
     const aglW = d.pos.y - d.gear - gh;
+    const hlW = this.drone instanceof HeliSim ? this.drone : null;
+    if (hlW && !hlW.engineOk && !hlW.landed) warnings.push("АВТОРОТАЦИЯ");
+    else if (hlW && hlW.rpm < 0.85 && !hlW.landed) warnings.push("ОБОРОТЫ НЕСУЩЕГО ВИНТА");
     const pl = this.plane;
     if (pl) {
       if (pl.stall) warnings.push("СВАЛИВАНИЕ");
@@ -1347,7 +1357,7 @@ export class SimEngine {
       agl: Math.max(0, d.pos.y - d.gear - gh), speed: Math.hypot(d.vel.x, d.vel.z), vs: d.vel.y, heading,
       battery: d.soc, minutes: d.powerW > 30 ? (d.battery / d.powerW) * 60 : 99, powerW: d.powerW,
       payloadLabel: def.payloadLabel,
-      payloadText: m.capacity > 1 ? `${m.amount.toFixed(def.payloadUnit === "шт" ? 0 : 1)} ${def.payloadUnit}` : m.capacity === 1 ? (m.amount > 0 ? "на борту" : "доставлен") : "—",
+      payloadText: m.payloadText?.() ?? (m.capacity > 1 ? `${m.amount.toFixed(def.payloadUnit === "шт" ? 0 : 1)} ${def.payloadUnit}` : m.capacity === 1 ? (m.amount > 0 ? "на борту" : "доставлен") : "—"),
       payloadFrac: m.capacity > 0 ? m.amount / m.capacity : 0,
       wind: d.windNow.length(), windFrom,
       mode: this.rth ? "Автовозврат" : this.landReq ? "Автопосадка" : MODE_LABEL[d.mode], cam: CAM_LABEL[this.camMode],

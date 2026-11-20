@@ -441,10 +441,48 @@ function buildPlane(af: Airframe, k: Kit): Built {
   return { group: g, rotors: [r], liquid: null, strobe };
 }
 
+/** Вертолётный БАС: каплевидная кабина-обтекатель, хвостовая балка с рулевым винтом и килем, полозья, груз — на крюке. */
+function buildHeli(af: Airframe, k: Kit): Built {
+  const g = new THREE.Group();
+  // обтекатель: эллипсоид, вытянутый вперёд
+  const body = mesh(new THREE.SphereGeometry(0.42, 28, 18), k.shell, g, 0, 0.28, -0.1);
+  body.scale.set(1, 0.95, 1.75);
+  const nose = mesh(new THREE.SphereGeometry(0.3, 20, 14, 0, Math.PI * 2, 0, Math.PI / 2), k.glass, g, 0, 0.3, -0.62);
+  nose.rotation.x = -Math.PI / 2; nose.scale.set(1, 0.6, 0.9);
+  mesh(new THREE.BoxGeometry(0.5, 0.14, 1.0), k.decal, g, 0, 0.62, 0.05); // капот двигателя с бортовым номером
+  // хвостовая балка, киль и стабилизатор
+  tube(g, V(0, 0.42, 0.55), V(0, 0.55, 2.05), 0.06, k.shell2);
+  const fin = mesh(new THREE.BoxGeometry(0.04, 0.5, 0.32), k.shell, g, 0, 0.72, 2.0);
+  fin.rotation.x = -0.35;
+  mesh(new THREE.BoxGeometry(0.6, 0.03, 0.16), k.shell, g, 0, 0.5, 1.7);
+  // колонка и несущий винт
+  mesh(new THREE.CylinderGeometry(0.05, 0.07, 0.24, 12), k.alu, g, 0, 0.82, 0);
+  const main = new THREE.Group(); main.position.set(0, 0.95, 0); g.add(main);
+  const r0 = rotor(main, k, af.propR, 1, 2, 0.55);
+  // рулевой винт на правой стороне хвоста, ось — поперёк
+  const tr = new THREE.Group(); tr.position.set(0.1, 0.62, 2.05); tr.rotation.z = -Math.PI / 2; g.add(tr);
+  const r1 = rotor(tr, k, 0.26, -1, 2, 1.1);
+  // полозья
+  for (const sd of [-1, 1]) {
+    tube(g, V(sd * 0.36, -0.46, -0.6), V(sd * 0.36, -0.46, 0.5), 0.025, k.alu);
+    tube(g, V(sd * 0.36, -0.46, -0.35), V(sd * 0.2, 0.0, -0.3), 0.02, k.alu);
+    tube(g, V(sd * 0.36, -0.46, 0.3), V(sd * 0.2, 0.0, 0.3), 0.02, k.alu);
+  }
+  // крюк внешней подвески и подвес камеры
+  mesh(new THREE.CylinderGeometry(0.03, 0.05, 0.12, 8), k.dark, g, 0, -0.08, 0.05);
+  const gb = gimbal(g, k, 0.2, true);
+  gb.position.set(0, 0.0, -0.75);
+  navLight(g, 0xff2020, 0.03, -0.42, 0.3, 0.1);
+  navLight(g, 0x20ff40, 0.03, 0.42, 0.3, 0.1);
+  const strobe = navLight(g, 0xffffff, 0.035, 0, 0.98, 2.0);
+  return { group: g, rotors: [r0, r1], liquid: null, strobe };
+}
+
 export function buildDrone(af: Airframe, opts: { tank: boolean; boom: number; livery?: string }): DroneModel {
   const k = kit(af, liveryFor(af.id, opts.livery));
   const gearH = 0.16 + af.arm * 0.28;
   const b = af.kind === "plane" ? buildPlane(af, k)
+    : af.kind === "heli" ? buildHeli(af, k)
     : af.id === "quad" ? buildQuad(af, k, gearH)
     : af.id === "hexa" ? buildHexa(af, k, gearH)
     : af.id === "coax" ? buildCoax(af, k, gearH)

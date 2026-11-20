@@ -62,7 +62,7 @@ export function partOf(slot: Slot, id: string): Part {
 /** Аппарат с установленными деталями (новая копия, каталог не меняется). */
 export function assemble(id: string, b: DroneBuild = STOCK): Airframe {
   const a: Airframe = { ...getAirframe(id), motors: getAirframe(id).motors.map((m) => ({ ...m })) };
-  if (a.kind === "plane") return a; // у самолёта заводская комплектация
+  if (a.kind === "plane" || a.kind === "heli") return a; // у самолёта и вертолёта заводская комплектация
   for (const s of SLOTS) partOf(s.id, b[s.id]).apply(a);
   return a;
 }

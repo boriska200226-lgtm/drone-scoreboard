@@ -1,7 +1,7 @@
 import { CSSProperties, lazy, ReactNode, Suspense, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import Icon from "@/components/ui/icon";
-import { AIRFRAMES, Airframe, getAirframe, isPlane, PLANES } from "@/sim/airframes";
+import { Airframe, framesOf, getAirframe, isPlane, kindOf } from "@/sim/airframes";
 import { assemble, DroneBuild, partOf, PARTS, perf, saveBuilds, SLOTS, STOCK } from "@/sim/build";
 import { CAM_LABEL, CamMode, CAMS, MODES } from "@/sim/engine";
 import { LIVERIES, liveryFor } from "@/sim/droneModel";
@@ -106,6 +106,15 @@ export const Stars = ({ n, size = 14 }: { n: number; size?: number }) => (
 function AirframeIcon({ af, size = 56 }: { af: Airframe; size?: number }) {
   const k = 34 / (af.arm + af.propR);
   const color = hex(af.color);
+  if (kindOf(af) === "heli") return (
+    <svg width={size} height={size} viewBox="-40 -40 80 80" aria-hidden>
+      <circle cx={0} cy={-6} r={30} fill={`${color}18`} stroke={color} strokeWidth={1.2} />
+      <ellipse cx={0} cy={-6} rx={7} ry={11} fill={color} />
+      <rect x={-1.5} y={4} width={3} height={30} fill="#9aa4b2" />
+      <rect x={-6} y={30} width={12} height={3} fill={color} />
+      <path d="M0 -21 L4 -15 L-4 -15 Z" fill="#ff4444" />
+    </svg>
+  );
   if (isPlane(af)) return (
     <svg width={size} height={size} viewBox="-40 -40 80 80" aria-hidden>
       <rect x={-36} y={-6} width={72} height={9} rx={3} fill={color} />
@@ -185,7 +194,7 @@ export default function Launcher({ initial, best, onStart }: { initial: LaunchSe
   };
   const mission = findMission(s.mission);
   // самолётные миссии — только самолёт, остальные — только коптеры
-  const afId = isPlane(getAirframe(s.af)) === isPlane(getAirframe(mission.recommended[0])) ? s.af : mission.recommended[0];
+  const afId = kindOf(getAirframe(s.af)) === kindOf(getAirframe(mission.recommended[0])) ? s.af : mission.recommended[0];
   const build = s.builds[afId] ?? STOCK;
   const af = assemble(afId, build);
   const afColor = hex(af.color);
@@ -394,7 +403,7 @@ export default function Launcher({ initial, best, onStart }: { initial: LaunchSe
                   <div className="text-gray-300">{AUTHOR.role}</div>
                 </div>
                 <div className="text-sm text-gray-300 leading-relaxed">
-                  19 миссий (включая самолётный БАС), курс пилота, конструктор дронов, тепловизор, повтор полёта с разбором ошибок. Управление с клавиатуры, геймпада или настоящего пульта.
+                  20 миссий (включая самолётный и вертолётный БАС), курс пилота, конструктор дронов, тепловизор, повтор полёта с разбором ошибок. Управление с клавиатуры, геймпада или настоящего пульта.
                 </div>
                 <div>
                   <div className="sp-label text-gray-400 mb-1">Использованы открытые материалы</div>
@@ -481,10 +490,10 @@ function Constructor({ s, set, af, build, color, tank }: {
   const stock = assemble(af.id);
   const p = perf(af), b = perf(stock);
   const setPart = (slot: keyof DroneBuild, id: string) => set({ builds: { ...s.builds, [af.id]: { ...build, [slot]: id } } });
-  const plane = isPlane(af), list = plane ? PLANES : AIRFRAMES;
+  const kind = kindOf(af), plane = kind !== "multi", list = framesOf(kind);
   const idx = list.findIndex((a) => a.id === af.id);
   const custom = SLOTS.some((sl) => build[sl.id] !== "std");
-  const cls = plane ? "САМОЛЁТ" : af.motors.length <= 4 ? "ЛЁГКИЙ" : af.mass < 12 ? "СРЕДНИЙ" : af.mass < 20 ? "ТЯЖЁЛЫЙ" : "СВЕРХТЯЖ.";
+  const cls = kind === "plane" ? "САМОЛЁТ" : kind === "heli" ? "ВЕРТОЛЁТ" : af.motors.length <= 4 ? "ЛЁГКИЙ" : af.mass < 12 ? "СРЕДНИЙ" : af.mass < 20 ? "ТЯЖЁЛЫЙ" : "СВЕРХТЯЖ.";
   return (
     <div className="space-y-6">
       <Heading kicker="Ангар" title="Конструктор" sub="Соберите аппарат под задачу: моторы, винты, батарея и прошивка меняют реальные параметры полёта — тягу, массу, время в воздухе и отклик." />
@@ -501,7 +510,7 @@ function Constructor({ s, set, af, build, color, tank }: {
                   {custom && <span className="sp-label !text-[10px] px-2 py-0.5 sp-skew" style={{ background: "#ff3d8b", color: "#fff" }}><span className="sp-unskew">ТЮНИНГ</span></span>}
                 </div>
                 <div className="sp-title text-4xl sm:text-5xl mt-2" style={{ textShadow: `0 0 30px ${color}55` }}>{af.name}</div>
-                <div className="text-gray-300 mt-1">{af.scheme} · {plane ? `размах ${af.wing?.span} м` : `${af.motors.length} моторов`} · {af.mass.toFixed(1)} кг</div>
+                <div className="text-gray-300 mt-1">{af.scheme} · {kind === "plane" ? `размах ${af.wing?.span} м` : kind === "heli" ? `несущий винт ⌀${(af.propR * 2).toFixed(1)} м` : `${af.motors.length} моторов`} · {af.mass.toFixed(1)} кг</div>
               </div>
               <div className="absolute right-4 top-4 hidden sm:flex flex-col items-end gap-1 pointer-events-none">
                 <span className="sp-label !text-[9px] text-gray-500">ТЯГА / ВЕС</span>
@@ -537,7 +546,7 @@ function Constructor({ s, set, af, build, color, tank }: {
                     <div className="text-xs text-gray-400">{a.scheme}</div>
                     <div className="flex gap-3 mt-2 text-xs text-gray-300 tabular-nums">
                       <span title="Полезная нагрузка"><Icon name="Package" size={11} className="inline -mt-0.5 mr-0.5" />{pa.payload.toFixed(0)} кг</span>
-                      <span title={isPlane(a) ? "Время в воздухе" : "Висение без груза"}><Icon name="Timer" size={11} className="inline -mt-0.5 mr-0.5" />{pa.hover.toFixed(0)} мин</span>
+                      <span title={kindOf(a) === "plane" ? "Время в воздухе" : "Висение без груза"}><Icon name="Timer" size={11} className="inline -mt-0.5 mr-0.5" />{pa.hover.toFixed(0)} мин</span>
                     </div>
                   </div>
                 </button>
@@ -555,9 +564,12 @@ function Constructor({ s, set, af, build, color, tank }: {
             </div>
             {plane ? (
               <div className="space-y-2 text-sm">
-                {([["Крейсерская скорость", `${Math.round((af.wing?.cruise ?? 0) * 3.6)} км/ч`], ["Скорость сваливания", `${Math.round((af.wing?.stall ?? 0) * 3.6)} км/ч`],
+                {((kind === "plane" ? [["Крейсерская скорость", `${Math.round((af.wing?.cruise ?? 0) * 3.6)} км/ч`], ["Скорость сваливания", `${Math.round((af.wing?.stall ?? 0) * 3.6)} км/ч`],
                   ["Максимальная скорость", `${Math.round(af.maxSpeed * 3.6)} км/ч`], ["Время в воздухе", `${(p.hover / 60).toFixed(1)} ч`],
-                  ["Размах крыла", `${af.wing?.span} м`], ["Старт / посадка", "катапульта / парашют"]] as [string, string][]).map(([k, v]) => (
+                  ["Размах крыла", `${af.wing?.span} м`], ["Старт / посадка", "катапульта / парашют"]]
+                  : [["Максимальная скорость", `${Math.round(af.maxSpeed * 3.6)} км/ч`], ["Висение без груза", `${(p.hover / 60).toFixed(1)} ч`],
+                  ["Висение с грузом", `${(p.hoverFull / 60).toFixed(1)} ч`], ["Груз на тросе", `до ${af.payloadMax} кг`],
+                  ["Несущий винт", `⌀ ${(af.propR * 2).toFixed(1)} м`], ["При отказе двигателя", "авторотация"]]) as [string, string][]).map(([k, v]) => (
                   <div key={k} className="flex justify-between border-b border-white/5 py-1"><span className="text-gray-400">{k}</span><span className="font-semibold">{v}</span></div>
                 ))}
                 <div className="text-xs text-gray-400 leading-snug pt-1">{af.description}</div>

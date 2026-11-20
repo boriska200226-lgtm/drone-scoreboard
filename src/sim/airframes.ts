@@ -30,7 +30,7 @@ export interface Airframe {
   redundancy: string;
   color: number;
   /** Тип: мультикоптер (по умолчанию) или самолёт. */
-  kind?: "multi" | "plane";
+  kind?: "multi" | "plane" | "heli";
   /** Самолёт: площадь крыла м², размах м, крейсерская и скорость сваливания м/с. */
   wing?: { area: number; span: number; cruise: number; stall: number };
 }
@@ -113,13 +113,35 @@ export const PLANES: Airframe[] = [
   },
 ];
 
+/** Вертолётные БАС: один несущий винт и рулевой; без резерва двигателя, зато есть авторотация. */
+export const HELIS: Airframe[] = [
+  {
+    id: "buran",
+    name: "Буран-В",
+    scheme: "Вертолёт одновинтовой схемы с рулевым винтом",
+    description: "Беспилотный вертолёт для грузов на внешней подвеске: 25 кг на тросе, 110 км/ч, 2 часа на бензиновом двигателе. При отказе двигателя садится на авторотации.",
+    motors: [{ x: 0, z: 0, y: 0.75, dir: 1 }, { x: 0.25, z: 2.05, y: 0.55, dir: -1 }],
+    arm: 1.1, propR: 1.6, mass: 55, payloadMax: 25, motorThrust: 1650, motorTau: 0.25,
+    batteryWh: 9000, efficiency: 0.62, maxTilt: 0.42, maxSpeed: 30, climb: 4, yawRate: 1.1,
+    sprayWidth: 0, pumpRate: 0, redundancy: "авторотация", color: 0xf07a1a, kind: "heli",
+  },
+];
+
+export type FrameKind = "multi" | "plane" | "heli";
+export const kindOf = (a: Airframe): FrameKind => a.kind ?? "multi";
+export const framesOf = (k: FrameKind) => (k === "plane" ? PLANES : k === "heli" ? HELIS : AIRFRAMES);
 export const isPlane = (a: Airframe) => a.kind === "plane";
-export const getAirframe = (id: string) => AIRFRAMES.find((a) => a.id === id) ?? PLANES.find((a) => a.id === id) ?? AIRFRAMES[0];
+export const getAirframe = (id: string) => [...AIRFRAMES, ...PLANES, ...HELIS].find((a) => a.id === id) ?? AIRFRAMES[0];
 
 /** Расчётное время висения, мин. */
 export function hoverMinutes(af: Airframe, payload: number): number {
   // самолёт не висит: время в воздухе на крейсерской скорости
   if (af.kind === "plane") return (af.batteryWh / 560) * 60;
+  if (af.kind === "heli") {
+    // мощность висения одного несущего винта + рулевой и трансмиссия (~15 %)
+    const T = (af.mass + payload) * 9.81, A = Math.PI * af.propR * af.propR;
+    return (af.batteryWh / ((Math.pow(T, 1.5) / Math.sqrt(2 * 1.225 * A) / af.efficiency) * 1.15 + 300)) * 60;
+  }
   const m = af.mass + payload;
   const t = (m * 9.81) / af.motors.length;
   const area = Math.PI * af.propR * af.propR;
