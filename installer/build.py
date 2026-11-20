@@ -92,7 +92,7 @@ def build_zip() -> None:
     top = "MarshrutDobra"
     readme = (
         "МАРШРУТ ДОБРА — как установить\n\n"
-        "Windows: проще всего запустить MarshrutDobra-Setup.exe.\n"
+        "Windows: запустите MarshrutDobra-Setup.exe из этой папки и нажимайте «Далее».\n"
         "  Без установки: откройте файл «Играть.html» из этой папки.\n\n"
         "macOS и Linux: откройте Терминал в этой папке и выполните\n"
         "  sh install.sh\n"
@@ -112,6 +112,11 @@ def build_zip() -> None:
         info.external_attr = 0o100755 << 16
         info.compress_type = zipfile.ZIP_DEFLATED
         z.writestr(info, (INST / "install.sh").read_text(encoding="utf-8"))
+        setup = DIST / "MarshrutDobra-Setup.exe"
+        if setup.exists():
+            z.write(setup, f"{top}/MarshrutDobra-Setup.exe")
+        else:
+            print("внимание: MarshrutDobra-Setup.exe не собран, в архив он не попал")
         for name, text in ((f"{top}/Играть.html", start), (f"{top}/Как установить.txt", readme)):
             info = zipfile.ZipInfo(name)
             info.external_attr = 0o100644 << 16
