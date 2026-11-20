@@ -1,4 +1,5 @@
 // Сценарии миссий. Каждая миссия описывает мир, погоду и правила выполнения.
+import { REAL_TERRAIN } from "./terrain";
 import * as THREE from "three";
 import { Airframe } from "./airframes";
 import { FlameField, Particles } from "./effects";
@@ -3166,6 +3167,11 @@ export function freshMission(def: MissionDef, R: () => number = Math.random): Mi
   if (def.course) return def;
   rollLayouts(R);
   const out = { ...def, world: { ...def.world, seed: def.world.seed + 1 + Math.floor(R() * 9973) } };
+  // реальная местность Коми: окно сдвигается внутри района — каждый вылет немного другой участок
+  if (REAL_TERRAIN.has(def.id)) {
+    const sz = def.world.size, sh = () => (R() - 0.5) * sz * 0.4;
+    out.world.real = { id: def.id, offX: sh(), offZ: sh() };
+  }
   // ветер гонит пожар на посёлок, где бы они ни оказались
   if (def.id === "fire") out.wind = { ...def.wind, toDeg: (Math.atan2(VILLAGE.x - FIRE.x, -(VILLAGE.z - FIRE.z)) * 180) / Math.PI };
   return out;

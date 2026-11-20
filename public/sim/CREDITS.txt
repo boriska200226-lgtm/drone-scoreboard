@@ -3,6 +3,11 @@
 
 Источники ассетов
 
+Реальная местность Республики Коми (tools/terrain/fetch_komi.py → sim/terrain/*.bin.gz):
+  рельеф — Terrain Tiles, AWS Open Data (Mapzen; SRTM — NASA/USGS, GMTED2010, ETOPO1 и др.);
+  типы поверхности — © ESA WorldCover project 2021 / Contains modified Copernicus Sentinel data (2021)
+  processed by ESA WorldCover consortium, лицензия CC BY 4.0.
+
 HDR-панорамы освещения (CC0, Poly Haven, через репозиторий pmndrs/drei-assets):
   rooitou_park_1k.hdr, venice_sunset_1k.hdr, kiara_1_dawn_1k.hdr, forest_slope_1k.hdr
 

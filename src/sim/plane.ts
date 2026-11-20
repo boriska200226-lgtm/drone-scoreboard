@@ -96,7 +96,8 @@ export class PlaneSim extends DroneSim {
       this.applyAttitude();
       if (!this.landed) this.pos.addScaledVector(this.vel, dt);
       this.airspeed = 0; this.stall = false;
-      if (env.waterLevel !== null && gh < env.waterLevel && this.pos.y - this.gear < env.waterLevel) { this.crashed = "Аппарат упал в воду"; return; }
+      const wl0 = env.waterAt ? env.waterAt(this.pos.x, this.pos.z) : env.waterLevel;
+      if (wl0 !== null && gh < wl0 && this.pos.y - this.gear < wl0) { this.crashed = "Аппарат упал в воду"; return; }
       if (this.pos.y - this.gear <= gh) {
         this.pos.y = gh + this.gear; this.vel.set(0, 0, 0);
         if (!this.landed) this.event = "touchdown";
@@ -203,7 +204,8 @@ export class PlaneSim extends DroneSim {
 
     // земля, вода, деревья
     const bottom = this.pos.y - this.gear;
-    if (env.waterLevel !== null && gh < env.waterLevel && bottom < env.waterLevel) { this.crashed = "Аппарат упал в воду"; return; }
+    const wl = env.waterAt ? env.waterAt(this.pos.x, this.pos.z) : env.waterLevel;
+    if (wl !== null && gh < wl && bottom < wl) { this.crashed = "Аппарат упал в воду"; return; }
     if (bottom <= gh) {
       const vs = -this.vel.y, hs = Math.hypot(this.vel.x, this.vel.z);
       if (vs > 2.5 || hs > 22 || Math.abs(this.roll) > 0.5) { this.pos.y = gh + this.gear; this.crashed = "Самолёт разбился о землю — садитесь на парашюте (L)"; return; }

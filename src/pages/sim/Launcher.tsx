@@ -412,6 +412,7 @@ export default function Launcher({ initial, best, onStart }: { initial: LaunchSe
                     <li>Quaternius — модели оленя и лося (CC0)</li>
                     <li>ez-tree, Daniel Greenheck — деревья (MIT); texturecan.com — текстуры коры (CC0)</li>
                     <li>Poly Haven — HDR-панорамы освещения (CC0)</li>
+                    <li>Реальная местность Коми: рельеф — Terrain Tiles (SRTM и др., AWS Open Data); типы поверхности — © ESA WorldCover 2021, Copernicus Sentinel (CC BY 4.0)</li>
                     <li>Шрифты Russo One, Orbitron, Rajdhani (SIL OFL)</li>
                   </ul>
                   <a href={LOGO("CREDITS.txt")} target="_blank" rel="noreferrer" className="inline-block mt-2 text-sm underline text-[#7dd3fc]">Полный список источников</a>

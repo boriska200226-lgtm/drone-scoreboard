@@ -1,4 +1,5 @@
 // Процедурный мир: рельеф, река, тайга, постройки. Слой 0 — видимый спектр, слой 1 — тепловизор.
+import { getTerrain, LC, TerrainSampler } from "./terrain";
 import { makeBear } from "./bear";
 import * as THREE from "three";
 import { clamp, fbm, lerp, makeNoise2D, mulberry32, smoothstep } from "./noise";
@@ -55,6 +56,8 @@ export interface WorldCfg {
   corridors?: { x1: number; z1: number; x2: number; z2: number; w: number }[];
   forestDensity: number; // деревьев на 100 м²
   palette: Palette;
+  /** Реальная местность Коми: данные миссии и сдвиг окна (м). */
+  real?: { id: string; offX: number; offZ: number };
 }
 
 const TREE_CELL = 16;
@@ -69,6 +72,12 @@ export class World {
   quality: Quality;
   size: number;
   n = 257;
+  /** Реальная местность (если есть данные для миссии). */
+  real: TerrainSampler | null = null;
+  /** Уровень воды озера в узле сетки (NaN — не озеро). */
+  private lake: Float32Array | null = null;
+  /** Подложка мини-карты: лес, болота, поля, вода. */
+  mapImage: HTMLCanvasElement | null = null;
   cell: number;
   hf: Float32Array;
   waterLevel: number | null;
@@ -133,9 +142,19 @@ export class World {
   private buildHeights() {
     const { cfg, n, cell, size } = this;
     const noise = makeNoise2D(cfg.seed);
+    const t = cfg.real ? getTerrain(cfg.real.id) : null;
+    const rs = t ? new TerrainSampler(t, cfg.real!.offX, cfg.real!.offZ) : null;
+    this.real = rs;
     const raw = (x: number, z: number) => {
-      let h = 3.5 + cfg.relief * (fbm(noise, x / 260, z / 260, 4) * 0.5 + 0.5);
-      h += 1.2 * fbm(noise, x / 38 + 40, z / 38 - 17, 2);
+      let h: number;
+      if (rs) {
+        // настоящий рельеф; у реки миссии — долина: склоны плавно сходят к воде
+        const fade = cfg.river ? smoothstep(40, 380, this.riverDist(x, z)) : 1;
+        h = 3.5 + rs.height(x, z) * fade + 0.5 * fbm(noise, x / 38 + 40, z / 38 - 17, 2);
+      } else {
+        h = 3.5 + cfg.relief * (fbm(noise, x / 260, z / 260, 4) * 0.5 + 0.5);
+        h += 1.2 * fbm(noise, x / 38 + 40, z / 38 - 17, 2);
+      }
       if (cfg.river) {
         const d = this.riverDist(x, z), w = cfg.river.width;
         h += Math.min(d, 420) * 0.012;
@@ -155,6 +174,66 @@ export class World {
         this.hf[iz * n + ix] = h;
       }
     }
+    if (rs) this.buildLakes(rs);
+  }
+
+  /** Настоящие озёра и протоки: каждое — со своим уровнем воды, дно и берега опущены. */
+  private buildLakes(rs: TerrainSampler) {
+    const { n, cell, size, cfg, hf } = this;
+    const node = (i: number) => [-size / 2 + (i % n) * cell, -size / 2 + Math.floor(i / n) * cell];
+    const isW = new Uint8Array(n * n);
+    for (let i = 0; i < n * n; i++) {
+      const [x, z] = node(i);
+      if (cfg.river && this.riverDist(x, z) < cfg.river.width * 2.5) continue;
+      if (cfg.flats.some((f) => Math.max(Math.abs(x - f.x) / f.rx, Math.abs(z - f.z) / f.rz) < 1.4)) continue;
+      if (rs.cls(x, z) === LC.water) isW[i] = 1;
+    }
+    const lake = new Float32Array(n * n).fill(NaN);
+    const seen = new Uint8Array(n * n);
+    let any = false;
+    for (let s0 = 0; s0 < n * n; s0++) {
+      if (!isW[s0] || seen[s0]) continue;
+      const comp: number[] = [s0]; seen[s0] = 1;
+      for (let q = 0; q < comp.length; q++) {
+        const i = comp[q], ix = i % n, iz = (i - ix) / n;
+        for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          const jx = ix + dx, jz = iz + dz;
+          if (jx < 0 || jz < 0 || jx >= n || jz >= n) continue;
+          const j = jz * n + jx;
+          if (isW[j] && !seen[j]) { seen[j] = 1; comp.push(j); }
+        }
+      }
+      if (comp.length < 3) continue; // отдельные пиксели — шум классификации
+      const hs = comp.map((i) => hf[i]).sort((a, b) => a - b);
+      const level = hs[Math.floor(hs.length * 0.3)];
+      for (const i of comp) lake[i] = level;
+      any = true;
+    }
+    if (!any) return;
+    this.lake = lake;
+    // дно и берег: в воде — на 1,6 м ниже зеркала, вокруг — пологий склон к урезу
+    for (let i = 0; i < n * n; i++) {
+      if (!isNaN(lake[i])) { hf[i] = lake[i] - 1.6; continue; }
+      const ix = i % n, iz = (i - ix) / n;
+      let best = Infinity;
+      for (let dz = -3; dz <= 3; dz++) for (let dx = -3; dx <= 3; dx++) {
+        const jx = ix + dx, jz = iz + dz;
+        if (jx < 0 || jz < 0 || jx >= n || jz >= n) continue;
+        const L = lake[jz * n + jx];
+        if (!isNaN(L)) best = Math.min(best, L + 0.35 + Math.hypot(dx, dz) * cell * 0.12);
+      }
+      if (best < hf[i]) hf[i] = best;
+    }
+  }
+
+  /** Уровень воды в точке: озеро (свой уровень), река миссии (0) или нет воды. */
+  waterAt(x: number, z: number): number | null {
+    if (this.lake) {
+      const { n, cell, size } = this;
+      const ix = Math.round((x + size / 2) / cell), iz = Math.round((z + size / 2) / cell);
+      if (ix >= 0 && iz >= 0 && ix < n && iz < n) { const L = this.lake[iz * n + ix]; if (!isNaN(L)) return L; }
+    }
+    return this.waterLevel;
   }
 
   groundAt(x: number, z: number): number {
@@ -167,7 +246,8 @@ export class World {
   }
 
   isWater(x: number, z: number): boolean {
-    return this.waterLevel !== null && this.groundAt(x, z) < this.waterLevel;
+    const wl = this.waterAt(x, z);
+    return wl !== null && this.groundAt(x, z) < wl;
   }
 
   private own<T extends { dispose(): void }>(d: T): T { this.disposables.push(d); return d; }
@@ -302,6 +382,20 @@ export class World {
       // вершинный цвет — только макровариации яркости и будущая гарь; цвет даёт фото-текстура
       const v = 0.88 + 0.22 * t;
       c.setRGB(v, v, v);
+      if (this.real) {
+        // оттенок по типу поверхности: рыжий сфагнум болот, светлый лишайник тундры и боров, жёлтые поля
+        const k = this.real.cls(x, z);
+        let tint = k === LC.bog ? [1.0, 0.74, 0.42] : k === LC.moss ? [1.3, 1.26, 1.08] : k === LC.grass ? [1.02, 1.08, 0.82]
+          : k === LC.crop ? [1.18, 1.05, 0.62] : k === LC.built ? [0.9, 0.88, 0.86] : k === LC.bare ? [1.2, 1.05, 0.8] : k === LC.shrub ? [0.92, 0.96, 0.78]
+          : k === LC.forest ? [0.88, 0.9, 0.86] : null;
+        if (k === LC.bog) {
+          // мочажины — тёмные окна воды между кочками, гряды — посветлее
+          const p = fbm(noise, x / 9 + 13, z / 9 - 5, 3);
+          if (p > 0.28) tint = [0.42, 0.46, 0.44];
+          else if (p < -0.2) tint = [1.12, 0.9, 0.55];
+        }
+        if (tint) c.setRGB(v * tint[0], v * tint[1], v * tint[2]);
+      }
       colors[i * 3] = c.r; colors[i * 3 + 1] = c.g; colors[i * 3 + 2] = c.b;
       // тепловой фон: вода холодная, по земле — пятна (влажность, кочки, мох)
       const g = h < 0 ? 0.005 : 0.016 + 0.02 * t + 0.012 * (fbm(noise, x / 14, z / 14, 2) * 0.5 + 0.5);
@@ -364,6 +458,49 @@ export class World {
       this.scene.add(water);
       this.addThermal(water, 0.004);
     }
+    if (this.lake) this.buildLakeWater();
+    if (this.real) this.buildMapImage();
+  }
+
+  /** Зеркала озёр: по квадрату сетки на уровне своего озера (чуть шире берега — их прячет рельеф). */
+  private buildLakeWater() {
+    const { n, cell, size } = this, L = this.lake!;
+    const pos: number[] = [];
+    for (let iz = 0; iz < n - 1; iz++) for (let ix = 0; ix < n - 1; ix++) {
+      let lv = NaN;
+      for (const [dx, dz] of [[0, 0], [1, 0], [0, 1], [1, 1]]) { const v = L[(iz + dz) * n + ix + dx]; if (!isNaN(v)) { lv = v; break; } }
+      if (isNaN(lv)) continue;
+      const x0 = -size / 2 + ix * cell - cell * 0.5, z0 = -size / 2 + iz * cell - cell * 0.5, x1 = x0 + cell * 2, z1 = z0 + cell * 2;
+      pos.push(x0, lv, z0, x0, lv, z1, x1, lv, z1, x0, lv, z0, x1, lv, z1, x1, lv, z0);
+    }
+    const g = this.own(new THREE.BufferGeometry());
+    g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+    const pal = this.cfg.palette;
+    const normals = this.own(new THREE.TextureLoader(this.loader).load(ASSET("waternormals.jpg")));
+    normals.wrapS = normals.wrapT = THREE.RepeatWrapping;
+    const m = new THREE.Mesh(g, this.own(makeWaterMaterial(this.skyParams, new THREE.Color(pal.water).multiplyScalar(0.5), normals, this.scene.fog as THREE.FogExp2, this.time)));
+    m.renderOrder = 1;
+    this.scene.add(m);
+    this.addThermal(m, 0.004);
+  }
+
+  /** Подложка мини-карты по реальным типам поверхности. */
+  private buildMapImage() {
+    const N = 192, cv = document.createElement("canvas");
+    cv.width = cv.height = N;
+    const g = cv.getContext("2d")!, img = g.createImageData(N, N), { size } = this;
+    const col: Record<number, [number, number, number]> = {
+      [LC.forest]: [24, 52, 34], [LC.shrub]: [52, 72, 44], [LC.grass]: [70, 92, 52], [LC.crop]: [96, 92, 52], [LC.built]: [78, 78, 82],
+      [LC.bare]: [96, 86, 66], [LC.water]: [40, 96, 150], [LC.bog]: [82, 74, 48], [LC.moss]: [96, 100, 82], [LC.snow]: [200, 205, 210],
+    };
+    for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
+      const x = -size / 2 + ((i + 0.5) / N) * size, z = -size / 2 + ((j + 0.5) / N) * size;
+      const k = this.waterAt(x, z) !== null && this.groundAt(x, z) < (this.waterAt(x, z) ?? 0) ? LC.water : this.real!.cls(x, z);
+      const c = col[k] ?? [30, 40, 34], o = (j * N + i) * 4;
+      img.data[o] = c[0]; img.data[o + 1] = c[1]; img.data[o + 2] = c[2]; img.data[o + 3] = 255;
+    }
+    g.putImageData(img, 0, 0);
+    this.mapImage = cv;
   }
 
   /** Веса слоёв грунта: лесная подстилка под кронами, песок у воды, грунт на площадках, луг на открытых местах. */
@@ -430,20 +567,30 @@ export class World {
       leafTint: new THREE.Color(...(pal.grassTint ?? [0.86, 0.9, 0.74])).lerp(new THREE.Color(1, 1, 1), 0.5),
     });
     this.kit = kit;
-    const step = Math.sqrt(100 / Math.max(0.05, cfg.forestDensity));
+    // на реальной местности тайга густая там, где по карте лес (на больших картах — как задано, ради скорости)
+    const density = this.real && cfg.size <= 2000 ? Math.max(cfg.forestDensity, 0.75) : cfg.forestDensity;
+    const step = Math.sqrt(100 / Math.max(0.05, density));
     const xs: number[] = [], zs: number[] = [], hs: number[] = [], rs: number[] = [], kinds: number[] = [], vars: number[] = [];
     const half = size / 2 - 20;
     for (let gz = -half; gz < half; gz += step) {
       for (let gx = -half; gx < half; gx += step) {
         const x = gx + rnd() * step, z = gz + rnd() * step;
         const u = rnd(), v = rnd(), w = rnd();
-        if (fbm(noise, x / 120, z / 120, 2) < -0.22) continue;
+        // реальная местность: где лес по спутниковой карте — там и лес; иначе — процедурные поляны
+        const lc = this.real ? this.real.cls(x, z) : LC.forest;
+        const keep = !this.real ? 1 : lc === LC.forest ? 1 : lc === LC.bog ? 0.22 : lc === LC.moss ? 0.12 : lc === LC.shrub ? 0.3 : lc === LC.grass ? 0.05 : lc === LC.bare ? 0.02 : 0;
+        if (this.real ? (w + u * 0.37) % 1 > keep : fbm(noise, x / 120, z / 120, 2) < -0.22) continue;
         if (!this.treeAllowed(x, z)) continue;
         // сосна — на сухих гривах, ель — в низинах, берёза — пятнами на опушках и вырубках
         const dry = fbm(noise, x / 210 + 31, z / 210 - 12, 2) + (this.groundAt(x, z) - 8) * 0.02 > 0.12;
         const birchy = fbm(noise, x / 90 - 7, z / 90 + 5, 2) > 0.18;
-        const kind = dry ? (v < 0.78 ? PINE : v < 0.9 ? BIRCH : SPRUCE) : birchy && v < 0.55 ? BIRCH : v < 0.1 ? PINE : SPRUCE;
-        const hgt = kind === PINE ? 16 + u * 11 : kind === BIRCH ? 11 + u * 9 : 10 + u * 15;
+        let kind = dry ? (v < 0.78 ? PINE : v < 0.9 ? BIRCH : SPRUCE) : birchy && v < 0.55 ? BIRCH : v < 0.1 ? PINE : SPRUCE;
+        // болото — чахлые сосенки и берёзки; тундра, мхи и кустарник — карликовая берёза
+        let stunt = 1;
+        if (lc === LC.bog) { kind = v < 0.7 ? PINE : BIRCH; stunt = 0.35 + u * 0.25; }
+        else if (lc === LC.moss || lc === LC.shrub) { kind = BIRCH; stunt = 0.22 + u * 0.18; }
+        else if (lc === LC.grass || lc === LC.bare) { kind = v < 0.6 ? BIRCH : PINE; stunt = 0.7; }
+        const hgt = (kind === PINE ? 16 + u * 11 : kind === BIRCH ? 11 + u * 9 : 10 + u * 15) * stunt;
         const list = kit.bySpecies[kind];
         const vi = list[Math.floor(w * list.length) % list.length];
         xs.push(x); zs.push(z); hs.push(hgt); kinds.push(kind); vars.push(vi);
@@ -558,6 +705,8 @@ export class World {
 
   private treeAllowed(x: number, z: number): boolean {
     const { cfg } = this;
+    const wl = this.waterAt(x, z);
+    if (wl !== null && this.groundAt(x, z) < wl + 0.6) return false;
     if (cfg.river && this.riverDist(x, z) < cfg.river.width * 1.5) return false;
     if (this.inFlat(x, z, 1.25)) return false;
     for (const c of cfg.clearings) if (Math.hypot(x - c.x, z - c.z) < c.r) return false;

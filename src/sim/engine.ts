@@ -324,7 +324,7 @@ export class SimEngine {
     const pal = o.mission.world.palette;
     const lightTint = new THREE.Color(pal.ambient).multiplyScalar(pal.ambientIntensity * 0.45)
       .add(new THREE.Color(pal.sun).multiplyScalar(pal.sunIntensity * (1 - pal.clouds * 0.6) * 0.32));
-    const ground = (x: number, z: number) => Math.max(this.world.groundAt(x, z), this.world.waterLevel ?? -1e9);
+    const ground = (x: number, z: number) => Math.max(this.world.groundAt(x, z), this.world.waterAt(x, z) ?? -1e9);
     this.fx = {
       fire: new Particles(scene, { max: 3600, additive: true, thermal: true, fireRamp: true, fog }),
       smoke: new Particles(scene, { max: 2600, drag: 0.45, grow: 3.2, fog, tint: lightTint }),
@@ -334,6 +334,7 @@ export class SimEngine {
     this.env = {
       groundAt: (x, z) => this.world.groundAt(x, z),
       waterLevel: this.world.waterLevel,
+      waterAt: (x, z) => this.world.waterAt(x, z),
       wind: (p, t, out) => this.windAt(p, t, out),
       collide: (p, r) => this.world.collide(p, r),
     };
@@ -851,7 +852,7 @@ export class SimEngine {
   private record(dt: number) {
     const d = this.drone;
     if (d.landed && this.log.samples.length === 0) return;
-    const gh = Math.max(this.world.groundAt(d.pos.x, d.pos.z), this.world.waterLevel ?? -1e9);
+    const gh = Math.max(this.world.groundAt(d.pos.x, d.pos.z), this.world.waterAt(d.pos.x, d.pos.z) ?? -1e9);
     const agl = Math.max(0, d.pos.y - d.gear - gh);
     const spd = Math.hypot(d.vel.x, d.vel.z);
     const L = this.log;
@@ -894,7 +895,7 @@ export class SimEngine {
 
   /** Падение в воду: брызги, туман из капель, кольца волн, звук; дальше аппарат тонет. */
   private splashDown() {
-    const d = this.drone, wl = this.world.waterLevel ?? d.pos.y, r = this.rnd, sp = Math.hypot(d.vel.x, d.vel.z);
+    const d = this.drone, wl = this.world.waterAt(d.pos.x, d.pos.z) ?? d.pos.y, r = this.rnd, sp = Math.hypot(d.vel.x, d.vel.z);
     this.sink = { t: 0, x: d.pos.x, z: d.pos.z, wl, rings: [] };
     for (let i = 0; i < 220; i++) {
       const a = r() * 6.283, h = 1.5 + r() * 4.5, up = 2.5 + r() * 7 * (1 - h / 8);
@@ -944,7 +945,7 @@ export class SimEngine {
     const frac = this.mission.capacity > 0 ? this.mission.amount / this.mission.capacity : 0;
     this.model.update(dt, d, frac, d.time);
 
-    const gh = Math.max(this.world.groundAt(d.pos.x, d.pos.z), this.world.waterLevel ?? -1e9);
+    const gh = Math.max(this.world.groundAt(d.pos.x, d.pos.z), this.world.waterAt(d.pos.x, d.pos.z) ?? -1e9);
     const agl = d.pos.y - gh;
     this.shadow.position.set(d.pos.x, gh + 0.08, d.pos.z);
     this.shadow.scale.setScalar(d.radius * (1 + agl * 0.03));
@@ -1224,6 +1225,14 @@ export class SimEngine {
     g.fillRect(0, 0, S, S);
     g.strokeStyle = "rgba(255,255,255,0.08)"; g.lineWidth = 1;
     for (let i = 1; i < 4; i++) { g.beginPath(); g.arc(S / 2, S / 2, (S / 8) * i, 0, 6.3); g.stroke(); }
+    // подложка: реальные лес, болота, поля и озёра
+    const mi = this.world.mapImage;
+    if (mi) {
+      const half = this.world.size / 2;
+      g.save(); g.globalAlpha = 0.75; g.imageSmoothingEnabled = true;
+      g.drawImage(mi, X(-half), Y(-half), this.world.size * k, this.world.size * k);
+      g.restore();
+    }
     const river = this.world.cfg.river;
     if (river) {
       g.strokeStyle = "rgba(60,140,210,0.75)"; g.lineWidth = Math.max(2, river.width * k);
@@ -1330,7 +1339,7 @@ export class SimEngine {
 
   private pushHud() {
     const d = this.drone, m = this.mission, def = this.o.mission;
-    const gh = Math.max(this.world.groundAt(d.pos.x, d.pos.z), this.world.waterLevel ?? -1e9);
+    const gh = Math.max(this.world.groundAt(d.pos.x, d.pos.z), this.world.waterAt(d.pos.x, d.pos.z) ?? -1e9);
     const warnings: string[] = [];
     if (d.motorOk.some((x) => !x)) warnings.push("ОТКАЗ МОТОРА");
     if (d.soc < 0.2) warnings.push("НИЗКИЙ ЗАРЯД");

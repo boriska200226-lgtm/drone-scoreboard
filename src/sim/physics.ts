@@ -26,6 +26,8 @@ export interface Sticks { roll: number; pitch: number; yaw: number; throttle: nu
 export interface Env {
   groundAt(x: number, z: number): number;
   waterLevel: number | null;
+  /** Уровень воды в точке (озёра — свой уровень); если нет — используется waterLevel. */
+  waterAt?(x: number, z: number): number | null;
   wind(p: THREE.Vector3, t: number, out: THREE.Vector3): THREE.Vector3;
   collide(p: THREE.Vector3, r: number): string | null;
 }
@@ -377,7 +379,8 @@ export class DroneSim {
     // земля, вода, препятствия
     const gh = env.groundAt(this.pos.x, this.pos.z);
     const bottom = this.pos.y - this.gear;
-    if (env.waterLevel !== null && gh < env.waterLevel && bottom < env.waterLevel) {
+    const wl = env.waterAt ? env.waterAt(this.pos.x, this.pos.z) : env.waterLevel;
+    if (wl !== null && gh < wl && bottom < wl) {
       this.crashed = "Аппарат упал в воду";
       return;
     }

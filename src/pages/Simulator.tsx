@@ -7,6 +7,7 @@ import { findMission } from "@/sim/course";
 import { mulberry32 } from "@/sim/noise";
 import { InputConfig, loadInput } from "@/sim/input";
 import { loadModels } from "@/sim/models";
+import { loadTerrain } from "@/sim/terrain";
 import { FlightMode, MODE_HINT, MODE_LABEL } from "@/sim/physics";
 import { Difficulty, DIFFICULTY, freshMission, MissionDef, SayKind, withWeather } from "@/sim/missions";
 import type { Quality } from "@/sim/world";
@@ -223,7 +224,7 @@ function Flight({ mission, af, difficulty, quality, flightMode, camMode, input, 
     // даём экрану загрузки отрисоваться, потом строим мир (это занимает пару секунд)
     const timer = setTimeout(async () => {
      // 3D-модели (люди, дома, техника) грузим до постройки мира; их отсутствие не мешает полёту
-     await loadModels().catch(() => undefined);
+     await Promise.all([loadModels().catch(() => undefined), loadTerrain(mission.world.real?.id)]);
      if (!alive) return;
      try {
       e = new SimEngine({

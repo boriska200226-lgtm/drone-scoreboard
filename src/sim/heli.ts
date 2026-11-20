@@ -173,7 +173,8 @@ export class HeliSim extends DroneSim {
 
     // земля, вода, препятствия
     const bottom = this.pos.y - this.gear;
-    if (env.waterLevel !== null && gh < env.waterLevel && bottom < env.waterLevel) { this.crashed = "Аппарат упал в воду"; return; }
+    const wl = env.waterAt ? env.waterAt(this.pos.x, this.pos.z) : env.waterLevel;
+    if (wl !== null && gh < wl && bottom < wl) { this.crashed = "Аппарат упал в воду"; return; }
     if (bottom <= gh) {
       const vs = -this.vel.y, hs = Math.hypot(this.vel.x, this.vel.z);
       if (vs > (this.engineOk ? 4.5 : 5.2) || hs > 7 || _up.y < 0.8) {

@@ -33,7 +33,8 @@
     "asar": true,
     "asarUnpack": [
       "app/**/*.hdr",
-      "app/**/*.glb"
+      "app/**/*.glb",
+      "app/**/*.gz"
     ],
     "win": {
       "target": [
