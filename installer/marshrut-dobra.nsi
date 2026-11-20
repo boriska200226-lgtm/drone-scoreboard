@@ -47,40 +47,11 @@ VIAddVersionKey /LANG=1049 "LegalCopyright" "Командная игра для 
 !insertmacro MUI_UNPAGE_INSTFILES
 !insertmacro MUI_LANGUAGE "Russian"
 
-Var Browser
-
-; Ищем Microsoft Edge: тогда игра открывается в отдельном окне, как приложение.
-; Если Edge нет, ярлык откроет игру в браузере по умолчанию.
-Function FindEdge
-  StrCpy $Browser ""
-  SetRegView 64
-  ReadRegStr $Browser HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\msedge.exe" ""
-  SetRegView 32
-  ${If} $Browser == ""
-    ReadRegStr $Browser HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\msedge.exe" ""
-  ${EndIf}
-  ${If} $Browser == ""
-    ReadRegStr $Browser HKCU "SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\msedge.exe" ""
-  ${EndIf}
-  ${If} $Browser == ""
-    ${If} ${FileExists} "$PROGRAMFILES32\Microsoft\Edge\Application\msedge.exe"
-      StrCpy $Browser "$PROGRAMFILES32\Microsoft\Edge\Application\msedge.exe"
-    ${ElseIf} ${FileExists} "$PROGRAMFILES64\Microsoft\Edge\Application\msedge.exe"
-      StrCpy $Browser "$PROGRAMFILES64\Microsoft\Edge\Application\msedge.exe"
-    ${EndIf}
-  ${EndIf}
-  ${If} $Browser != ""
-  ${AndIfNot} ${FileExists} "$Browser"
-    StrCpy $Browser ""
-  ${EndIf}
-FunctionEnd
-
+; Ярлык указывает прямо на файл игры: Windows откроет его в браузере по умолчанию,
+; так же, как при двойном щелчке по файлу. Без параметров командной строки,
+; которые браузер мог бы принять за поисковый запрос.
 !macro MakeShortcut LNK
-  ${If} $Browser != ""
-    CreateShortcut "${LNK}" "$Browser" '--app="$INSTDIR\index.html" --start-maximized' "$INSTDIR\icon.ico" 0
-  ${Else}
-    CreateShortcut "${LNK}" "$INSTDIR\index.html" "" "$INSTDIR\icon.ico" 0
-  ${EndIf}
+  CreateShortcut "${LNK}" "$INSTDIR\index.html" "" "$INSTDIR\icon.ico" 0
 !macroend
 
 Section "Игра" SecMain
@@ -89,7 +60,6 @@ Section "Игра" SecMain
   File /r "build/app/*"
   WriteUninstaller "$INSTDIR\Удалить игру.exe"
 
-  Call FindEdge
   !insertmacro MakeShortcut "$DESKTOP\${APPNAME}.lnk"
   CreateDirectory "$SMPROGRAMS\${APPNAME}"
   !insertmacro MakeShortcut "$SMPROGRAMS\${APPNAME}\${APPNAME}.lnk"
@@ -107,7 +77,7 @@ Section "Игра" SecMain
 SectionEnd
 
 Function LaunchGame
-  ExecShell "open" "$DESKTOP\${APPNAME}.lnk"
+  ExecShell "open" "$INSTDIR\index.html"
 FunctionEnd
 
 Section "Uninstall"
