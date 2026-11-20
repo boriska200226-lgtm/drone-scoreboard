@@ -1,4 +1,4 @@
-import { CSSProperties, lazy, ReactNode, Suspense, useState } from "react";
+import { CSSProperties, lazy, ReactNode, Suspense, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import Icon from "@/components/ui/icon";
 import { AIRFRAMES, Airframe, getAirframe } from "@/sim/airframes";
@@ -10,6 +10,7 @@ import { Difficulty, DIFFICULTY, MISSIONS, Weather, WEATHER } from "@/sim/missio
 import { COURSE, findMission } from "@/sim/course";
 import { FlightMode, MODE_HINT, MODE_LABEL } from "@/sim/physics";
 import type { Quality } from "@/sim/world";
+import { getSoundPrefs, music, onSoundPrefs, setSoundPrefs } from "@/sim/sound";
 import ControlsSetup from "./ControlsSetup";
 import Postcard from "./Postcard";
 import "./sport.css";
@@ -44,7 +45,7 @@ const TABS = [
   { id: "course", label: "Курс пилота", icon: "GraduationCap" },
   { id: "hangar", label: "Конструктор", icon: "Wrench" },
   { id: "controls", label: "Управление", icon: "Gamepad2" },
-  { id: "graphics", label: "Графика", icon: "MonitorCog" },
+  { id: "graphics", label: "Графика и звук", icon: "MonitorCog" },
 ] as const;
 type Tab = (typeof TABS)[number]["id"];
 
@@ -158,6 +159,8 @@ function Launch({ onClick, label = "НА ВЗЛЁТ", color = ACCENT, className 
 export default function Launcher({ initial, best, onStart }: { initial: LaunchSettings; best: Best; onStart: (s: LaunchSettings) => void }) {
   const [s, setS] = useState<LaunchSettings>(initial);
   const [tab, setTab] = useState<Tab>("missions");
+  const [snd, setSnd] = useState(getSoundPrefs);
+  useEffect(() => { music.start("menu"); return onSoundPrefs(setSnd); }, []);
   const set = (patch: Partial<LaunchSettings>) => {
     setS((prev) => {
       const nx = { ...prev, ...patch };
@@ -196,6 +199,11 @@ export default function Launcher({ initial, best, onStart }: { initial: LaunchSe
             </div>
             <div className="text-xs text-gray-500 mt-1.5">тренажёр операторов БВС · Республика Коми</div>
           </div>
+          <button type="button" onClick={() => setSoundPrefs({ muted: !snd.muted })} title={snd.muted ? "Включить звук" : "Выключить звук"}
+            className="lg:mt-3 w-8 h-8 flex items-center justify-center sp-skew border transition-colors"
+            style={{ borderColor: snd.muted ? "rgba(255,255,255,0.15)" : `${ACCENT}88`, background: snd.muted ? "transparent" : `${ACCENT}18` }}>
+            <Icon name={snd.muted ? "VolumeX" : "Music"} size={15} className="sp-unskew" style={{ color: snd.muted ? "#6b7280" : ACCENT }} />
+          </button>
           {!import.meta.env.VITE_STANDALONE && (
             <Link to="/" className="sp-label !text-[10px] text-gray-500 hover:text-white flex items-center gap-1 lg:mt-3"><Icon name="ArrowLeft" size={12} />БАС_АРЕНА</Link>
           )}
@@ -361,7 +369,7 @@ export default function Launcher({ initial, best, onStart }: { initial: LaunchSe
 
         {tab === "graphics" && (
           <section className="max-w-3xl space-y-5">
-            <Heading kicker="Настройка" title="Графика" sub="Качество можно понизить, если симулятор подтормаживает: разрешение рендера подстраивается автоматически." />
+            <Heading kicker="Настройка" title="Графика и звук" sub="Качество можно понизить, если симулятор подтормаживает: разрешение рендера подстраивается автоматически." />
             <div className="grid sm:grid-cols-3 gap-3">
               {(Object.keys(QUALITY) as Quality[]).map((q, i) => (
                 <Chip key={q} on={s.quality === q} color={BLUE} onClick={() => set({ quality: q })}>
@@ -390,6 +398,19 @@ export default function Launcher({ initial, best, onStart }: { initial: LaunchSe
                 <div className="flex justify-between text-sm"><span className="text-gray-300">Угол обзора</span><span className="font-semibold tabular-nums">{s.input.fpvFov}°</span></div>
                 <input id="fpv-fov" type="range" min={80} max={130} step={1} value={s.input.fpvFov} onChange={(e) => set({ input: { ...s.input, fpvFov: +e.target.value } })} className="w-full accent-[#00ffaa]" />
               </label>
+            </Cut>
+            <Cut inner="p-5 space-y-4">
+              <div className="sp-label text-gray-300">Звук</div>
+              <label htmlFor="snd-mute" className="flex items-center gap-2 text-sm text-gray-300">
+                <input id="snd-mute" type="checkbox" className="accent-[#00ffaa] w-4 h-4" checked={!snd.muted} onChange={(e) => setSoundPrefs({ muted: !e.target.checked })} />
+                Звук включён (в полёте — клавиша N)
+              </label>
+              {([["music", "Музыка", "в меню громче, в полёте — тихим фоном"], ["nature", "Звуки природы", "ветер, лес, птицы, река, дождь — по месту миссии"]] as const).map(([k, label, hint]) => (
+                <label key={k} htmlFor={`snd-${k}`} className="block">
+                  <div className="flex justify-between text-sm"><span className="text-gray-300">{label} <span className="text-gray-500">· {hint}</span></span><span className="font-semibold tabular-nums">{Math.round(snd[k] * 100)}%</span></div>
+                  <input id={`snd-${k}`} type="range" min={0} max={1} step={0.05} value={snd[k]} onChange={(e) => setSoundPrefs({ [k]: +e.target.value })} className="w-full accent-[#00ffaa]" />
+                </label>
+              ))}
             </Cut>
           </section>
         )}

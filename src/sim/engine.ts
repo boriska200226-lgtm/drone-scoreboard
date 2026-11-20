@@ -1,4 +1,5 @@
 // Игровой цикл: ввод → физика → миссия → рендер (основной вид + окно подвесной камеры).
+import { Ambience, music, setSoundPrefs, getSoundPrefs } from "./sound";
 import * as THREE from "three";
 import { Airframe } from "./airframes";
 import { Particles, PrecipField } from "./effects";
@@ -157,6 +158,8 @@ export class SimEngine {
   private shadow: THREE.Mesh;
   private fx: Ctx["fx"];
   private audio: Audio;
+  private amb: Ambience;
+  private ambAcc = 0; private ambTrees = 0;
   private keys = new Set<string>();
   private sticks: Sticks = { roll: 0, pitch: 0, yaw: 0, throttle: 0 };
   private camMode: CamMode = "chase";
@@ -281,6 +284,13 @@ export class SimEngine {
     }
     this.failAt = o.difficulty === "ace" ? 45 + this.rnd() * 60 : Infinity;
     this.audio = new Audio(150 / (0.6 + o.airframe.propR * 3));
+    const apal = o.mission.world.palette;
+    this.amb = new Ambience({
+      forest: o.mission.world.forestDensity, night: apal.sunIntensity < 0.8, winter: !!apal.snow || o.mission.precip === "snow",
+      rain: o.mission.precip === "rain", river: !!o.mission.world.river,
+    });
+    music.start("flight");
+    this.audio.muted = this.amb.muted = getSoundPrefs().muted;
 
     window.addEventListener("keydown", this.onKey);
     window.addEventListener("keyup", this.onKeyUp);
@@ -319,7 +329,7 @@ export class SimEngine {
       this.gimbalPitch = i < 0 ? steps[0] : steps[i];
       say(`Подвес: ${this.gimbalPitch === -90 ? "строго вниз" : this.gimbalPitch === 0 ? "по горизонту" : `${-this.gimbalPitch}° вниз`}`, "info");
     }
-    else if (c === "mute") this.audio.muted = !this.audio.muted;
+    else if (c === "mute") { this.audio.muted = !this.audio.muted; this.amb.muted = this.audio.muted; setSoundPrefs({ muted: this.audio.muted }); }
     else if (c === "mode") this.setMode(MODES[(MODES.indexOf(this.drone.mode) + 1) % MODES.length]);
     else if (c === "land") {
       if (this.drone.landed && !this.landReq) return;
@@ -622,6 +632,14 @@ export class SimEngine {
     let avg = 0;
     for (let i = 0; i < d.n; i++) avg += d.thrust[i] / d.af.motorThrust;
     this.audio.set(avg / d.n, !d.crashed && !this.ended);
+    this.ambAcc += dt;
+    if (this.ambAcc > 0.25) {
+      const W = this.world, x = d.pos.x, z = d.pos.z, agl = d.pos.y - W.groundAt(x, z);
+      this.ambTrees = Math.min(1, W.treesNear(x, z, 45, this.nearTrees).length / 25);
+      const rv = W.cfg.river ? Math.max(0, 1 - W.riverDist(x, z) / 140) : 0;
+      this.amb.update(this.ambAcc, { agl, speed: d.vel.length(), wind: d.windNow.length(), trees: this.ambTrees, water: rv });
+      this.ambAcc = 0;
+    }
   }
 
   private rules(dt: number) {
@@ -1018,6 +1036,7 @@ export class SimEngine {
     window.removeEventListener("resize", this.resize);
     window.removeEventListener("blur", this.onBlur);
     this.audio.dispose();
+    this.amb.dispose();
     this.precip?.dispose();
     releaseModels();
     this.mission.dispose();
