@@ -1,4 +1,6 @@
 ﻿; Установщик игры «Маршрут добра» для Windows (NSIS 3, Unicode).
+; Ставит настольное приложение MarshrutDobra.exe (Electron): игра открывается
+; в своём окне, как обычная программа, браузер не нужен.
 ; Собирается командой: python3 installer/build.py
 Unicode true
 ManifestDPIAware true
@@ -9,6 +11,7 @@ SetCompressor /SOLID lzma
 
 !define APPNAME "Маршрут добра"
 !define APPID "MarshrutDobra"
+!define EXE "MarshrutDobra.exe"
 !ifndef VERSION
   !define VERSION "1.0.0"
 !endif
@@ -34,7 +37,7 @@ VIAddVersionKey /LANG=1049 "LegalCopyright" "Командная игра для 
 !define MUI_UNICON "build/app/icon.ico"
 !define MUI_ABORTWARNING
 !define MUI_WELCOMEPAGE_TITLE "Установка игры «${APPNAME}»"
-!define MUI_WELCOMEPAGE_TEXT "Командная игра для волонтёров: бросайте кубик, выполняйте добрые задания и собирайте сердечки.$\r$\n$\r$\nВ игре две версии — нарисованная карта и объёмный 3D-город. Интернет для игры не нужен.$\r$\n$\r$\nНажмите «Далее», чтобы продолжить."
+!define MUI_WELCOMEPAGE_TEXT "Командная игра для волонтёров: бросайте кубик, выполняйте добрые задания и собирайте сердечки.$\r$\n$\r$\nИгра установится как обычная программа и будет открываться в своём окне. Интернет не нужен.$\r$\n$\r$\nНажмите «Далее», чтобы продолжить."
 !define MUI_FINISHPAGE_RUN
 !define MUI_FINISHPAGE_RUN_TEXT "Запустить «${APPNAME}»"
 !define MUI_FINISHPAGE_RUN_FUNCTION LaunchGame
@@ -47,29 +50,36 @@ VIAddVersionKey /LANG=1049 "LegalCopyright" "Командная игра для 
 !insertmacro MUI_UNPAGE_INSTFILES
 !insertmacro MUI_LANGUAGE "Russian"
 
-; Ярлык указывает прямо на файл игры: Windows откроет его в браузере по умолчанию,
-; так же, как при двойном щелчке по файлу. Без параметров командной строки,
-; которые браузер мог бы принять за поисковый запрос.
-!macro MakeShortcut LNK
-  CreateShortcut "${LNK}" "$INSTDIR\index.html" "" "$INSTDIR\icon.ico" 0
+!macro CloseGame
+  ; закрываем игру, если она запущена, иначе файлы не заменятся
+  nsExec::Exec 'taskkill /F /IM ${EXE}'
+  Pop $0
+  Sleep 400
 !macroend
 
 Section "Игра" SecMain
   SectionIn RO
+  !insertmacro CloseGame
+  ; убираем файлы версии 1.0, которая открывалась в браузере
+  Delete "$INSTDIR\*.html"
+  Delete "$INSTDIR\icon.png"
+  RMDir /r "$INSTDIR\lib"
+  RMDir /r "$INSTDIR\fonts"
+
   SetOutPath "$INSTDIR"
-  File /r "build/app/*"
+  File /r "build/win/MarshrutDobra/*"
   WriteUninstaller "$INSTDIR\Удалить игру.exe"
 
-  !insertmacro MakeShortcut "$DESKTOP\${APPNAME}.lnk"
+  CreateShortcut "$DESKTOP\${APPNAME}.lnk" "$INSTDIR\${EXE}" "" "$INSTDIR\${EXE}" 0
   CreateDirectory "$SMPROGRAMS\${APPNAME}"
-  !insertmacro MakeShortcut "$SMPROGRAMS\${APPNAME}\${APPNAME}.lnk"
+  CreateShortcut "$SMPROGRAMS\${APPNAME}\${APPNAME}.lnk" "$INSTDIR\${EXE}" "" "$INSTDIR\${EXE}" 0
   CreateShortcut "$SMPROGRAMS\${APPNAME}\Удалить игру.lnk" "$INSTDIR\Удалить игру.exe"
 
   WriteRegStr HKCU "Software\${APPID}" "InstallDir" "$INSTDIR"
   WriteRegStr HKCU "${UNINSTKEY}" "DisplayName" "${APPNAME}"
   WriteRegStr HKCU "${UNINSTKEY}" "DisplayVersion" "${VERSION}"
   WriteRegStr HKCU "${UNINSTKEY}" "Publisher" "Маршрут добра"
-  WriteRegStr HKCU "${UNINSTKEY}" "DisplayIcon" "$INSTDIR\icon.ico"
+  WriteRegStr HKCU "${UNINSTKEY}" "DisplayIcon" "$INSTDIR\${EXE}"
   WriteRegStr HKCU "${UNINSTKEY}" "InstallLocation" "$INSTDIR"
   WriteRegStr HKCU "${UNINSTKEY}" "UninstallString" '"$INSTDIR\Удалить игру.exe"'
   WriteRegDWORD HKCU "${UNINSTKEY}" "NoModify" 1
@@ -77,21 +87,20 @@ Section "Игра" SecMain
 SectionEnd
 
 Function LaunchGame
-  ExecShell "open" "$INSTDIR\index.html"
+  Exec '"$INSTDIR\${EXE}"'
 FunctionEnd
 
 Section "Uninstall"
+  !insertmacro CloseGame
   Delete "$DESKTOP\${APPNAME}.lnk"
   RMDir /r "$SMPROGRAMS\${APPNAME}"
-  ; удаляем только файлы игры, чтобы не задеть чужие файлы, если папку выбрали вручную
-  Delete "$INSTDIR\*.html"
-  Delete "$INSTDIR\icon.ico"
-  Delete "$INSTDIR\icon.png"
-  Delete "$INSTDIR\Лицензии.txt"
-  RMDir /r "$INSTDIR\lib"
-  RMDir /r "$INSTDIR\fonts"
-  Delete "$INSTDIR\Удалить игру.exe"
-  RMDir "$INSTDIR"
+  ; папку удаляем целиком, только если это действительно папка игры
+  ${If} ${FileExists} "$INSTDIR\${EXE}"
+    RMDir /r "$INSTDIR"
+  ${Else}
+    Delete "$INSTDIR\Удалить игру.exe"
+    RMDir "$INSTDIR"
+  ${EndIf}
   DeleteRegKey HKCU "${UNINSTKEY}"
   DeleteRegKey HKCU "Software\${APPID}"
 SectionEnd

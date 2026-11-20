@@ -24,3 +24,5 @@ dist-ssr
 *.sw?
 builds
 installer/build/
+installer/.cache/
+installer/tools/node_modules/

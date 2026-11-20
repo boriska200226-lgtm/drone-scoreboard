@@ -3,25 +3,35 @@
 
 Берёт готовые страницы игры из public/, делает их полностью офлайновыми
 (3D-движок и шрифты лежат рядом, интернет не нужен) и собирает:
-  installer/dist/MarshrutDobra-Setup.exe       — установщик для Windows (нужен makensis)
-  installer/dist/MarshrutDobra-portable.zip    — архив для macOS, Linux и без установки
+  installer/dist/MarshrutDobra-Setup.exe       — установщик для Windows: настольное приложение
+                                                 со своим окном (Electron), нужен makensis и node
+  installer/dist/MarshrutDobra-portable.zip    — установщик + версия для macOS, Linux и без установки
+
+Electron скачивается с GitHub один раз и хранится в installer/.cache (с проверкой SHA-256).
 
 Запуск из корня репозитория:  python3 installer/build.py
 """
+import hashlib
 import re
 import shutil
 import subprocess
 import sys
+import urllib.request
 import zipfile
 from pathlib import Path
 
-VERSION = "1.0.1"
+VERSION = "1.1.0"
+ELECTRON = "44.9.3"
+ELECTRON_SHA256 = "41a1ffa0541cb0f2c9b9fe920dd2cef1793ad0ea2ada1a9582958880f4d1b23c"
+KEEP_LOCALES = {"ru.pak", "en-US.pak"}
 ROOT = Path(__file__).resolve().parent.parent
 INST = ROOT / "installer"
 VENDOR = INST / "vendor"
 BUILD = INST / "build"
 APP = BUILD / "app"
 DIST = INST / "dist"
+CACHE = INST / ".cache"
+WIN = BUILD / "win" / "MarshrutDobra"
 
 GOOGLE_FONTS = re.compile(r'<link rel="(?:preconnect|stylesheet)" href="https://fonts\.(?:googleapis|gstatic)\.com[^>]*>\n?')
 THREE_CDN = '<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>'
@@ -78,9 +88,56 @@ def build_app() -> None:
     (APP / "Лицензии.txt").write_text("".join(lic), encoding="utf-8")
 
 
+def electron_zip() -> Path:
+    """Скачивает Electron для Windows (один раз) и проверяет контрольную сумму."""
+    name = f"electron-v{ELECTRON}-win32-x64.zip"
+    path = CACHE / name
+    if not path.exists():
+        CACHE.mkdir(exist_ok=True)
+        url = f"https://github.com/electron/electron/releases/download/v{ELECTRON}/{name}"
+        print("Скачиваю", url)
+        urllib.request.urlretrieve(url, path)
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    if digest != ELECTRON_SHA256:
+        path.unlink()
+        sys.exit(f"{name}: контрольная сумма не совпала, файл удалён — запустите сборку ещё раз")
+    return path
+
+
+def build_desktop() -> bool:
+    """Собирает папку с настольным приложением для Windows: MarshrutDobra.exe + игра."""
+    if not shutil.which("node") or not shutil.which("npm"):
+        print("node/npm не найдены — настольное приложение для Windows пропущено")
+        return False
+    shutil.rmtree(WIN.parent, ignore_errors=True)
+    WIN.mkdir(parents=True)
+    with zipfile.ZipFile(electron_zip()) as z:
+        for info in z.infolist():
+            n = info.filename
+            if n.startswith("locales/") and Path(n).name not in KEEP_LOCALES and not info.is_dir():
+                continue  # оставляем только русский и английский языки
+            if n == "resources/default_app.asar":
+                continue
+            z.extract(info, WIN)
+    (WIN / "electron.exe").rename(WIN / "MarshrutDobra.exe")
+    app_dir = WIN / "resources" / "app"
+    app_dir.mkdir(parents=True)
+    for f in ("main.js", "package.json"):
+        shutil.copy(INST / "desktop" / f, app_dir / f)
+    shutil.copytree(APP, app_dir / "web")
+    tools = INST / "tools"
+    if not (tools / "node_modules" / "resedit").exists():
+        subprocess.run(["npm", "ci", "--silent"], cwd=tools, check=True)
+    subprocess.run(["node", "patch-exe.js", str(WIN / "MarshrutDobra.exe"), str(INST / "icon.ico"), VERSION],
+                   cwd=tools, check=True)
+    return True
+
+
 def build_windows() -> None:
     if not shutil.which("makensis"):
         print("makensis не найден — установщик для Windows пропущен (sudo apt install nsis)")
+        return
+    if not build_desktop():
         return
     subprocess.run(["makensis", "-V2", f"-DVERSION={VERSION}", "marshrut-dobra.nsi"], cwd=INST, check=True)
     print("Готово:", DIST / "MarshrutDobra-Setup.exe")
@@ -93,7 +150,8 @@ def build_zip() -> None:
     readme = (
         "МАРШРУТ ДОБРА — как установить\n\n"
         "Windows: запустите MarshrutDobra-Setup.exe из этой папки и нажимайте «Далее».\n"
-        "  Без установки: откройте файл «Играть.html» из этой папки.\n\n"
+        "  Игра установится как обычная программа и будет открываться в своём окне.\n"
+        "  Без установки: откройте файл «Играть.html» из этой папки (откроется в браузере).\n\n"
         "macOS и Linux: откройте Терминал в этой папке и выполните\n"
         "  sh install.sh\n"
         "Игра появится в Launchpad (macOS) или в меню приложений и на рабочем столе (Linux).\n"

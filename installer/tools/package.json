@@ -1,0 +1,5 @@
+{
+  "name": "marshrut-dobra-build-tools",
+  "private": true,
+  "dependencies": { "resedit": "1.7.2" }
+}
