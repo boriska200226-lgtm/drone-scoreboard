@@ -1,10 +1,10 @@
 {
   "name": "bas-simulator",
-  "productName": "БАС Симулятор",
+  "productName": "Северный дрон",
   "version": "1.0.0",
-  "description": "Тренажёр операторов беспилотных систем: миссии в Республике Коми",
+  "description": "Северный дрон — тренажёр операторов беспилотных систем: миссии в Республике Коми",
   "main": "main.cjs",
-  "author": "БАС Арена",
+  "author": "Борисова Анастасия Александровна",
   "license": "UNLICENSED",
   "private": true,
   "scripts": {
@@ -19,8 +19,8 @@
   },
   "build": {
     "appId": "ru.basarena.simulator",
-    "productName": "БАС Симулятор",
-    "artifactName": "BAS-Simulator-${version}-${arch}.${ext}",
+    "productName": "Северный дрон",
+    "artifactName": "Severny-Dron-${version}-${arch}.${ext}",
     "directories": {
       "output": "release",
       "buildResources": "build"
@@ -42,7 +42,7 @@
       ],
       "icon": "build/icon.ico",
       "signAndEditExecutable": false,
-      "legalTrademarks": "БАС Симулятор"
+      "legalTrademarks": "Северный дрон"
     },
     "nsis": {
       "oneClick": false,
@@ -50,14 +50,14 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "БАС Симулятор",
+      "shortcutName": "Северный дрон",
       "installerIcon": "build/icon.ico",
       "uninstallerIcon": "build/icon.ico",
       "language": "1049",
-      "artifactName": "BAS-Simulator-Setup-${version}.${ext}"
+      "artifactName": "Severny-Dron-Setup-${version}.${ext}"
     },
     "portable": {
-      "artifactName": "BAS-Simulator-${version}-portable.${ext}"
+      "artifactName": "Severny-Dron-${version}-portable.${ext}"
     },
     "linux": {
       "target": [

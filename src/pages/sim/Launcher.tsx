@@ -46,7 +46,12 @@ const TABS = [
   { id: "hangar", label: "Конструктор", icon: "Wrench" },
   { id: "controls", label: "Управление", icon: "Gamepad2" },
   { id: "graphics", label: "Графика и звук", icon: "MonitorCog" },
+  { id: "about", label: "Об игре", icon: "Info" },
 ] as const;
+
+/** Автор проекта — показывается в «Об игре», в сертификате курса и в свойствах программы. */
+export const AUTHOR = { name: "Борисова Анастасия Александровна", role: "автор проекта, учитель, педагог" };
+const LOGO = (f: string) => `${import.meta.env.BASE_URL}sim/${f}`;
 type Tab = (typeof TABS)[number]["id"];
 
 const RANKS = ["Курсант", "Пилот 3 класса", "Пилот 2 класса", "Пилот 1 класса", "Инструктор", "Ас Севера"];
@@ -191,11 +196,9 @@ export default function Launcher({ initial, best, onStart }: { initial: LaunchSe
       <aside className="min-w-0 lg:sticky lg:top-0 lg:h-screen flex flex-col border-b lg:border-b-0 lg:border-r border-white/5 bg-black/40 backdrop-blur-sm">
         <div className="px-5 pt-5 pb-4 flex items-center justify-between lg:block">
           <div>
-            <div className="sp-title text-2xl flex items-center gap-2">
-              <span className="w-8 h-8 flex items-center justify-center sp-skew" style={{ background: ACCENT }}>
-                <Icon name="Plane" size={18} className="sp-unskew" style={{ color: "#05070b" }} />
-              </span>
-              БАС<span style={{ color: ACCENT }}>SIM</span>
+            <div className="sp-title text-[22px] flex items-center gap-2.5 leading-none">
+              <img src={LOGO("logo-mark-light.svg")} alt="" className="w-10 h-10 shrink-0" />
+              <span>СЕВЕРНЫЙ<br /><span style={{ color: "#f07a1a" }}>ДРОН</span></span>
             </div>
             <div className="text-xs text-gray-500 mt-1.5">тренажёр операторов БВС · Республика Коми</div>
           </div>
@@ -364,6 +367,38 @@ export default function Launcher({ initial, best, onStart }: { initial: LaunchSe
           <section className="max-w-4xl">
             <Heading kicker="Настройка" title="Управление" sub="Клавиатура, геймпад или настоящий пульт по USB. Пульт на EdgeTX/OpenTX определяется как джойстик: выберите пресет или пройдите калибровку." />
             <ControlsSetup cfg={s.input} onChange={(input) => set({ input })} />
+          </section>
+        )}
+
+        {tab === "about" && (
+          <section className="max-w-3xl space-y-5">
+            <Heading kicker="О программе" title="Северный дрон" sub="Тренажёр операторов беспилотных воздушных судов: мирные задачи в Республике Коми — поиск людей, тушение пожаров, доставка, мониторинг." />
+            <div className="grid sm:grid-cols-[220px_minmax(0,1fr)] gap-5 items-start">
+              <div className="p-4 flex items-center justify-center" style={{ ...cut(14), background: "#f7f7f5" }}>
+                <img src={LOGO("logo.svg")} alt="Логотип «Северный дрон»" className="w-full max-w-[200px]" />
+              </div>
+              <Cut inner="p-5 space-y-4">
+                <div>
+                  <div className="sp-label text-gray-400">Автор проекта</div>
+                  <div className="sp-title text-xl mt-1">{AUTHOR.name}</div>
+                  <div className="text-gray-300">{AUTHOR.role}</div>
+                </div>
+                <div className="text-sm text-gray-300 leading-relaxed">
+                  18 миссий, курс пилота, конструктор дронов, тепловизор, повтор полёта с разбором ошибок. Управление с клавиатуры, геймпада или настоящего пульта.
+                </div>
+                <div>
+                  <div className="sp-label text-gray-400 mb-1">Использованы открытые материалы</div>
+                  <ul className="text-sm text-gray-400 space-y-0.5 list-disc pl-5">
+                    <li>three.js — 3D-движок (MIT)</li>
+                    <li>Quaternius — модели оленя и лося (CC0)</li>
+                    <li>ez-tree, Daniel Greenheck — деревья (MIT); texturecan.com — текстуры коры (CC0)</li>
+                    <li>Poly Haven — HDR-панорамы освещения (CC0)</li>
+                    <li>Шрифты Russo One, Orbitron, Rajdhani (SIL OFL)</li>
+                  </ul>
+                  <a href={LOGO("CREDITS.txt")} target="_blank" rel="noreferrer" className="inline-block mt-2 text-sm underline text-[#7dd3fc]">Полный список источников</a>
+                </div>
+              </Cut>
+            </div>
           </section>
         )}
 
@@ -644,7 +679,7 @@ function CourseTab({ s, best, set, onStart }: { s: LaunchSettings; best: Best; s
                 <div><div className="sp-label !text-[9px] text-gray-500">СРЕДНИЙ БАЛЛ</div><div className="sp-title text-xl">{avg}</div></div>
                 <div><div className="sp-label !text-[9px] text-gray-500">ЗВЁЗДЫ</div><div className="sp-title text-xl">{stars} / {COURSE.length * 3}</div></div>
               </div>
-              <div className="text-xs text-gray-500 mt-3">БАС·SIM, Республика Коми · {new Date().toLocaleDateString("ru-RU")}</div>
+              <div className="text-xs text-gray-500 mt-3">«Северный дрон», Республика Коми · {new Date().toLocaleDateString("ru-RU")}</div>
               <button onClick={() => window.print()} className="mt-3 text-xs font-bold px-3 py-1.5 flex items-center gap-1.5" style={{ ...cut(6), background: `${GOLD}22`, color: GOLD }}>
                 <Icon name="Printer" size={12} />РАСПЕЧАТАТЬ
               </button>

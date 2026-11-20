@@ -28,7 +28,7 @@ jobs:
           npx electron-builder --win nsis portable --x64 --publish never
       - uses: actions/upload-artifact@v4
         with:
-          name: BAS-Simulator-Windows
+          name: Severny-Dron-Windows
           path: |
             desktop/release/*.exe
           retention-days: 30

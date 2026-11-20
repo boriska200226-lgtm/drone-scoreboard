@@ -1,4 +1,4 @@
-// Настольная версия БАС Симулятора (Electron).
+// Настольная версия «Северного дрона» (Electron).
 // Игра грузится с диска через протокол app:// — без браузера и без интернета.
 const { app, BrowserWindow, Menu, net, protocol, shell } = require("electron");
 const path = require("node:path");
@@ -20,7 +20,7 @@ const ROOT = path.join(__dirname, "app");
 function createWindow() {
   const win = new BrowserWindow({
     width: 1600, height: 900, minWidth: 1024, minHeight: 640,
-    backgroundColor: "#0b0e16", title: "БАС Симулятор", show: false,
+    backgroundColor: "#0b0e16", title: "Северный дрон", show: false,
     icon: path.join(__dirname, "build", "icon.png"),
     webPreferences: { contextIsolation: true, sandbox: true, backgroundThrottling: false, spellcheck: false },
   });

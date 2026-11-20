@@ -612,7 +612,7 @@ export default function Simulator() {
   }));
   const [run, setRun] = useState(0);
   const [best, setBest] = useState<Best>(loadBest);
-  useEffect(() => { document.title = "БАС Симулятор — миссии беспилотников"; }, []);
+  useEffect(() => { document.title = "Северный дрон — симулятор беспилотников"; }, []);
   const af = useMemo(() => assemble(settings.af, settings.builds[settings.af]), [settings.af, settings.builds]);
   // каждый вылет и каждый перезапуск — новая раскладка заданий
   const [salt] = useState(() => Math.floor(Math.random() * 1e9));

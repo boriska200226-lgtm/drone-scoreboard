@@ -17,8 +17,8 @@ exports.default = async function afterPack(ctx) {
   vi.setFileVersion(a, b, c, 0, 1033);
   vi.setProductVersion(a, b, c, 0, 1033);
   const strings = {
-    FileDescription: info.description || info.productName, ProductName: info.productName, CompanyName: "БАС Арена",
-    LegalCopyright: `© ${new Date().getFullYear()} БАС Арена`, InternalName: info.productName, OriginalFilename: `${info.productFilename}.exe`,
+    FileDescription: info.description || info.productName, ProductName: info.productName, CompanyName: "Борисова Анастасия Александровна",
+    LegalCopyright: `© ${new Date().getFullYear()} Борисова А. А.`, InternalName: info.productName, OriginalFilename: `${info.productFilename}.exe`,
   };
   for (const lang of vi.getAllLanguagesForStringValues()) vi.setStringValues(lang, strings);
   vi.outputToResourceEntries(res.entries);
